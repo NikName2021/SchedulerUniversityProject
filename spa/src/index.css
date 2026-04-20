@@ -1,5 +1,192 @@
-@import "tailwindcss";
+:root {
+  /* Colors */
+  --brand: #0f4c81;
+  --brand-hover: #0a3a63;
+  --bg-base: #f4f5f8;
+  --bg-card: #ffffff;
+  
+  --text-primary: #1a1f36;
+  --text-secondary: #6b7280;
+  --text-tertiary: #9ca3af;
+  
+  --border-light: #e5e7eb;
+  
+  --blocked: #fee2e2;
+  --blocked-border: #fca5a5;
+  --blocked-text: #b91c1c;
+  
+  --emerald: #10b981;
+  --emerald-bg: #ecfdf5;
+  --emerald-text: #065f46;
+  
+  --amber: #f59e0b;
+  --amber-bg: #fffbeb;
+  --amber-text: #92400e;
+
+  /* Shadows & Radius */
+  --shadow-subtle: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+  --radius-xl: 24px;
+  --radius-lg: 16px;
+  --radius-md: 12px;
+  --radius-sm: 8px;
+
+  /* Transitions */
+  --transition-fast: 150ms ease-out;
+}
 
 * {
   box-sizing: border-box;
 }
+
+body {
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4 {
+  margin: 0;
+}
+
+p {
+  margin: 0;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  background: none;
+  font-family: inherit;
+  transition: transform var(--transition-fast), background-color var(--transition-fast), color var(--transition-fast);
+}
+
+button:active {
+  transform: scale(0.98);
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn var(--transition-fast) forwards;
+}
+
+/* Base Components */
+.card {
+  background: var(--bg-card);
+  border-radius: var(--radius-xl);
+  padding: 2rem;
+  border: 1px solid var(--border-light);
+  shadow: var(--shadow-subtle);
+}
+
+.btn-primary {
+  background: var(--brand);
+  color: white;
+  padding: 0.75rem 1.5rem;
+  border-radius: var(--radius-md);
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.btn-primary:hover {
+  background: var(--brand-hover);
+}
+
+/* Navigation Pills */
+.pills-nav {
+  display: flex;
+  gap: 0.5rem;
+  background: white;
+  padding: 0.5rem;
+  border-radius: 100px;
+  border: 1px solid var(--border-light);
+  box-shadow: var(--shadow-subtle);
+}
+
+.pill {
+  padding: 0.5rem 1.25rem;
+  border-radius: 100px;
+  text-decoration: none;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  transition: all var(--transition-fast);
+}
+
+.pill:hover {
+  color: var(--brand);
+}
+
+.pill.active {
+  background: var(--brand);
+  color: white;
+  box-shadow: 0 4px 10px rgba(15, 76, 129, 0.2);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+/* Blocked Slots Pattern */
+.bg-blocked-stripes {
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 10px,
+    rgba(239, 68, 68, 0.05) 10px,
+    rgba(239, 68, 68, 0.05) 20px
+  );
+}
+
+/* Utility Classes for Layout */
+.flex { display: flex; }
+.items-center { align-items: center; }
+.justify-between { justify-content: space-between; }
+.flex-col { flex-direction: column; }
+.gap-2 { gap: 0.5rem; }
+.gap-4 { gap: 1rem; }
+.gap-6 { gap: 1.5rem; }
+.gap-8 { gap: 2rem; }
+.space-y-4 > * + * { margin-top: 1rem; }
+.space-y-6 > * + * { margin-top: 1.5rem; }
+.space-y-8 > * + * { margin-top: 2rem; }
+.space-y-10 > * + * { margin-top: 2.5rem; }
+.grid { display: grid; }
+.grid-cols-3 { grid-template-columns: repeat(3, 1fr); }
+.min-h-screen { min-height: 100vh; }
+.w-full { width: 100%; }
+.max-w-6xl { max-width: 1152px; margin-left: auto; margin-right: auto; }
+.p-10 { padding: 2.5rem; }
+.mt-2 { margin-top: 0.5rem; }
+
+/* Text styles */
+.text-3xl { font-size: 1.875rem; line-height: 2.25rem; }
+.text-lg { font-size: 1.125rem; line-height: 1.75rem; }
+.text-sm { font-size: 0.875rem; line-height: 1.25rem; }
+.text-xs { font-size: 0.75rem; line-height: 1rem; }
+.font-bold { font-weight: 700; }
+.font-black { font-weight: 900; }
+.text-brand { color: var(--brand); }
+.text-text-secondary { color: var(--text-secondary); }
+.text-text-tertiary { color: var(--text-tertiary); }

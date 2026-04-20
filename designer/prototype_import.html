@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Импорт Данных MVP</title>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+
+    <style>
+        :root {
+            --bg-body: #F4F5F8; --bg-card: #FFFFFF;
+            --text-primary: #1A1F36; --text-secondary: #6B7280; --text-tertiary: #9CA3AF;
+            --border-light: #E5E7EB; --accent-brand: #0f4c81; --accent-brand-light: #e6f0f9;
+            --success: #10B981; --success-light: #D1FAE5;
+            --radius-md: 12px; --radius-sm: 8px;
+            --font-main: 'Plus Jakarta Sans', sans-serif;
+            --shadow-subtle: 0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -1px rgba(0,0,0,0.03);
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: var(--font-main); background: var(--bg-body); color: var(--text-primary); }
+        .app-container { max-width: 900px; margin: 0 auto; padding: 40px 24px; }
+        .page-title { font-size: 24px; font-weight: 700; color: var(--accent-brand); margin-bottom: 24px; }
+        
+        .card { background: var(--bg-card); border-radius: var(--radius-md); box-shadow: var(--shadow-subtle); border: 1px solid var(--border-light); padding: 32px; margin-bottom: 24px; }
+        .card-title { font-size: 18px; font-weight: 600; margin-bottom: 16px; }
+        
+        /* Drag & Drop Zone */
+        .upload-zone {
+            border: 2px dashed var(--border-light);
+            border-radius: var(--radius-md);
+            padding: 48px; text-align: center;
+            background: #FAFAFA; transition: all 0.2s;
+            cursor: pointer;
+        }
+        .upload-zone:hover { border-color: var(--accent-brand); background: var(--accent-brand-light); }
+        .upload-icon { color: var(--accent-brand); margin-bottom: 16px; }
+        .upload-title { font-weight: 600; font-size: 16px; margin-bottom: 8px; }
+        .upload-sub { color: var(--text-tertiary); font-size: 13px; }
+        
+        /* File List */
+        .file-list { margin-top: 24px; display: flex; flex-direction: column; gap: 12px; }
+        .file-item {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 16px; border: 1px solid var(--border-light);
+            border-radius: var(--radius-sm);
+        }
+        .file-info { display: flex; align-items: center; gap: 12px; }
+        .file-name { font-weight: 500; font-size: 14px; }
+        .file-size { color: var(--text-tertiary); font-size: 12px; }
+        .status-badge {
+            background: var(--success-light); color: var(--success);
+            padding: 4px 8px; border-radius: 9999px; font-size: 12px; font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="text/babel">
+        const App = () => (
+            <div className="app-container">
+                <h1 className="page-title">Импорт данных</h1>
+                
+                <div className="card">
+                    <h2 className="card-title">Загрузка базы данных (Excel)</h2>
+                    <div className="upload-zone">
+                        <svg className="upload-icon" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" />
+                        </svg>
+                        <div className="upload-title">Нажмите или перетащите файл сюда</div>
+                        <div className="upload-sub">Форматы: .xls, .xlsx (Шаблон Расписания)</div>
+                    </div>
+                </div>
+
+                <div className="card">
+                    <h2 className="card-title">История импорта</h2>
+                    <div className="file-list">
+                        <div className="file-item">
+                            <div className="file-info">
+                                <svg width="24" height="24" fill="none" stroke="var(--text-tertiary)" viewBox="0 0 24 24"><path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                                <div>
+                                    <div className="file-name">Учебный_план_Осень_2026.xlsx</div>
+                                    <div className="file-size">145 KB • Сегодня, 10:45</div>
+                                </div>
+                            </div>
+                            <div className="status-badge">✓ Успешно (320 строк)</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>

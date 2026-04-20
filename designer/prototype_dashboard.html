@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Панель Управления MVP</title>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+
+    <style>
+        :root {
+            --bg-body: #F4F5F8; --bg-card: #FFFFFF;
+            --text-primary: #1A1F36; --text-secondary: #6B7280; --text-tertiary: #9CA3AF;
+            --border-light: #E5E7EB; --accent-brand: #0f4c81;
+            --radius-md: 12px; --radius-sm: 8px;
+            --font-main: 'Plus Jakarta Sans', sans-serif;
+            --shadow-subtle: 0 4px 6px -1px rgba(0,0,0,0.05);
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: var(--font-main); background: var(--bg-body); color: var(--text-primary); }
+        .app-container { max-width: 1000px; margin: 0 auto; padding: 40px 24px; }
+        .page-title { font-size: 24px; font-weight: 700; color: var(--accent-brand); margin-bottom: 24px; }
+        
+        .grid-top { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-bottom: 24px; }
+        .stat-card { background: var(--bg-card); padding: 24px; border-radius: var(--radius-md); box-shadow: var(--shadow-subtle); border: 1px solid var(--border-light); }
+        .stat-val { font-size: 32px; font-weight: 700; color: var(--text-primary); margin-bottom: 4px; }
+        .stat-label { font-size: 14px; font-weight: 500; color: var(--text-secondary); }
+
+        .generator-card { background: var(--bg-card); padding: 40px; border-radius: var(--radius-md); box-shadow: var(--shadow-subtle); border: 1px solid var(--border-light); text-align: center; }
+        
+        .btn-large {
+            background: var(--accent-brand); color: white; border: none;
+            padding: 16px 32px; border-radius: var(--radius-sm); font-size: 16px; font-weight: 600;
+            cursor: pointer; transition: transform 0.1s, opacity 0.2s; font-family: inherit;
+        }
+        .btn-large:hover { opacity: 0.9; }
+        .btn-large:active { transform: scale(0.98); }
+
+        /* Progress Area */
+        .progress-area { margin-top: 32px; text-align: left; background: #FAFAFA; padding: 24px; border-radius: var(--radius-sm); border: 1px solid var(--border-light); }
+        .progress-header { display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 14px; font-weight: 600; }
+        .progress-track { height: 8px; background: var(--border-light); border-radius: 4px; overflow: hidden; }
+        .progress-fill { height: 100%; background: var(--accent-brand); width: 65%; transition: width 0.5s linear; position: relative; }
+        .progress-fill::after {
+            content: ""; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+            animation: shimmer 1.5s infinite;
+        }
+        @keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
+        .log-box { margin-top: 16px; font-family: monospace; font-size: 12px; color: var(--text-secondary); }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="text/babel">
+        const App = () => {
+            return (
+                <div className="app-container">
+                    <h1 className="page-title">Панель управления</h1>
+                    
+                    <div className="grid-top">
+                        <div className="stat-card">
+                            <div className="stat-val">32</div>
+                            <div className="stat-label">Учебных групп</div>
+                        </div>
+                        <div className="stat-card">
+                            <div className="stat-val">114</div>
+                            <div className="stat-label">Преподавателей</div>
+                        </div>
+                        <div className="stat-card">
+                            <div className="stat-val">680</div>
+                            <div className="stat-label">Пар к расстановке</div>
+                        </div>
+                    </div>
+
+                    <div className="generator-card">
+                        <h2 style={{fontSize: '20px', marginBottom:'24px'}}>Оркестратор CP-SAT</h2>
+                        <button className="btn-large">Запустить расчет расписания</button>
+
+                        <div className="progress-area">
+                            <div className="progress-header">
+                                <span style={{color: 'var(--accent-brand)'}}>Алгоритм работает (Этап 1: Время и Преподаватели)...</span>
+                                <span style={{color: 'var(--text-tertiary)'}}>45с / 320с</span>
+                            </div>
+                            <div className="progress-track">
+                                <div className="progress-fill"></div>
+                            </div>
+                            <div className="log-box">
+                                > Загрузка данных из PostgreSQL... OK<br/>
+                                > Инициализация модели орто-маршрутизации (OR-Tools)... OK<br/>
+                                > Добавление 14,302 мягких ограничений... OK<br/>
+                                > Оптимизация... (Минимизация штрафов: 3450 → 1200)
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>
