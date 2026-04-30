@@ -1,61 +1,56 @@
 import datetime
-from enum import Enum
+import enum
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, BigInteger, Enum
 
-from pydantic import ConfigDict
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, BigInteger
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.orm import declarative_base, relationship
 
 DeclBase = declarative_base()
 
+class FileType(enum.Enum):
+    STREAMS = "streams"
+    TEACHERS_LOAD = "teachers_load"
+    ROOMS = "rooms"
 
-class Role(str, Enum):
-    model_config = ConfigDict(use_enum_values=True)
-    USER = "user"
-    ADMIN = "admin"
-    OPERATOR = "operator"
-
-
-class User(DeclBase):
-    __tablename__ = "user"
+class ImportBatch(DeclBase):
+    __tablename__ = "import_batch"
     id = Column(Integer, primary_key=True, autoincrement=True)
-    telegram_id = Column(BigInteger, nullable=False)
-    username = Column(String)
-    chat_id = Column(BigInteger, nullable=False)
-    notification = Column(Boolean, default=False)
-    sub_start = Column(DateTime, default=datetime.datetime.now)
-    sub_end = Column(DateTime, default=datetime.datetime.now)
-    last_login = Column(DateTime, default=datetime.datetime.now)
+    filename = Column(String, nullable=False)
+    file_type = Column(Enum(FileType), nullable=False)
     created_date = Column(DateTime, default=datetime.datetime.now)
+    
+    streams = relationship("Stream", cascade="all,delete", back_populates="import_batch")
 
-    settings = relationship("Settings", cascade="all,delete", back_populates="user_main", uselist=False)
-    favorites = relationship("Favorites", cascade="all,delete", back_populates="user_main")
-    user_refresh_tokens = relationship("IssuedJWTToken", cascade="all,delete", back_populates="user")
-
-
-class Settings(DeclBase):
-    __tablename__ = "settings"
+class Teacher(DeclBase):
+    __tablename__ = "teacher"
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("user.id"), nullable=False)
-    type_site = Column(Integer, default=1)
-    url = Column(Boolean, default=False)
+    name = Column(String, nullable=False, unique=True)
+    restrictions_json = Column(String, nullable=True) # JSON string representation
 
-    user_main = relationship("User", back_populates="settings")
+    streams = relationship("Stream", back_populates="teacher")
 
-
-class IssuedJWTToken(DeclBase):
-    __tablename__ = "issued_jwt_token"
+class Stream(DeclBase):
+    __tablename__ = "stream"
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("user.id"))
-    jti = Column(String)
-    revoked = Column(Boolean, default=False)
-    created_date = Column(DateTime, default=datetime.datetime.now)
-    modificated_date = Column(DateTime, default=datetime.datetime.now)
+    import_batch_id = Column(Integer, ForeignKey("import_batch.id", ondelete="CASCADE"), nullable=False)
+    teacher_id = Column(Integer, ForeignKey("teacher.id"), nullable=True)
+    
+    event_name = Column(String, nullable=False)
+    stream_type = Column(String, nullable=True)
+    
+    import_batch = relationship("ImportBatch", back_populates="streams")
+    teacher = relationship("Teacher", back_populates="streams")
+    groups = relationship("StreamGroup", cascade="all,delete", back_populates="stream")
 
-    user = relationship("User", back_populates="user_refresh_tokens")
+class StreamGroup(DeclBase):
+    __tablename__ = "stream_group"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    stream_id = Column(Integer, ForeignKey("stream.id", ondelete="CASCADE"), nullable=False)
+    group_name = Column(String, nullable=False)
+    group_size = Column(Integer, nullable=False)
 
+    stream = relationship("Stream", back_populates="groups")
 
 async def create_tables(engine: AsyncEngine):
-    # DeclBase.metadata.create_all()
     async with engine.begin() as conn:
         await conn.run_sync(DeclBase.metadata.create_all)

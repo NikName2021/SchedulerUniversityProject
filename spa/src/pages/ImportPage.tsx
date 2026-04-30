@@ -112,22 +112,85 @@ const FileListItem = ({ file, onRemove }: { file: { name: string, size: string, 
 
 export const ImportPage: React.FC = () => {
   const [isDragging, setIsDragging] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  
   const [files, setFiles] = useState([
-    { name: 'Нагрузка_ИТ_2024.xlsx', size: '2.4 MB', status: 'ready' },
-    { name: 'Аудиторный_фонд.xlsx', size: '1.1 MB', status: 'ready' }
+    { id: -1, name: 'Нагрузка_ИТ_2024.xlsx', size: '2.4 MB', status: 'ready', date: new Date().toISOString() },
+    { id: -2, name: 'Аудиторный_фонд.xlsx', size: '1.1 MB', status: 'ready', date: new Date().toISOString() }
   ]);
 
-  const handleDrop = (uploadedFiles: FileList) => {
-    const newFiles = Array.from(uploadedFiles).map(f => ({
-      name: f.name,
-      size: `${(f.size / (1024 * 1024)).toFixed(1)} MB`,
-      status: 'ready'
-    }));
-    setFiles([...files, ...newFiles]);
+  React.useEffect(() => {
+    fetchHistory();
+  }, []);
+
+  const fetchHistory = async () => {
+    try {
+      const res = await fetch('http://localhost:8000/api/v1/scheduler/import/history');
+      if (res.ok) {
+        const data = await res.json();
+        const mapped = data.map((b: any) => ({
+          id: b.id,
+          name: b.filename,
+          size: b.file_type,
+          status: 'ready',
+          date: b.created_date
+        }));
+        setFiles(prev => {
+          const locals = prev.filter(p => p.id < 0);
+          return [...locals, ...mapped];
+        });
+      }
+    } catch(err) {
+      console.error(err);
+    }
   };
 
-  const removeFile = (index: number) => {
-    setFiles(files.filter((_, i) => i !== index));
+  const uploadFile = async (file: File) => {
+    setIsUploading(true);
+    setError(null);
+    setSuccessMsg(null);
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      const res = await fetch('http://localhost:8000/api/v1/scheduler/import/streams', {
+        method: 'POST',
+        body: formData,
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || 'Upload failed');
+      }
+      const data = await res.json();
+      setSuccessMsg(`Успешно загружено! Добавлено потоков: ${data.streams_added}, групп: ${data.groups_added}`);
+      await fetchHistory();
+    } catch(err: any) {
+      setError(err.message);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleDrop = (uploadedFiles: FileList) => {
+    if (uploadedFiles.length > 0) {
+      uploadFile(uploadedFiles[0]);
+    }
+  };
+
+  const removeFile = async (index: number) => {
+    const file = files[index];
+    if (file.id > 0) {
+      try {
+        const res = await fetch(`http://localhost:8000/api/v1/scheduler/import/history/${file.id}`, { method: 'DELETE' });
+        if (res.ok) {
+           setSuccessMsg('Файл и связанные данные успешно удалены.');
+           await fetchHistory();
+        }
+      } catch(err) { console.error(err); }
+    } else {
+      setFiles(files.filter((_, i) => i !== index));
+    }
   };
 
   return (
@@ -135,6 +198,9 @@ export const ImportPage: React.FC = () => {
       <header>
         <h1 className="text-3xl font-bold text-brand">Импорт данных</h1>
         <p className="text-text-secondary mt-2">Загрузите необходимые справочники для работы алгоритма.</p>
+        
+        {error && <div style={{marginTop: '1rem', padding: '1rem', background: '#fee2e2', color: '#b91c1c', borderRadius: '12px'}}>{error}</div>}
+        {successMsg && <div style={{marginTop: '1rem', padding: '1rem', background: '#dcfce7', color: '#15803d', borderRadius: '12px'}}>{successMsg}</div>}
       </header>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: '2.5rem' }}>
@@ -151,6 +217,7 @@ export const ImportPage: React.FC = () => {
               <span style={{ fontSize: '0.75rem', padding: '0.125rem 0.5rem', backgroundColor: 'var(--bg-base)', borderRadius: '100px', color: 'var(--text-tertiary)' }}>
                 {files.length}
               </span>
+              {isUploading && <span style={{ fontSize: '0.8rem', color: 'var(--brand)' }}>Загрузка...</span>}
             </h3>
             <div className="space-y-3">
               {files.map((file, idx) => (
@@ -188,6 +255,11 @@ export const ImportPage: React.FC = () => {
               <div className="flex items-center gap-3" style={{ opacity: 0.6 }}>
                 <div style={{ width: '24px', height: '24px', borderRadius: '50%', border: '2px solid white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: 900 }}>3</div>
                 <div style={{ flex: 1, fontSize: '0.875rem' }}>Учебные планы групп</div>
+                <X size={18} color="white" />
+              </div>
+              <div className="flex items-center gap-3" style={{ opacity: 0.6 }}>
+                <div style={{ width: '24px', height: '24px', borderRadius: '50%', border: '2px solid white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: 900 }}>4</div>
+                <div style={{ flex: 1, fontSize: '0.875rem' }}>Потоки обучающихся</div>
                 <X size={18} color="white" />
               </div>
             </div>
