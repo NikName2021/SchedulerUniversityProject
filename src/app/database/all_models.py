@@ -19,6 +19,8 @@ class ImportBatch(DeclBase):
     file_path = Column(String, nullable=True)
     file_type = Column(Enum(FileType), nullable=False)
     created_date = Column(DateTime, default=datetime.datetime.now)
+    status = Column(String, default="completed") # processing, completed, error
+    error_message = Column(String, nullable=True)
     
     streams = relationship("Stream", cascade="all,delete", back_populates="import_batch")
 
@@ -52,6 +54,31 @@ class StreamGroup(DeclBase):
     group_size = Column(Integer, nullable=False)
 
     stream = relationship("Stream", back_populates="groups")
+
+class GenerationTask(DeclBase):
+    __tablename__ = "generation_task"
+    id = Column(Integer, primary_key=True, index=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    status = Column(String, default="pending") # pending, success, failed
+    groups_json = Column(String) # List of groups
+    holidays_json = Column(String) # List of holidays
+    settings_json = Column(String) # Dict of other settings
+    result_count = Column(Integer, default=0)
+    error_message = Column(String, nullable=True)
+
+class ScheduleEntry(DeclBase):
+    __tablename__ = "schedule_entry"
+    id = Column(Integer, primary_key=True, index=True)
+    task_id = Column(Integer, ForeignKey("generation_task.id"), nullable=True)
+    group_name = Column(String, nullable=False)
+    event_name = Column(String, nullable=False)
+    stream_type = Column(String, nullable=False)
+    teacher_name = Column(String, nullable=True)
+    room_name = Column(String, nullable=True)
+    date = Column(DateTime, nullable=False)
+    lesson_number = Column(Integer, nullable=False)
+    warning = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.now)
 
 async def create_tables(engine: AsyncEngine):
     async with engine.begin() as conn:

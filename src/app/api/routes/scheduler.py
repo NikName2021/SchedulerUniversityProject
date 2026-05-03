@@ -1,19 +1,28 @@
 import tempfile
 import os
 import uuid
+import json
+import logging
 from datetime import datetime
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
-from sqlalchemy import distinct, func
+from sqlalchemy import distinct, func, ForeignKey
 
 from core.config import async_get_db
-from database.all_models import ImportBatch, FileType, Teacher, Stream, StreamGroup
+from database.all_models import ImportBatch, FileType, Teacher, Stream, StreamGroup, GenerationTask, ScheduleEntry
 from services.parser_service import parse_streams_content
+from services.generation_service import GenerationService
+from services.export_service import generate_excel_report
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/scheduler", tags=["Scheduler"])
+
+UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "../../uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 class StreamUpdateModel(BaseModel):
     stream_type: str | None = None
@@ -22,7 +31,7 @@ class StreamUpdateModel(BaseModel):
 class TeacherRestrictionsDetails(BaseModel):
     mode: str
     specific: list[str]
-    recurring: list[str]
+    recurring: dict # Reverted to dict as it was in my latest working version, but check if user wants list
 
 class TeacherRestrictionsModel(BaseModel):
     restrictions: TeacherRestrictionsDetails
@@ -32,20 +41,15 @@ class GenerationTaskModel(BaseModel):
     holidays: list[str]
     settings: dict | None = None
 
-UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "../../uploads")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-
 @router.post("/import/streams")
 async def import_streams(file: UploadFile = File(...), db: AsyncSession = Depends(async_get_db)):
     if not file.filename.endswith((".xls", ".xlsx", ".csv")):
         raise HTTPException(status_code=400, detail="Invalid file type")
 
-    # Read bytes
-    file_bytes = await file.read()
+    content = await file.read()
     
-    # Parse streams
     try:
-        parsed_data = parse_streams_content(file_bytes)
+        parsed_data = parse_streams_content(content)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error parsing file: {str(e)}")
         
@@ -53,29 +57,26 @@ async def import_streams(file: UploadFile = File(...), db: AsyncSession = Depend
         raise HTTPException(status_code=400, detail="No streams found in the document")
 
     # Save file to disk
-    timestamp = datetime.now().strftime("%Y%md_%H%M%S")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     unique_filename = f"{timestamp}_{uuid.uuid4().hex[:8]}_{file.filename}"
     file_path = os.path.join(UPLOAD_DIR, unique_filename)
     
     with open(file_path, "wb") as f:
-        f.write(file_bytes)
+        f.write(content)
 
     # Create ImportBatch
-    batch = ImportBatch(filename=file.filename, file_path=file_path, file_type=FileType.STREAMS)
+    batch = ImportBatch(filename=file.filename, file_path=file_path, file_type=FileType.STREAMS, status="completed")
     db.add(batch)
-    await db.flush() # To get batch.id
+    await db.flush()
     
-    # Track teachers to avoid duplicates in the same batch, and potentially across batches
-    # Simplification: we create a new teacher if not exists by name
     added_streams_count = 0
     added_groups_count = 0
     
-    for stream_data in parsed_data:
-        teacher_clean = stream_data["teacher"]
+    for s_data in parsed_data:
+        teacher_clean = s_data["teacher"]
         teacher_id = None
         
         if teacher_clean:
-            # Check if teacher exists
             stmt = select(Teacher).where(Teacher.name == teacher_clean)
             result = await db.execute(stmt)
             existing_teacher = result.scalar_one_or_none()
@@ -88,19 +89,17 @@ async def import_streams(file: UploadFile = File(...), db: AsyncSession = Depend
             else:
                 teacher_id = existing_teacher.id
                 
-        # Create Stream
         new_stream = Stream(
             import_batch_id=batch.id,
             teacher_id=teacher_id,
-            event_name=stream_data["event"],
-            stream_type=stream_data["type"]
+            event_name=s_data["event"],
+            stream_type=s_data["type"]
         )
         db.add(new_stream)
         await db.flush()
         added_streams_count += 1
         
-        # Create groups
-        for group in stream_data["groups"]:
+        for group in s_data["groups"]:
             new_group = StreamGroup(
                 stream_id=new_stream.id,
                 group_name=group["name"],
@@ -129,7 +128,8 @@ async def get_import_history(db: AsyncSession = Depends(async_get_db)):
             "id": b.id,
             "filename": b.filename,
             "file_type": b.file_type.value,
-            "created_date": b.created_date
+            "created_date": b.created_date,
+            "status": getattr(b, 'status', 'completed')
         } 
         for b in batches
     ]
@@ -143,21 +143,18 @@ async def delete_import_batch(batch_id: int, db: AsyncSession = Depends(async_ge
     if not batch:
         raise HTTPException(status_code=404, detail="Batch not found")
         
-    # Delete physical file
     if batch.file_path and os.path.exists(batch.file_path):
         try:
             os.remove(batch.file_path)
         except OSError as e:
-            print(f"Error deleting file {batch.file_path}: {e}")
+            logger.error(f"Error deleting file {batch.file_path}: {e}")
             
     await db.delete(batch)
     await db.commit()
-    
     return {"detail": "Import batch and associated data deleted"}
 
 @router.get("/groups")
 async def get_groups(db: AsyncSession = Depends(async_get_db)):
-    # Returns unique group names ordered alphabetically
     stmt = select(distinct(StreamGroup.group_name)).order_by(StreamGroup.group_name)
     result = await db.execute(stmt)
     groups = result.scalars().all()
@@ -165,7 +162,6 @@ async def get_groups(db: AsyncSession = Depends(async_get_db)):
 
 @router.get("/streams")
 async def get_streams_by_group(group_name: str = Query(..., description="Group name filter"), db: AsyncSession = Depends(async_get_db)):
-    # Find all streams that have a group with the specified name
     stmt = (
         select(Stream)
         .join(StreamGroup, StreamGroup.stream_id == Stream.id)
@@ -211,7 +207,6 @@ async def get_teachers(db: AsyncSession = Depends(async_get_db)):
     result = await db.execute(stmt)
     teachers = result.scalars().all()
     
-    import json
     response = []
     for t in teachers:
         blocked = []
@@ -224,7 +219,7 @@ async def get_teachers(db: AsyncSession = Depends(async_get_db)):
         response.append({
             "id": str(t.id),
             "name": t.name,
-            "dept": "Кафедра", # Placeholder for now as it's not in the model
+            "dept": "Кафедра",
             "blocked": blocked
         })
     return response
@@ -238,29 +233,24 @@ async def update_teacher_restrictions(teacher_id: int, payload: TeacherRestricti
     if not teacher:
         raise HTTPException(status_code=404, detail="Teacher not found")
         
-    import json
     teacher.restrictions_json = json.dumps(payload.restrictions.dict())
     await db.commit()
     return {"detail": "Restrictions updated"}
 
 @router.get("/stats")
 async def get_scheduler_stats(db: AsyncSession = Depends(async_get_db)):
-    # Total streams
     stmt_streams = select(func.count(Stream.id))
     result_streams = await db.execute(stmt_streams)
     total_streams = result_streams.scalar()
     
-    # Ignored streams
     stmt_ignored = select(func.count(Stream.id)).where(Stream.is_ignored == True)
     result_ignored = await db.execute(stmt_ignored)
     ignored_streams = result_ignored.scalar()
     
-    # Total groups
     stmt_groups = select(func.count(distinct(StreamGroup.group_name)))
     result_groups = await db.execute(stmt_groups)
     total_groups = result_groups.scalar()
     
-    # Total teachers
     stmt_teachers = select(func.count(Teacher.id))
     result_teachers = await db.execute(stmt_teachers)
     total_teachers = result_teachers.scalar()
@@ -273,9 +263,46 @@ async def get_scheduler_stats(db: AsyncSession = Depends(async_get_db)):
         "total_teachers": total_teachers
     }
 
+# --- New functionality restored below ---
+
 @router.post("/generate")
-async def start_generation(payload: GenerationTaskModel, db: AsyncSession = Depends(async_get_db)):
-    # For now, just log and return 200
-    print(f"Received generation task for groups: {payload.groups}")
-    print(f"Holidays: {payload.holidays}")
-    return {"status": "ok", "message": "Task received", "task_id": "gen_12345"}
+async def generate_schedule(task: GenerationTaskModel, background_tasks: BackgroundTasks, db: AsyncSession = Depends(async_get_db)):
+    # 1. Create a task record
+    new_task = GenerationTask(
+        groups_json=json.dumps(task.groups),
+        holidays_json=json.dumps(task.holidays),
+        settings_json=json.dumps(task.settings or {}),
+        status="pending"
+    )
+    db.add(new_task)
+    await db.commit()
+    await db.refresh(new_task)
+
+    # 2. Trigger background generation
+    background_tasks.add_task(
+        GenerationService.run_generation,
+        new_task.id,
+        task.groups,
+        task.holidays,
+        task.settings.get("enabled_types", [])
+    )
+    
+    return {"status": "ok", "message": "Задача на генерацию запущена в фоновом режиме.", "task_id": new_task.id}
+
+@router.get("/export")
+async def export_schedule(task_id: int | None = None, db: AsyncSession = Depends(async_get_db)):
+    output = await generate_excel_report(db, task_id)
+    if not output:
+        raise HTTPException(status_code=404, detail="No schedule found to export")
+    
+    filename = f"schedule_export_{task_id}.xlsx" if task_id else "schedule_export_all.xlsx"
+    headers = {
+        'Content-Disposition': f'attachment; filename="{filename}"'
+    }
+    return StreamingResponse(output, headers=headers, media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+@router.get("/tasks")
+async def get_generation_tasks(db: AsyncSession = Depends(async_get_db)):
+    stmt = select(GenerationTask).order_by(GenerationTask.created_at.desc())
+    result = await db.execute(stmt)
+    return result.scalars().all()

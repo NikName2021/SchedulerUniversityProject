@@ -5,6 +5,7 @@ import { StoragePage } from './pages/StoragePage';
 import { EditorPage } from './pages/EditorPage';
 import { CalendarPage } from './pages/CalendarPage';
 import { GenerationPage } from './pages/GenerationPage';
+import HistoryPage from './pages/HistoryPage';
 import { useAppStore } from './store/useAppStore';
 
 function App() {
@@ -22,6 +23,7 @@ function App() {
           <Route path="editor" element={<EditorPage />} />
           <Route path="calendar" element={<CalendarPage />} />
           <Route path="generation" element={<GenerationPage />} />
+          <Route path="history" element={<HistoryPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

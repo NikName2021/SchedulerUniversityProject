@@ -11,7 +11,8 @@ import {
   X,
   Search,
   Filter,
-  Settings2
+  Settings2,
+  Download
 } from 'lucide-react';
 
 interface Stats {
@@ -37,10 +38,15 @@ const ALL_TYPES = [
   'Внеучебное мероприятие'
 ];
 
+import { useLocation } from 'react-router-dom';
+
 export const GenerationPage: React.FC = () => {
+  const location = useLocation();
+  const inheritedData = location.state as any;
+
   const [groups, setGroups] = useState<string[]>([]);
-  const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
-  const [holidays, setHolidays] = useState<string[]>([]);
+  const [selectedGroups, setSelectedGroups] = useState<string[]>(inheritedData?.groups || []);
+  const [holidays, setHolidays] = useState<string[]>(inheritedData?.holidays || []);
   const [newHoliday, setNewHoliday] = useState('');
   const [stats, setStats] = useState<Stats | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -53,7 +59,7 @@ export const GenerationPage: React.FC = () => {
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
 
   // Filter types
-  const [enabledTypes, setEnabledTypes] = useState<string[]>(['Лекция', 'Семинар', 'Лабораторная']);
+  const [enabledTypes, setEnabledTypes] = useState<string[]>(inheritedData?.settings?.enabled_types || ['Лекция', 'Семинар', 'Лабораторная']);
 
   useEffect(() => {
     fetchInitialData();
@@ -147,6 +153,10 @@ export const GenerationPage: React.FC = () => {
     }
   };
 
+  const handleExport = () => {
+    window.open('http://localhost:8000/api/v1/scheduler/export', '_blank');
+  };
+
   const filteredGroups = groups.filter(g => g.toLowerCase().includes(searchQuery.toLowerCase()));
   
   // Apply type filter to preview
@@ -170,6 +180,27 @@ export const GenerationPage: React.FC = () => {
                 <span style={{ fontSize: '0.625rem', fontWeight: 800, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Типов</span>
                 <span style={{ fontSize: '1.125rem', fontWeight: 900, color: '#f59e0b' }}>{enabledTypes.length}</span>
             </div>
+            <button 
+                onClick={handleExport}
+                style={{ 
+                    backgroundColor: 'white', 
+                    color: 'var(--text-primary)', 
+                    padding: '0.5rem 1rem', 
+                    borderRadius: '12px', 
+                    fontWeight: 800, 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: '0.5rem',
+                    border: '1px solid var(--border-light)',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                    boxShadow: 'var(--shadow-sm)',
+                    fontSize: '0.875rem'
+                }}
+            >
+                <Download size={18} />
+                Excel
+            </button>
         </div>
       </header>
 

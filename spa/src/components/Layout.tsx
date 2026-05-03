@@ -4,8 +4,11 @@ import {
   Folder, 
   CalendarDays,
   Settings,
-  Zap
+  Zap,
+  History
 } from 'lucide-react';
+
+import ErrorBoundary from './ErrorBoundary';
 
 export const Layout: React.FC = () => {
   const navItems = [
@@ -13,6 +16,7 @@ export const Layout: React.FC = () => {
     { to: '/editor', icon: Settings, label: 'Редактор пар' },
     { to: '/calendar', icon: CalendarDays, label: 'Календарь' },
     { to: '/generation', icon: Zap, label: 'Генерация' },
+    { to: '/history', icon: History, label: 'История' },
   ];
 
 
@@ -84,7 +88,9 @@ export const Layout: React.FC = () => {
       {/* Main Content */}
       <main className="p-10">
         <div className="max-w-6xl animate-fade-in">
-          <Outlet />
+          <ErrorBoundary>
+            <Outlet />
+          </ErrorBoundary>
         </div>
       </main>
     </div>
