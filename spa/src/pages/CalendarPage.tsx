@@ -5,7 +5,11 @@ import {
   Search,
   Lock,
   ChevronRight,
-  ChevronLeft
+  ChevronLeft,
+  CalendarDays,
+  Repeat,
+  ShieldCheck,
+  ShieldAlert
 } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 
@@ -52,7 +56,8 @@ export const CalendarPage: React.FC = () => {
     teachers, 
     selectedTeacherId, 
     setSelectedTeacherId, 
-    setBlockedSlot,
+    toggleRestriction,
+    setRestrictionMode,
     saveTeacherRestrictions,
     fetchInitialData,
     isLoading 
@@ -74,6 +79,7 @@ export const CalendarPage: React.FC = () => {
   });
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [editMode, setEditMode] = useState<'specific' | 'recurring'>('specific');
 
   const filteredTeachers = teachers.filter(t => 
     t.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
@@ -99,16 +105,45 @@ export const CalendarPage: React.FC = () => {
     return <div className="p-20 text-center text-text-secondary">Загрузка данных преподавателей...</div>;
   }
 
-  const handleMouseDown = (slotKey: string, isCurrentlyBlocked: boolean) => {
-    if (!selectedTeacherId) return;
-    const newMode = isCurrentlyBlocked ? 'unblock' : 'block';
+  const handleMouseDown = (dateStr: string, slotIdx: number) => {
+    if (!selectedTeacherId || !selectedTeacher) return;
+    
+    const weekday = new Date(dateStr).getDay();
+    const recurringKey = `${weekday}-${slotIdx + 1}`;
+    const specificKey = `${dateStr}-${slotIdx + 1}`;
+    
+    const isCurrentlyActive = editMode === 'recurring' 
+      ? selectedTeacher.restrictions.recurring.includes(recurringKey)
+      : selectedTeacher.restrictions.specific.includes(specificKey);
+      
+    const newMode = isCurrentlyActive ? 'unblock' : 'block';
     setDragState({ isDragging: true, mode: newMode });
-    setBlockedSlot(selectedTeacherId, slotKey, newMode === 'block');
+    
+    toggleRestriction(
+      selectedTeacherId, 
+      editMode, 
+      editMode === 'recurring' ? recurringKey : specificKey
+    );
   };
 
-  const handleMouseEnter = (slotKey: string) => {
-    if (!dragState.isDragging || !dragState.mode || !selectedTeacherId) return;
-    setBlockedSlot(selectedTeacherId, slotKey, dragState.mode === 'block');
+  const handleMouseEnter = (dateStr: string, slotIdx: number) => {
+    if (!dragState.isDragging || !dragState.mode || !selectedTeacherId || !selectedTeacher) return;
+    
+    const weekday = new Date(dateStr).getDay();
+    const recurringKey = `${weekday}-${slotIdx + 1}`;
+    const specificKey = `${dateStr}-${slotIdx + 1}`;
+    
+    const isCurrentlyActive = editMode === 'recurring' 
+      ? selectedTeacher.restrictions.recurring.includes(recurringKey)
+      : selectedTeacher.restrictions.specific.includes(specificKey);
+      
+    if ((dragState.mode === 'block' && !isCurrentlyActive) || (dragState.mode === 'unblock' && isCurrentlyActive)) {
+      toggleRestriction(
+        selectedTeacherId, 
+        editMode, 
+        editMode === 'recurring' ? recurringKey : specificKey
+      );
+    }
   };
 
   // Date Navigation
@@ -203,33 +238,127 @@ export const CalendarPage: React.FC = () => {
           {selectedTeacher ? (
             <>
               {/* Toolbar & Date Navigation */}
-              <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#fafafa' }}>
-                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-                  <div style={{ width: '40px', height: '40px', borderRadius: '8px', backgroundColor: 'var(--brand)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.25rem', fontWeight: 700 }}>
-                    {selectedTeacher.name[0]}
+              <div style={{ padding: '0.75rem 1.25rem', borderBottom: '1px solid var(--border-light)', backgroundColor: '#fafafa', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                    <div style={{ width: '40px', height: '40px', borderRadius: '8px', backgroundColor: 'var(--brand)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.25rem', fontWeight: 700 }}>
+                      {selectedTeacher.name[0]}
+                    </div>
+                    <div>
+                      <h2 style={{ fontSize: '1.125rem', fontWeight: 700 }}>{selectedTeacher.name}</h2>
+                      <div className="flex gap-4 mt-0.5 text-text-secondary" style={{ fontSize: '0.75rem' }}>
+                        <span className="flex items-center gap-1"><MapPin size={12} /> {selectedTeacher.dept}</span>
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <h2 style={{ fontSize: '1.125rem', fontWeight: 700 }}>{selectedTeacher.name}</h2>
-                    <div className="flex gap-4 mt-0.5 text-text-secondary" style={{ fontSize: '0.75rem' }}>
-                      <span className="flex items-center gap-1"><MapPin size={12} /> {selectedTeacher.dept}</span>
+                  
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                      <button onClick={handlePrevWeek} style={{ padding: '0.5rem', borderRadius: '8px', backgroundColor: 'white', border: '1px solid var(--border-light)' }} className="hover:bg-gray-50">
+                        <ChevronLeft size={16} />
+                      </button>
+                      <button onClick={handleToday} style={{ padding: '0.5rem 1rem', borderRadius: '8px', backgroundColor: 'white', border: '1px solid var(--border-light)', fontSize: '0.875rem', fontWeight: 600 }} className="hover:bg-gray-50">
+                        Сегодня
+                      </button>
+                      <button onClick={handleNextWeek} style={{ padding: '0.5rem', borderRadius: '8px', backgroundColor: 'white', border: '1px solid var(--border-light)' }} className="hover:bg-gray-50">
+                        <ChevronRight size={16} />
+                      </button>
+                    </div>
+                    <div style={{ fontWeight: 700, fontSize: '1rem', minWidth: '120px', textAlign: 'right' }}>
+                      {currentMonthName} {currentYear}
                     </div>
                   </div>
                 </div>
-                
-                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                    <button onClick={handlePrevWeek} style={{ padding: '0.5rem', borderRadius: '8px', backgroundColor: 'white', border: '1px solid var(--border-light)' }} className="hover:bg-gray-50">
-                      <ChevronLeft size={16} />
-                    </button>
-                    <button onClick={handleToday} style={{ padding: '0.5rem 1rem', borderRadius: '8px', backgroundColor: 'white', border: '1px solid var(--border-light)', fontSize: '0.875rem', fontWeight: 600 }} className="hover:bg-gray-50">
-                      Сегодня
-                    </button>
-                    <button onClick={handleNextWeek} style={{ padding: '0.5rem', borderRadius: '8px', backgroundColor: 'white', border: '1px solid var(--border-light)' }} className="hover:bg-gray-50">
-                      <ChevronRight size={16} />
-                    </button>
+
+                <div style={{ display: 'flex', gap: '2rem', alignItems: 'center', padding: '0.5rem', backgroundColor: 'white', borderRadius: '8px', border: '1px solid var(--border-light)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Режим:</span>
+                    <div style={{ display: 'flex', backgroundColor: 'var(--bg-base)', padding: '2px', borderRadius: '6px' }}>
+                      <button 
+                        onClick={() => setEditMode('specific')}
+                        style={{ 
+                          padding: '0.25rem 0.75rem', 
+                          borderRadius: '4px', 
+                          fontSize: '0.75rem', 
+                          fontWeight: 600,
+                          backgroundColor: editMode === 'specific' ? 'white' : 'transparent',
+                          boxShadow: editMode === 'specific' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                          color: editMode === 'specific' ? 'var(--brand)' : 'var(--text-secondary)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.375rem',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <CalendarDays size={14} /> Конкретный день
+                      </button>
+                      <button 
+                        onClick={() => setEditMode('recurring')}
+                        style={{ 
+                          padding: '0.25rem 0.75rem', 
+                          borderRadius: '4px', 
+                          fontSize: '0.75rem', 
+                          fontWeight: 600,
+                          backgroundColor: editMode === 'recurring' ? 'white' : 'transparent',
+                          boxShadow: editMode === 'recurring' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                          color: editMode === 'recurring' ? 'var(--brand)' : 'var(--text-secondary)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.375rem',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <Repeat size={14} /> Повтор (еженедельно)
+                      </button>
+                    </div>
                   </div>
-                  <div style={{ fontWeight: 700, fontSize: '1rem', minWidth: '120px', textAlign: 'right' }}>
-                    {currentMonthName} {currentYear}
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Логика:</span>
+                    <div style={{ display: 'flex', backgroundColor: 'var(--bg-base)', padding: '2px', borderRadius: '6px' }}>
+                      <button 
+                        onClick={() => setRestrictionMode(selectedTeacherId, 'blacklist')}
+                        style={{ 
+                          padding: '0.25rem 0.75rem', 
+                          borderRadius: '4px', 
+                          fontSize: '0.75rem', 
+                          fontWeight: 600,
+                          backgroundColor: selectedTeacher.restrictions.mode === 'blacklist' ? 'white' : 'transparent',
+                          boxShadow: selectedTeacher.restrictions.mode === 'blacklist' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                          color: selectedTeacher.restrictions.mode === 'blacklist' ? '#ef4444' : 'var(--text-secondary)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.375rem',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <ShieldAlert size={14} /> Черный список
+                      </button>
+                      <button 
+                        onClick={() => setRestrictionMode(selectedTeacherId, 'whitelist')}
+                        style={{ 
+                          padding: '0.25rem 0.75rem', 
+                          borderRadius: '4px', 
+                          fontSize: '0.75rem', 
+                          fontWeight: 600,
+                          backgroundColor: selectedTeacher.restrictions.mode === 'whitelist' ? 'white' : 'transparent',
+                          boxShadow: selectedTeacher.restrictions.mode === 'whitelist' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                          color: selectedTeacher.restrictions.mode === 'whitelist' ? '#10b981' : 'var(--text-secondary)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.375rem',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <ShieldCheck size={14} /> Белый список
+                      </button>
+                    </div>
+                  </div>
+                  
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+                    {selectedTeacher.restrictions.mode === 'blacklist' 
+                      ? "Все разрешено, отмеченное — ЗАПРЕЩЕНО" 
+                      : "Все запрещено, отмеченное — РАЗРЕШЕНО"}
                   </div>
                 </div>
               </div>
@@ -288,36 +417,74 @@ export const CalendarPage: React.FC = () => {
                       {/* Days Grid Cells */}
                       {weekDays.map((dateObj, idx) => {
                         const dateStr = formatDateFull(dateObj);
-                        const slotKey = `${dateStr}-${slotIdx + 1}`;
-                        const isBlocked = selectedTeacher.blocked.includes(slotKey);
+                        const weekday = dateObj.getDay();
+                        const slotNum = slotIdx + 1;
+                        
+                        const recurringKey = `${weekday}-${slotNum}`;
+                        const specificKey = `${dateStr}-${slotNum}`;
+                        
+                        const hasRecurring = selectedTeacher.restrictions.recurring.includes(recurringKey);
+                        const hasSpecific = selectedTeacher.restrictions.specific.includes(specificKey);
+                        
+                        const isWhiteList = selectedTeacher.restrictions.mode === 'whitelist';
+                        
+                        // Logical blockage
+                        let isBlocked = false;
+                        if (isWhiteList) {
+                          isBlocked = !hasRecurring && !hasSpecific;
+                        } else {
+                          isBlocked = hasRecurring || hasSpecific;
+                        }
+
+                        // Colors
+                        let bgColor = 'white';
+                        let textColor = 'transparent';
+                        if (isWhiteList) {
+                            bgColor = isBlocked ? '#f9fafb' : '#f0fdf4'; // Light gray if blocked, green if allowed
+                            textColor = isBlocked ? '#9ca3af' : '#16a34a';
+                        } else {
+                            bgColor = isBlocked ? '#fef2f2' : 'white'; // Red if blocked, white if allowed
+                            textColor = isBlocked ? '#dc2626' : 'transparent';
+                        }
                         
                         return (
                           <button 
                             key={idx}
-                            onMouseDown={() => handleMouseDown(slotKey, isBlocked)}
-                            onMouseEnter={() => handleMouseEnter(slotKey)}
+                            onMouseDown={() => handleMouseDown(dateStr, slotIdx)}
+                            onMouseEnter={() => handleMouseEnter(dateStr, slotIdx)}
                             onDragStart={(e) => e.preventDefault()} 
                             style={{ 
-                              backgroundColor: isBlocked ? '#fef2f2' : 'white',
-                              color: isBlocked ? 'var(--blocked-text)' : 'transparent',
+                              backgroundColor: bgColor,
+                              backgroundImage: hasRecurring 
+                                ? `repeating-linear-gradient(45deg, transparent, transparent 10px, ${isWhiteList ? 'rgba(22, 163, 74, 0.1)' : 'rgba(220, 38, 38, 0.1)'} 10px, ${isWhiteList ? 'rgba(22, 163, 74, 0.1)' : 'rgba(220, 38, 38, 0.1)'} 20px)` 
+                                : 'none',
+                              color: textColor,
                               borderBottom: slotIdx !== TIMES.length - 1 ? '1px solid var(--border-light)' : 'none',
                               borderRight: idx !== 5 ? '1px solid var(--border-light)' : 'none',
                               cursor: 'pointer',
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'center',
-                              transition: 'background-color 0.1s, border-color 0.1s',
+                              transition: 'all 0.1s',
                               height: '64px',
                               padding: 0,
-                              position: 'relative'
+                              position: 'relative',
+                              border: (hasRecurring || hasSpecific) ? `2px solid ${isWhiteList ? '#10b981' : '#ef4444'}` : undefined,
+                              zIndex: (hasRecurring || hasSpecific) ? 10 : 1
                             }}
                             className={isBlocked ? "grid-cell-blocked" : "grid-cell"}
                           >
                             {isBlocked && (
-                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.25rem' }}>
-                                <Lock size={16} />
-                                <span style={{ fontSize: '0.625rem', fontWeight: 600 }}>Недоступен</span>
+                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.25rem', zIndex: 2 }}>
+                                <Lock size={14} />
+                                <span style={{ fontSize: '0.625rem', fontWeight: 800 }}>БЛОК</span>
                               </div>
+                            )}
+                            {!isBlocked && isWhiteList && (
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.25rem', zIndex: 2 }}>
+                                    <ShieldCheck size={14} />
+                                    <span style={{ fontSize: '0.625rem', fontWeight: 800 }}>OK</span>
+                                </div>
                             )}
                           </button>
                         );

@@ -1,6 +1,19 @@
 import { create } from 'zustand';
 import { MockAPI } from '../api/mockService';
-import type { Teacher, Stream } from '../api/mockService';
+import type { Stream } from '../api/mockService';
+
+export interface TeacherRestrictions {
+  mode: 'blacklist' | 'whitelist';
+  specific: string[];   // YYYY-MM-DD-Slot
+  recurring: string[];  // Weekday-Slot (e.g. "4-1")
+}
+
+export interface Teacher {
+  id: string;
+  name: string;
+  dept: string;
+  restrictions: TeacherRestrictions;
+}
 
 interface AppState {
   // Data
@@ -21,12 +34,13 @@ interface AppState {
   // Actions
   fetchInitialData: () => Promise<void>;
   setSelectedTeacherId: (id: string | null) => void;
-  toggleBlockedSlot: (teacherId: string, slotKey: string) => void;
-  setBlockedSlot: (teacherId: string, slotKey: string, isBlocked: boolean) => void;
-  startGeneration: () => Promise<void>;
   updateJobProgress: (jobId: string) => Promise<void>;
   resetJob: () => void;
   saveTeacherRestrictions: (teacherId: string) => Promise<void>;
+  
+  // Advanced Actions
+  setRestrictionMode: (teacherId: string, mode: 'blacklist' | 'whitelist') => void;
+  toggleRestriction: (teacherId: string, type: 'specific' | 'recurring', key: string) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -46,7 +60,20 @@ export const useAppStore = create<AppState>((set) => ({
     set({ isLoading: true });
     try {
       const res = await fetch('http://localhost:8000/api/v1/scheduler/teachers');
-      const teachers = await res.json();
+      const rawTeachers = await res.json();
+      
+      // Parse raw backend data into structured restrictions
+      const teachers: Teacher[] = rawTeachers.map((t: any) => {
+        let restrictions: TeacherRestrictions = { mode: 'blacklist', specific: [], recurring: [] };
+        if (t.blocked && !Array.isArray(t.blocked)) {
+            // Already structured
+            restrictions = t.blocked;
+        } else if (Array.isArray(t.blocked)) {
+            // Old format migration or simple list
+            restrictions.specific = t.blocked;
+        }
+        return { ...t, restrictions };
+      });
       
       set({ 
         teachers, 
@@ -60,32 +87,27 @@ export const useAppStore = create<AppState>((set) => ({
 
   setSelectedTeacherId: (id) => set({ selectedTeacherId: id }),
 
-  toggleBlockedSlot: (teacherId, slotKey) => {
-    set((state) => ({
-      teachers: state.teachers.map((t) => {
-        if (t.id === teacherId) {
-          const newBlocked = t.blocked.includes(slotKey)
-            ? t.blocked.filter((s) => s !== slotKey)
-            : [...t.blocked, slotKey];
-          return { ...t, blocked: newBlocked };
-        }
-        return t;
-      })
+  setRestrictionMode: (teacherId, mode) => {
+    set(state => ({
+      teachers: state.teachers.map(t => 
+        t.id === teacherId ? { ...t, restrictions: { ...t.restrictions, mode } } : t
+      )
     }));
   },
 
-  setBlockedSlot: (teacherId: string, slotKey: string, isBlocked: boolean) => {
-    set((state) => ({
-      teachers: state.teachers.map((t) => {
-        if (t.id === teacherId) {
-          const currentlyBlocked = t.blocked.includes(slotKey);
-          if (isBlocked && !currentlyBlocked) {
-            return { ...t, blocked: [...t.blocked, slotKey] };
-          } else if (!isBlocked && currentlyBlocked) {
-            return { ...t, blocked: t.blocked.filter(s => s !== slotKey) };
-          }
-        }
-        return t;
+  toggleRestriction: (teacherId, type, key) => {
+    set(state => ({
+      teachers: state.teachers.map(t => {
+        if (t.id !== teacherId) return t;
+        const list = [...t.restrictions[type]];
+        const index = list.indexOf(key);
+        if (index > -1) list.splice(index, 1);
+        else list.push(key);
+        
+        return { 
+          ...t, 
+          restrictions: { ...t.restrictions, [type]: list } 
+        };
       })
     }));
   },
@@ -123,7 +145,7 @@ export const useAppStore = create<AppState>((set) => ({
       await fetch(`http://localhost:8000/api/v1/scheduler/teachers/${teacherId}/restrictions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ restrictions: teacher.blocked })
+        body: JSON.stringify({ restrictions: teacher.restrictions })
       });
     } catch (e) {
       console.error('Failed to save restrictions', e);

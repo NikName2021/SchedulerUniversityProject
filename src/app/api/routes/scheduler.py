@@ -19,8 +19,13 @@ class StreamUpdateModel(BaseModel):
     stream_type: str | None = None
     is_ignored: bool | None = None
 
+class TeacherRestrictionsDetails(BaseModel):
+    mode: str
+    specific: list[str]
+    recurring: list[str]
+
 class TeacherRestrictionsModel(BaseModel):
-    restrictions: list[str]
+    restrictions: TeacherRestrictionsDetails
 
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "../../uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -229,6 +234,6 @@ async def update_teacher_restrictions(teacher_id: int, payload: TeacherRestricti
         raise HTTPException(status_code=404, detail="Teacher not found")
         
     import json
-    teacher.restrictions_json = json.dumps(payload.restrictions)
+    teacher.restrictions_json = json.dumps(payload.restrictions.dict())
     await db.commit()
     return {"detail": "Restrictions updated"}
