@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
-from sqlalchemy import distinct
+from sqlalchemy import distinct, func
 
 from core.config import async_get_db
 from database.all_models import ImportBatch, FileType, Teacher, Stream, StreamGroup
@@ -26,6 +26,11 @@ class TeacherRestrictionsDetails(BaseModel):
 
 class TeacherRestrictionsModel(BaseModel):
     restrictions: TeacherRestrictionsDetails
+
+class GenerationTaskModel(BaseModel):
+    groups: list[str]
+    holidays: list[str]
+    settings: dict | None = None
 
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "../../uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -237,3 +242,40 @@ async def update_teacher_restrictions(teacher_id: int, payload: TeacherRestricti
     teacher.restrictions_json = json.dumps(payload.restrictions.dict())
     await db.commit()
     return {"detail": "Restrictions updated"}
+
+@router.get("/stats")
+async def get_scheduler_stats(db: AsyncSession = Depends(async_get_db)):
+    # Total streams
+    stmt_streams = select(func.count(Stream.id))
+    result_streams = await db.execute(stmt_streams)
+    total_streams = result_streams.scalar()
+    
+    # Ignored streams
+    stmt_ignored = select(func.count(Stream.id)).where(Stream.is_ignored == True)
+    result_ignored = await db.execute(stmt_ignored)
+    ignored_streams = result_ignored.scalar()
+    
+    # Total groups
+    stmt_groups = select(func.count(distinct(StreamGroup.group_name)))
+    result_groups = await db.execute(stmt_groups)
+    total_groups = result_groups.scalar()
+    
+    # Total teachers
+    stmt_teachers = select(func.count(Teacher.id))
+    result_teachers = await db.execute(stmt_teachers)
+    total_teachers = result_teachers.scalar()
+    
+    return {
+        "total_streams": total_streams,
+        "active_streams": total_streams - ignored_streams,
+        "ignored_streams": ignored_streams,
+        "total_groups": total_groups,
+        "total_teachers": total_teachers
+    }
+
+@router.post("/generate")
+async def start_generation(payload: GenerationTaskModel, db: AsyncSession = Depends(async_get_db)):
+    # For now, just log and return 200
+    print(f"Received generation task for groups: {payload.groups}")
+    print(f"Holidays: {payload.holidays}")
+    return {"status": "ok", "message": "Task received", "task_id": "gen_12345"}

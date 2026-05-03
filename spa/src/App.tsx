@@ -4,6 +4,7 @@ import { Layout } from './components/Layout';
 import { StoragePage } from './pages/StoragePage';
 import { EditorPage } from './pages/EditorPage';
 import { CalendarPage } from './pages/CalendarPage';
+import { GenerationPage } from './pages/GenerationPage';
 import { useAppStore } from './store/useAppStore';
 
 function App() {
@@ -20,6 +21,7 @@ function App() {
           <Route index element={<StoragePage />} />
           <Route path="editor" element={<EditorPage />} />
           <Route path="calendar" element={<CalendarPage />} />
+          <Route path="generation" element={<GenerationPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

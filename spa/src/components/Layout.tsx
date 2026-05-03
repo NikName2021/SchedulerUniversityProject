@@ -3,7 +3,8 @@ import { NavLink, Outlet } from 'react-router-dom';
 import { 
   Folder, 
   CalendarDays,
-  Settings
+  Settings,
+  Zap
 } from 'lucide-react';
 
 export const Layout: React.FC = () => {
@@ -11,6 +12,7 @@ export const Layout: React.FC = () => {
     { to: '/', icon: Folder, label: 'Хранилище' },
     { to: '/editor', icon: Settings, label: 'Редактор пар' },
     { to: '/calendar', icon: CalendarDays, label: 'Календарь' },
+    { to: '/generation', icon: Zap, label: 'Генерация' },
   ];
 
 
