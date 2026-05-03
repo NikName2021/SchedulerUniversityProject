@@ -19,6 +19,9 @@ class StreamUpdateModel(BaseModel):
     stream_type: str | None = None
     is_ignored: bool | None = None
 
+class TeacherRestrictionsModel(BaseModel):
+    restrictions: list[str]
+
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "../../uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -191,3 +194,41 @@ async def update_stream(stream_id: int, payload: StreamUpdateModel, db: AsyncSes
         
     await db.commit()
     return {"detail": "Stream updated successfully"}
+
+@router.get("/teachers")
+async def get_teachers(db: AsyncSession = Depends(async_get_db)):
+    stmt = select(Teacher).order_by(Teacher.name)
+    result = await db.execute(stmt)
+    teachers = result.scalars().all()
+    
+    import json
+    response = []
+    for t in teachers:
+        blocked = []
+        if t.restrictions_json:
+            try:
+                blocked = json.loads(t.restrictions_json)
+            except:
+                blocked = []
+        
+        response.append({
+            "id": str(t.id),
+            "name": t.name,
+            "dept": "Кафедра", # Placeholder for now as it's not in the model
+            "blocked": blocked
+        })
+    return response
+
+@router.post("/teachers/{teacher_id}/restrictions")
+async def update_teacher_restrictions(teacher_id: int, payload: TeacherRestrictionsModel, db: AsyncSession = Depends(async_get_db)):
+    stmt = select(Teacher).where(Teacher.id == teacher_id)
+    result = await db.execute(stmt)
+    teacher = result.scalar_one_or_none()
+    
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Teacher not found")
+        
+    import json
+    teacher.restrictions_json = json.dumps(payload.restrictions)
+    await db.commit()
+    return {"detail": "Restrictions updated"}

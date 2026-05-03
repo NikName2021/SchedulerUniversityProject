@@ -3,7 +3,8 @@ import {
   Users, 
   Search,
   BookOpen,
-  EyeOff
+  EyeOff,
+  Filter
 } from 'lucide-react';
 
 interface StreamItem {
@@ -18,10 +19,9 @@ interface StreamItem {
 const STREAM_TYPES = [
   'Лекция',
   'Семинар',
-  'Практика',
   'Лабораторная',
-  'Внеучебное мероприятие',
-  'Не указан'
+  'Зачет',
+  'Внеучебное мероприятие'
 ];
 
 export const EditorPage: React.FC = () => {
@@ -31,6 +31,7 @@ export const EditorPage: React.FC = () => {
   
   const [streams, setStreams] = useState<StreamItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [typeFilter, setTypeFilter] = useState<string>('Все типы');
 
   useEffect(() => {
     fetchGroups();
@@ -85,6 +86,10 @@ export const EditorPage: React.FC = () => {
 
   const filteredGroups = groups.filter(g => 
     g.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const filteredStreams = streams.filter(s => 
+    typeFilter === 'Все типы' || s.stream_type === typeFilter
   );
 
   return (
@@ -166,6 +171,20 @@ export const EditorPage: React.FC = () => {
                     </p>
                   </div>
                 </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', backgroundColor: 'white', padding: '0.375rem 0.75rem', borderRadius: '8px', border: '1px solid var(--border-light)' }}>
+                    <Filter size={14} style={{ color: 'var(--text-secondary)' }} />
+                    <select 
+                      value={typeFilter}
+                      onChange={(e) => setTypeFilter(e.target.value)}
+                      style={{ border: 'none', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-primary)', outline: 'none', backgroundColor: 'transparent' }}
+                    >
+                      <option>Все типы</option>
+                      {STREAM_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </div>
+                </div>
               </div>
 
               <div style={{ flex: 1, overflowY: 'auto', padding: '0' }}>
@@ -184,7 +203,7 @@ export const EditorPage: React.FC = () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {streams.map(stream => (
+                      {filteredStreams.map(stream => (
                         <tr key={stream.id} style={{ 
                           borderBottom: '1px solid var(--border-light)',
                           backgroundColor: stream.is_ignored ? '#fafafa' : 'transparent',

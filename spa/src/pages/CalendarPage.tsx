@@ -53,6 +53,8 @@ export const CalendarPage: React.FC = () => {
     selectedTeacherId, 
     setSelectedTeacherId, 
     setBlockedSlot,
+    saveTeacherRestrictions,
+    fetchInitialData,
     isLoading 
   } = useAppStore();
 
@@ -79,12 +81,19 @@ export const CalendarPage: React.FC = () => {
   );
 
   useEffect(() => {
+    fetchInitialData();
+  }, []);
+
+  useEffect(() => {
     const handleGlobalMouseUp = () => {
+      if (dragState.isDragging && selectedTeacherId) {
+        saveTeacherRestrictions(selectedTeacherId);
+      }
       setDragState({ isDragging: false, mode: null });
     };
     window.addEventListener('mouseup', handleGlobalMouseUp);
     return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
-  }, []);
+  }, [dragState.isDragging, selectedTeacherId, saveTeacherRestrictions]);
 
   if (isLoading) {
     return <div className="p-20 text-center text-text-secondary">Загрузка данных преподавателей...</div>;

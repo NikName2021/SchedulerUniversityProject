@@ -16,3 +16,6 @@ spa/package-lock.json
 /spa/.env
 .data
 /spa/dist/
+/src/app/uploads/*
+/src/app/scheduler.db
+/src/.env

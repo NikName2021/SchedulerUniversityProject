@@ -8,26 +8,33 @@ def parse_streams_content(file_bytes: bytes):
     # Normalize column names
     df.columns = [str(col).replace('\n', ' ').strip() for col in df.columns]
 
-    streams = []
+    streams_map = {}
     
     for idx, row in df.iterrows():
         event_name = str(row.get('Мероприятие', '')).strip()
         if not event_name or event_name == 'nan':
             continue
             
-        stream_type = str(row.get('Вид потока', '')).strip()
+        raw_type = str(row.get('Вид потока', '')).strip().upper()
         
-        # Rule 2: Ignore extracurricular
-        if stream_type.lower() == 'внеучебное мероприятие':
-            continue
+        if raw_type == 'П':
+            stream_type = 'Семинар'
+        elif raw_type == 'З':
+            stream_type = 'Зачет'
+        elif raw_type == 'ЛБ':
+            stream_type = 'Лабораторная'
+        elif raw_type == 'Л':
+            stream_type = 'Лекция'
+        else:
+            stream_type = 'Внеучебное мероприятие'
             
-        # Rule 3: Teacher - extract name outside parentheses
         teacher_raw = str(row.get('Преподаватель', '')).strip()
         teacher_clean = None
         if teacher_raw and teacher_raw != 'nan':
             teacher_clean = re.sub(r'\(.*?\)', '', teacher_raw).strip()
             
-        # Parse groups
+        key = (event_name, stream_type)
+        
         groups_raw = str(row.get('Группа', '')).strip()
         groups_parsed = []
         if groups_raw and groups_raw != 'nan':
@@ -41,11 +48,18 @@ def parse_streams_content(file_bytes: bytes):
         if not groups_parsed and groups_raw and groups_raw != 'nan':
              groups_parsed = [{"name": groups_raw, "size": 0}]
              
-        streams.append({
-            "event": event_name,
-            "type": stream_type,
-            "teacher": teacher_clean,
-            "groups": groups_parsed
-        })
+        if key not in streams_map:
+            streams_map[key] = {
+                "event": event_name,
+                "type": stream_type,
+                "teacher": teacher_clean,
+                "groups": []
+            }
         
-    return streams
+        existing_group_names = {g["name"] for g in streams_map[key]["groups"]}
+        for g in groups_parsed:
+            if g["name"] not in existing_group_names:
+                streams_map[key]["groups"].append(g)
+                existing_group_names.add(g["name"])
+        
+    return list(streams_map.values())

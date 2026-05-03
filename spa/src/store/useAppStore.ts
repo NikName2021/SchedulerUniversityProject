@@ -26,6 +26,7 @@ interface AppState {
   startGeneration: () => Promise<void>;
   updateJobProgress: (jobId: string) => Promise<void>;
   resetJob: () => void;
+  saveTeacherRestrictions: (teacherId: string) => Promise<void>;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -44,13 +45,11 @@ export const useAppStore = create<AppState>((set) => ({
   fetchInitialData: async () => {
     set({ isLoading: true });
     try {
-      const [teachers, streams] = await Promise.all([
-        MockAPI.getTeachers(),
-        MockAPI.getStreams()
-      ]);
+      const res = await fetch('http://localhost:8000/api/v1/scheduler/teachers');
+      const teachers = await res.json();
+      
       set({ 
         teachers, 
-        streams, 
         isLoading: false,
         selectedTeacherId: teachers[0]?.id || null 
       });
@@ -113,5 +112,21 @@ export const useAppStore = create<AppState>((set) => ({
     }
   },
 
-  resetJob: () => set({ isGenerating: false, jobId: null, progress: 0, logs: [] })
+  resetJob: () => set({ isGenerating: false, jobId: null, progress: 0, logs: [] }),
+
+  saveTeacherRestrictions: async (teacherId: string) => {
+    const state = useAppStore.getState();
+    const teacher = state.teachers.find(t => t.id === teacherId);
+    if (!teacher) return;
+
+    try {
+      await fetch(`http://localhost:8000/api/v1/scheduler/teachers/${teacherId}/restrictions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ restrictions: teacher.blocked })
+      });
+    } catch (e) {
+      console.error('Failed to save restrictions', e);
+    }
+  }
 }));
