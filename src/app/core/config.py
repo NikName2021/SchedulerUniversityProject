@@ -11,7 +11,13 @@ from starlette.datastructures import Secret
 from database.db_session import get_db_path
 from .logging import logging_config
 
-config = Config(".env")
+import os
+from starlette.config import Config
+
+if os.path.exists(".env"):
+    config = Config(".env")
+else:
+    config = Config()
 
 API_PREFIX = "/api"
 VERSION = "0.1.0"

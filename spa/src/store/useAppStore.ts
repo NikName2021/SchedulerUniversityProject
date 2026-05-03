@@ -22,6 +22,7 @@ interface AppState {
   fetchInitialData: () => Promise<void>;
   setSelectedTeacherId: (id: string | null) => void;
   toggleBlockedSlot: (teacherId: string, slotKey: string) => void;
+  setBlockedSlot: (teacherId: string, slotKey: string, isBlocked: boolean) => void;
   startGeneration: () => Promise<void>;
   updateJobProgress: (jobId: string) => Promise<void>;
   resetJob: () => void;
@@ -68,6 +69,22 @@ export const useAppStore = create<AppState>((set) => ({
             ? t.blocked.filter((s) => s !== slotKey)
             : [...t.blocked, slotKey];
           return { ...t, blocked: newBlocked };
+        }
+        return t;
+      })
+    }));
+  },
+
+  setBlockedSlot: (teacherId: string, slotKey: string, isBlocked: boolean) => {
+    set((state) => ({
+      teachers: state.teachers.map((t) => {
+        if (t.id === teacherId) {
+          const currentlyBlocked = t.blocked.includes(slotKey);
+          if (isBlocked && !currentlyBlocked) {
+            return { ...t, blocked: [...t.blocked, slotKey] };
+          } else if (!isBlocked && currentlyBlocked) {
+            return { ...t, blocked: t.blocked.filter(s => s !== slotKey) };
+          }
         }
         return t;
       })

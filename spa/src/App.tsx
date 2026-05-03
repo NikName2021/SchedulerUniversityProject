@@ -1,10 +1,9 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Layout } from './components/Layout';
-import { DashboardPage } from './pages/DashboardPage';
-import { ImportPage } from './pages/ImportPage';
-import { TeachersPage } from './pages/TeachersPage';
-import { SchedulePage } from './pages/SchedulePage';
+import { StoragePage } from './pages/StoragePage';
+import { EditorPage } from './pages/EditorPage';
+import { CalendarPage } from './pages/CalendarPage';
 import { useAppStore } from './store/useAppStore';
 
 function App() {
@@ -18,10 +17,9 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Layout />}>
-          <Route index element={<DashboardPage />} />
-          <Route path="import" element={<ImportPage />} />
-          <Route path="teachers" element={<TeachersPage />} />
-          <Route path="schedule" element={<SchedulePage />} />
+          <Route index element={<StoragePage />} />
+          <Route path="editor" element={<EditorPage />} />
+          <Route path="calendar" element={<CalendarPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

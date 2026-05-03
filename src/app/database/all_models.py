@@ -16,6 +16,7 @@ class ImportBatch(DeclBase):
     __tablename__ = "import_batch"
     id = Column(Integer, primary_key=True, autoincrement=True)
     filename = Column(String, nullable=False)
+    file_path = Column(String, nullable=True)
     file_type = Column(Enum(FileType), nullable=False)
     created_date = Column(DateTime, default=datetime.datetime.now)
     
@@ -37,6 +38,7 @@ class Stream(DeclBase):
     
     event_name = Column(String, nullable=False)
     stream_type = Column(String, nullable=True)
+    is_ignored = Column(Boolean, default=False)
     
     import_batch = relationship("ImportBatch", back_populates="streams")
     teacher = relationship("Teacher", back_populates="streams")

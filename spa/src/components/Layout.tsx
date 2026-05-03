@@ -1,20 +1,18 @@
 import React from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { 
-  LayoutDashboard, 
-  FileUp, 
-  Users, 
+  Folder, 
   CalendarDays,
   Settings
 } from 'lucide-react';
 
 export const Layout: React.FC = () => {
   const navItems = [
-    { to: '/', icon: LayoutDashboard, label: 'Дашборд' },
-    { to: '/import', icon: FileUp, label: 'Импорт данных' },
-    { to: '/teachers', icon: Users, label: 'Преподаватели' },
-    { to: '/schedule', icon: CalendarDays, label: 'Расписание' },
+    { to: '/', icon: Folder, label: 'Хранилище' },
+    { to: '/editor', icon: Settings, label: 'Редактор пар' },
+    { to: '/calendar', icon: CalendarDays, label: 'Календарь' },
   ];
+
 
   return (
     <div className="min-h-screen">

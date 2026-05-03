@@ -28,10 +28,10 @@ export const MockAPI = {
   getTeachers: async (): Promise<Teacher[]> => {
     await delay(400);
     return [
-       { id: '1', name: "Иванов А.С.", dept: "Высшая математика", blocked: ["ЧТ-1", "ЧТ-2"] },
+       { id: '1', name: "Иванов А.С.", dept: "Высшая математика", blocked: [] },
        { id: '2', name: "Петров В.М.", dept: "Кафедра математики", blocked: [] },
        { id: '3', name: "Сидорова Е.Ю.", dept: "Кафедра физики", blocked: [] },
-       { id: '4', name: "Козлов Д.А.", dept: "Кафедра ИИ", blocked: ["СБ-1", "СБ-2", "СБ-3", "СБ-4", "СБ-5", "СБ-6"] }
+       { id: '4', name: "Козлов Д.А.", dept: "Кафедра ИИ", blocked: [] }
     ];
   },
   

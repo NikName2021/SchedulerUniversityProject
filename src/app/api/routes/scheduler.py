@@ -1,13 +1,26 @@
 import tempfile
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
+import os
+import uuid
+from datetime import datetime
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
+from sqlalchemy import distinct
 
 from core.config import async_get_db
 from database.all_models import ImportBatch, FileType, Teacher, Stream, StreamGroup
 from services.parser_service import parse_streams_content
 
 router = APIRouter(prefix="/scheduler", tags=["Scheduler"])
+
+class StreamUpdateModel(BaseModel):
+    stream_type: str | None = None
+    is_ignored: bool | None = None
+
+UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "../../uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 @router.post("/import/streams")
 async def import_streams(file: UploadFile = File(...), db: AsyncSession = Depends(async_get_db)):
@@ -26,8 +39,16 @@ async def import_streams(file: UploadFile = File(...), db: AsyncSession = Depend
     if not parsed_data:
         raise HTTPException(status_code=400, detail="No streams found in the document")
 
+    # Save file to disk
+    timestamp = datetime.now().strftime("%Y%md_%H%M%S")
+    unique_filename = f"{timestamp}_{uuid.uuid4().hex[:8]}_{file.filename}"
+    file_path = os.path.join(UPLOAD_DIR, unique_filename)
+    
+    with open(file_path, "wb") as f:
+        f.write(file_bytes)
+
     # Create ImportBatch
-    batch = ImportBatch(filename=file.filename, file_type=FileType.STREAMS)
+    batch = ImportBatch(filename=file.filename, file_path=file_path, file_type=FileType.STREAMS)
     db.add(batch)
     await db.flush() # To get batch.id
     
@@ -109,7 +130,64 @@ async def delete_import_batch(batch_id: int, db: AsyncSession = Depends(async_ge
     if not batch:
         raise HTTPException(status_code=404, detail="Batch not found")
         
+    # Delete physical file
+    if batch.file_path and os.path.exists(batch.file_path):
+        try:
+            os.remove(batch.file_path)
+        except OSError as e:
+            print(f"Error deleting file {batch.file_path}: {e}")
+            
     await db.delete(batch)
     await db.commit()
     
     return {"detail": "Import batch and associated data deleted"}
+
+@router.get("/groups")
+async def get_groups(db: AsyncSession = Depends(async_get_db)):
+    # Returns unique group names ordered alphabetically
+    stmt = select(distinct(StreamGroup.group_name)).order_by(StreamGroup.group_name)
+    result = await db.execute(stmt)
+    groups = result.scalars().all()
+    return {"groups": groups}
+
+@router.get("/streams")
+async def get_streams_by_group(group_name: str = Query(..., description="Group name filter"), db: AsyncSession = Depends(async_get_db)):
+    # Find all streams that have a group with the specified name
+    stmt = (
+        select(Stream)
+        .join(StreamGroup, StreamGroup.stream_id == Stream.id)
+        .where(StreamGroup.group_name == group_name)
+        .options(selectinload(Stream.teacher), selectinload(Stream.groups))
+    )
+    result = await db.execute(stmt)
+    streams = result.scalars().all()
+    
+    response = []
+    for s in streams:
+        response.append({
+            "id": s.id,
+            "event_name": s.event_name,
+            "stream_type": s.stream_type,
+            "is_ignored": s.is_ignored,
+            "teacher": s.teacher.name if s.teacher else None,
+            "groups": [{"name": g.group_name, "size": g.group_size} for g in s.groups]
+        })
+        
+    return response
+
+@router.patch("/streams/{stream_id}")
+async def update_stream(stream_id: int, payload: StreamUpdateModel, db: AsyncSession = Depends(async_get_db)):
+    stmt = select(Stream).where(Stream.id == stream_id)
+    result = await db.execute(stmt)
+    stream = result.scalar_one_or_none()
+    
+    if not stream:
+        raise HTTPException(status_code=404, detail="Stream not found")
+        
+    if payload.stream_type is not None:
+        stream.stream_type = payload.stream_type
+    if payload.is_ignored is not None:
+        stream.is_ignored = payload.is_ignored
+        
+    await db.commit()
+    return {"detail": "Stream updated successfully"}
