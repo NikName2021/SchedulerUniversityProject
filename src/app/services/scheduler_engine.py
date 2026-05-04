@@ -39,12 +39,20 @@ def solve_schedule(
     teachers = set(s["teacher"] for s in subjects.values() if s.get("teacher"))
     fixed_schedules = fixed_schedules or {}
 
+    from core.constants import (
+        PENALTY_UNASSIGNED, PENALTY_LATE_LESSON, PENALTY_SATURDAY,
+        PENALTY_WINDOW, PENALTY_SYNC_STREAM, PENALTY_PROGRESS_VIOLATION
+    )
+
     x = {}  # x[(g, subj, t, s)] — логическая переменная
     penalties = []
     unassigned_vars = {}
 
-    for g in groups:
-        for subj, subj_data in subjects.items():
+    # 0. Инициализация переменных
+    for subj, subj_data in subjects.items():
+        relevant_groups = streams_map.get(subj, [])
+        for g in relevant_groups:
+            if g not in groups: continue
             for t in ["lec", "sem"]:
                 target_count = subj_data.get("lectures", 0) if t == "lec" else subj_data.get("seminars", 0)
                 if target_count == 0:
@@ -52,36 +60,47 @@ def solve_schedule(
                 for s in SLOTS:
                     var = model.NewBoolVar(f"x_{g}_{subj}_{t}_{s[0]}_{s[1]}")
                     x[(g, subj, t, s)] = var
-
+                    
                     # Штраф за поздние пары
-                    penalties.append(var * s[1] * 3)
+                    penalties.append(var * s[1] * PENALTY_LATE_LESSON)
 
-                    # Штраф за субботу (weekday == 5)
+                    # Штраф за субботу
                     if s[0].weekday() == 5:
-                        penalties.append(var * 60)
+                        penalties.append(var * PENALTY_SATURDAY)
 
-    # 1. Количество занятий
-    for g in groups:
-        for subj, subj_data in subjects.items():
+    # 1. Точное количество занятий (с возможностью "не поставить" со штрафом)
+    for subj, subj_data in subjects.items():
+        relevant_groups = streams_map.get(subj, [])
+        for g in relevant_groups:
+            if g not in groups: continue
             for t in ["lec", "sem"]:
                 target_count = subj_data.get("lectures", 0) if t == "lec" else subj_data.get("seminars", 0)
                 if target_count == 0:
                     continue
+                
+                vars_for_g_subj_t = [x[(g, subj, t, s)] for s in SLOTS if (g, subj, t, s) in x]
+                if not vars_for_g_subj_t: continue
+                
                 deficit = model.NewIntVar(0, target_count, f"deficit_{g}_{subj}_{t}")
-                model.Add(sum([x[(g, subj, t, s)] for s in SLOTS if (g, subj, t, s) in x]) + deficit == target_count)
+                model.Add(sum(vars_for_g_subj_t) + deficit == target_count)
                 unassigned_vars[(g, subj, t)] = (deficit, target_count)
-                penalties.append(deficit * 100000)
+                penalties.append(deficit * PENALTY_UNASSIGNED)
 
-    # 2. Не более одной пары у группы в слот
+    # 2. Не более одной пары у группы в слот + Определение занятости слота
+    has_class = {}
     for g in groups:
         for s in SLOTS:
             events = []
-            for subj, subj_data in subjects.items():
+            for subj in subjects.keys():
                 if (g, subj, "lec", s) in x: events.append(x[(g, subj, "lec", s)])
                 if (g, subj, "sem", s) in x: events.append(x[(g, subj, "sem", s)])
-
+            
+            hc = model.NewBoolVar(f"hc_{g}_{s[0]}_{s[1]}")
             if events:
-                model.AddAtMostOne(events)
+                model.AddExactlyOne(events + [hc.Not()])
+            else:
+                model.Add(hc == 0)
+            has_class[(g, s)] = hc
 
     # 3. Лекции в потоке
     for subj, stream_groups in streams_map.items():
@@ -99,21 +118,23 @@ def solve_schedule(
             t_events = []
             for subj, subj_data in subjects.items():
                 if subj_data.get("teacher") == t_name:
+                    # Семинары уникальны
                     if subj_data.get("seminars", 0) > 0:
                         for g in groups:
                             if (g, subj, "sem", s) in x:
                                 t_events.append(x[(g, subj, "sem", s)])
-
+                    # Лекции потоковые
                     if subj_data.get("lectures", 0) > 0:
-                        stream = streams_map.get(subj, [groups[0]])
-                        base_g = stream[0]
-                        if (base_g, subj, "lec", s) in x:
-                            t_events.append(x[(base_g, subj, "lec", s)])
+                        stream = streams_map.get(subj, [])
+                        if stream:
+                            base_g = stream[0]
+                            if (base_g, subj, "lec", s) in x:
+                                t_events.append(x[(base_g, subj, "lec", s)])
 
             if t_events:
                 model.AddAtMostOne(t_events)
 
-    # 5. Доступность
+    # 5. Доступность (Хард)
     for g in groups:
         for subj, subj_data in subjects.items():
             t_name = subj_data.get("teacher")
@@ -122,16 +143,15 @@ def solve_schedule(
                 for s in SLOTS:
                     var = x[(g, subj, t, s)]
                     d, lesson = s
-
                     # Преподаватель
                     if t_name and t_name in unavailable_times.get("teacher", {}):
-                        if (d.weekday(), lesson) in unavailable_times["teacher"][t_name]:
+                        teacher_unavail = unavailable_times["teacher"][t_name]
+                        if (d.weekday(), lesson) in teacher_unavail or (d, lesson) in teacher_unavail:
                             model.Add(var == 0)
-                            continue
-
                     # Группа
                     if g in unavailable_times.get("group", {}):
-                        if (d.weekday(), lesson) in unavailable_times["group"][g]:
+                        group_unavail = unavailable_times["group"][g]
+                        if (d.weekday(), lesson) in group_unavail or (d, lesson) in group_unavail:
                             model.Add(var == 0)
 
     # 6. Фиксации
@@ -143,14 +163,123 @@ def solve_schedule(
             if (g, subj, t, d_l) in x:
                 model.Add(x[(g, subj, t, d_l)] == 1)
 
+    # 7. Дополнительные ограничения из GPT алгоритма
+    
+    # 7.1. Не более одной лекции и одной практики в день по одному предмету (Hard)
+    for g in groups:
+        for subj in subjects.keys():
+            for day in days:
+                day_slots = [s for s in SLOTS if s[0] == day]
+                lec_vars = [x[(g, subj, "lec", s)] for s in day_slots if (g, subj, "lec", s) in x]
+                if lec_vars: model.Add(sum(lec_vars) <= 1)
+                sem_vars = [x[(g, subj, "sem", s)] for s in day_slots if (g, subj, "sem", s) in x]
+                if sem_vars: model.Add(sum(sem_vars) <= 1)
+
+    # 7.2. Синхронизация семинаров по потоку (Soft)
+    for subj, stream_groups in streams_map.items():
+        if len(stream_groups) > 1 and subjects.get(subj, {}).get("seminars", 0) > 0:
+            base_g = stream_groups[0]
+            if base_g in groups:
+                for other_g in stream_groups[1:]:
+                    if other_g in groups:
+                        for day in days:
+                            # Кумулятивное количество семинаров к концу дня
+                            cum_sem_base = sum(x[(base_g, subj, "sem", s)] for s in SLOTS if s[0] <= day and (base_g, subj, "sem", s) in x)
+                            cum_sem_other = sum(x[(other_g, subj, "sem", s)] for s in SLOTS if s[0] <= day and (other_g, subj, "sem", s) in x)
+                            
+                            diff = model.NewIntVar(-100, 100, f"diff_sem_{subj}_{base_g}_{other_g}_{day}")
+                            model.Add(diff == cum_sem_base - cum_sem_other)
+                            abs_diff = model.NewIntVar(0, 100, f"abs_diff_sem_{subj}_{base_g}_{other_g}_{day}")
+                            model.AddAbsEquality(abs_diff, diff)
+                            penalties.append(abs_diff * PENALTY_SYNC_STREAM)
+
+    # 7.3. Окна и Обед (Soft)
+    for g in groups:
+        for day in days:
+            day_slots_sorted = sorted([s for s in SLOTS if s[0] == day], key=lambda i: i[1])
+            hc_day = [has_class[(g, s)] for s in day_slots_sorted]
+            if not hc_day: continue
+            
+            total_classes = sum(hc_day)
+            day_active = model.NewBoolVar(f"active_{g}_{day}")
+            model.Add(total_classes > 0).OnlyEnforceIf(day_active)
+            model.Add(total_classes == 0).OnlyEnforceIf(day_active.Not())
+            
+            start_idx = model.NewIntVar(1, 10, f"start_{g}_{day}")
+            end_idx = model.NewIntVar(1, 10, f"end_{g}_{day}")
+            for idx, lesson_hc in enumerate(hc_day):
+                l_num = day_slots_sorted[idx][1]
+                model.Add(start_idx <= l_num).OnlyEnforceIf(lesson_hc)
+                model.Add(end_idx >= l_num).OnlyEnforceIf(lesson_hc)
+            
+            # Обед (пересечение 3 и 4 пары)
+            # В gpt.py это было реализовано через crosses_lunch
+            start_le_3 = model.NewBoolVar(f"start_le_3_{g}_{day}")
+            model.Add(start_idx <= 3).OnlyEnforceIf(start_le_3)
+            model.Add(start_idx > 3).OnlyEnforceIf(start_le_3.Not())
+            
+            end_ge_4 = model.NewBoolVar(f"end_ge_4_{g}_{day}")
+            model.Add(end_idx >= 4).OnlyEnforceIf(end_ge_4)
+            model.Add(end_idx < 4).OnlyEnforceIf(end_ge_4.Not())
+            
+            crosses_lunch = model.NewBoolVar(f"crosses_lunch_{g}_{day}")
+            model.AddMinEquality(crosses_lunch, [start_le_3, end_ge_4])
+            
+            windows = model.NewIntVar(0, 10, f"windows_{g}_{day}")
+            model.Add(windows == end_idx - start_idx + 1 - total_classes - crosses_lunch).OnlyEnforceIf(day_active)
+            model.Add(windows == 0).OnlyEnforceIf(day_active.Not())
+            penalties.append(windows * PENALTY_WINDOW)
+
+            # Обед (ЖЕСТКОЕ ПРАВИЛО: нельзя занимать и 3, и 4 пару одновременно)
+            # Находим индексы 3 и 4 пары в hc_day
+            idx_3 = next((i for i, s in enumerate(day_slots_sorted) if s[1] == 3), None)
+            idx_4 = next((i for i, s in enumerate(day_slots_sorted) if s[1] == 4), None)
+            if idx_3 is not None and idx_4 is not None:
+                model.AddBoolOr([hc_day[idx_3].Not(), hc_day[idx_4].Not()])
+
+    # 7.4. Синхронизация Лекции -> Семинары (Soft)
+    for subj, subj_data in subjects.items():
+        if subj_data.get("lectures", 0) > 0 and subj_data.get("seminars", 0) > 0:
+            total_lec = subj_data["lectures"]
+            total_sem = subj_data["seminars"]
+            stream = streams_map.get(subj, [])
+            if not stream: continue
+            base_g = stream[0]
+            
+            cum_lec = 0
+            for day in days:
+                day_lecs = sum(x[(base_g, subj, "lec", s)] for s in SLOTS if s[0] == day and (base_g, subj, "lec", s) in x)
+                cum_lec += day_lecs
+                for g in stream:
+                    if g not in groups: continue
+                    if (g, subj, "sem", SLOTS[0]) not in x: continue
+                    cum_sem = sum(x[(g, subj, "sem", s)] for s in SLOTS if s[0] <= day and (g, subj, "sem", s) in x)
+                    
+                    # Пропорция лекций должна быть >= пропорции семинаров
+                    # cum_lec / total_lec >= cum_sem / total_sem  => cum_lec * total_sem >= cum_sem * total_lec
+                    viol = model.NewIntVar(-1000, 1000, f"viol_{subj}_{g}_{day}")
+                    model.Add(viol == cum_sem * total_lec - cum_lec * total_sem)
+                    viol_pos = model.NewIntVar(0, 1000, f"viol_pos_{subj}_{g}_{day}")
+                    model.AddMaxEquality(viol_pos, [0, viol])
+                    penalties.append(viol_pos * PENALTY_PROGRESS_VIOLATION)
+
     model.Minimize(sum(penalties))
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = max_time_seconds
-    solver.parameters.num_search_workers = 8
-
+    from core.constants import NUM_WORKERS, LOGGING_ENABLED
+    solver.parameters.num_search_workers = NUM_WORKERS
+    
+    if LOGGING_ENABLED:
+        print(f"[ENGINE] Инициализация решения: {len(groups)} групп, {len(subjects)} предметов, {len(SLOTS)} слотов")
+    
     status = solver.Solve(model)
+    
+    if LOGGING_ENABLED:
+        print(f"[ENGINE] Статус решения: {solver.StatusName(status)}")
 
     if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        if LOGGING_ENABLED:
+            print(f"[ENGINE] Найдено решение. Целевая функция: {solver.ObjectiveValue()}")
         schedule = []
         for (g, subj, t, s), var in x.items():
             if solver.Value(var) == 1:

@@ -31,7 +31,7 @@ class StreamUpdateModel(BaseModel):
 class TeacherRestrictionsDetails(BaseModel):
     mode: str
     specific: list[str]
-    recurring: dict # Reverted to dict as it was in my latest working version, but check if user wants list
+    recurring: list[str]
 
 class TeacherRestrictionsModel(BaseModel):
     restrictions: TeacherRestrictionsDetails
@@ -39,6 +39,8 @@ class TeacherRestrictionsModel(BaseModel):
 class GenerationTaskModel(BaseModel):
     groups: list[str]
     holidays: list[str]
+    start_date: str | None = None
+    end_date: str | None = None
     settings: dict | None = None
 
 @router.post("/import/streams")
@@ -93,7 +95,8 @@ async def import_streams(file: UploadFile = File(...), db: AsyncSession = Depend
             import_batch_id=batch.id,
             teacher_id=teacher_id,
             event_name=s_data["event"],
-            stream_type=s_data["type"]
+            stream_type=s_data["type"],
+            lessons_count=s_data.get("lessons_count", 1)
         )
         db.add(new_stream)
         await db.flush()
@@ -265,26 +268,111 @@ async def get_scheduler_stats(db: AsyncSession = Depends(async_get_db)):
 
 # --- New functionality restored below ---
 
+@router.get("/teachers/export")
+async def export_teacher_availability(db: AsyncSession = Depends(async_get_db)):
+    stmt = select(Teacher)
+    result = await db.execute(stmt)
+    teachers = result.scalars().all()
+    
+    data = []
+    for t in teachers:
+        import json
+        try:
+            res = json.loads(t.restrictions_json) if t.restrictions_json else {"mode": "all", "recurring": [], "specific": []}
+        except:
+            res = {"mode": "all", "recurring": [], "specific": []}
+            
+        data.append({
+            "ФИО преподавателя": t.name,
+            "Режим": res.get("mode", "blacklist"),
+            "Регулярные окна (День_Пара)": ",".join(res.get("recurring", [])),
+            "Конкретные даты (ГГГГ-ММ-ДД_Пара)": ",".join(res.get("specific", []))
+        })
+    
+    import pandas as pd
+    import io
+    from fastapi.responses import StreamingResponse
+    
+    df = pd.DataFrame(data)
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Доступность')
+    
+    output.seek(0)
+    
+    headers = {
+        'Content-Disposition': 'attachment; filename="teacher_availability.xlsx"'
+    }
+    return StreamingResponse(output, headers=headers, media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+@router.post("/teachers/import")
+async def import_teacher_availability(file: UploadFile = File(...), db: AsyncSession = Depends(async_get_db)):
+    import pandas as pd
+    import io
+    import json
+    
+    content = await file.read()
+    df = pd.read_excel(io.BytesIO(content))
+    
+    updated_count = 0
+    for _, row in df.iterrows():
+        name = str(row["ФИО преподавателя"]).strip()
+        mode = str(row["Режим"]).strip()
+        recurring = str(row.get("Регулярные окна (День_Пара)", "")).strip()
+        specific = str(row.get("Конкретные даты (ГГГГ-ММ-ДД_Пара)", "")).strip()
+        
+        if not name or name == 'nan': continue
+        
+        # Parse strings to lists
+        rec_list = [i.strip() for i in recurring.split(",") if i.strip()] if recurring and recurring != 'nan' else []
+        spec_list = [i.strip() for i in specific.split(",") if i.strip()] if specific and specific != 'nan' else []
+        
+        restr = {
+            "mode": mode if mode in ["blacklist", "whitelist"] else "blacklist",
+            "recurring": rec_list,
+            "specific": spec_list
+        }
+        
+        # Update in DB
+        stmt = select(Teacher).filter(Teacher.name == name)
+        res = await db.execute(stmt)
+        teacher = res.scalar_one_or_none()
+        
+        if teacher:
+            teacher.restrictions_json = json.dumps(restr)
+            updated_count += 1
+            
+    await db.commit()
+    return {"status": "ok", "updated_teachers": updated_count}
+
 @router.post("/generate")
 async def generate_schedule(task: GenerationTaskModel, background_tasks: BackgroundTasks, db: AsyncSession = Depends(async_get_db)):
-    # 1. Create a task record
+    # 1. Parse dates
+    start_dt = datetime.strptime(task.start_date, "%Y-%m-%d") if task.start_date else None
+    end_dt = datetime.strptime(task.end_date, "%Y-%m-%d") if task.end_date else None
+
+    # 2. Create a task record
     new_task = GenerationTask(
         groups_json=json.dumps(task.groups),
         holidays_json=json.dumps(task.holidays),
         settings_json=json.dumps(task.settings or {}),
+        start_date=start_dt,
+        end_date=end_dt,
         status="pending"
     )
     db.add(new_task)
     await db.commit()
     await db.refresh(new_task)
 
-    # 2. Trigger background generation
+    # 3. Trigger background generation
     background_tasks.add_task(
         GenerationService.run_generation,
         new_task.id,
         task.groups,
         task.holidays,
-        task.settings.get("enabled_types", [])
+        task.settings.get("enabled_types", []),
+        task.start_date,
+        task.end_date
     )
     
     return {"status": "ok", "message": "Задача на генерацию запущена в фоновом режиме.", "task_id": new_task.id}

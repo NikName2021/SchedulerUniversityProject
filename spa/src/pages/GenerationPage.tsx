@@ -47,6 +47,8 @@ export const GenerationPage: React.FC = () => {
   const [groups, setGroups] = useState<string[]>([]);
   const [selectedGroups, setSelectedGroups] = useState<string[]>(inheritedData?.groups || []);
   const [holidays, setHolidays] = useState<string[]>(inheritedData?.holidays || []);
+  const [startDate, setStartDate] = useState<string>(inheritedData?.start_date?.split('T')[0] || '2025-09-01');
+  const [endDate, setEndDate] = useState<string>(inheritedData?.end_date?.split('T')[0] || '2025-09-07');
   const [newHoliday, setNewHoliday] = useState('');
   const [stats, setStats] = useState<Stats | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -77,7 +79,10 @@ export const GenerationPage: React.FC = () => {
       const statsData = await statsRes.json();
       
       setGroups(groupsData.groups || []);
-      setSelectedGroups(groupsData.groups || []);
+      // If no inherited groups, don't auto-select all
+      if (!inheritedData?.groups) {
+          setSelectedGroups([]);
+      }
       setStats(statsData);
     } catch (e) {
       console.error('Failed to fetch generation data', e);
@@ -134,6 +139,8 @@ export const GenerationPage: React.FC = () => {
         body: JSON.stringify({
           groups: selectedGroups,
           holidays: holidays,
+          start_date: startDate,
+          end_date: endDate,
           settings: { 
             enabled_types: enabledTypes,
             created_at: new Date().toISOString() 
@@ -356,6 +363,37 @@ export const GenerationPage: React.FC = () => {
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
+                {/* Semester Dates */}
+                <div style={{ backgroundColor: 'white', borderRadius: '20px', border: '1px solid var(--border-light)', boxShadow: 'var(--shadow-md)', padding: '1.5rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem' }}>
+                        <div style={{ width: '40px', height: '40px', borderRadius: '10px', backgroundColor: 'rgba(79, 70, 229, 0.1)', color: 'var(--brand)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <Clock size={20} />
+                        </div>
+                        <h3 style={{ fontWeight: 800 }}>Интервал семестра</h3>
+                    </div>
+                    
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                            <label style={{ fontSize: '0.625rem', fontWeight: 800, color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>Начало</label>
+                            <input 
+                                type="date" 
+                                value={startDate}
+                                onChange={(e) => setStartDate(e.target.value)}
+                                style={{ backgroundColor: '#f9fafb', border: '1px solid var(--border-light)', borderRadius: '10px', padding: '0.625rem 0.75rem', fontSize: '0.875rem', outline: 'none', fontWeight: 600 }}
+                            />
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                            <label style={{ fontSize: '0.625rem', fontWeight: 800, color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>Конец</label>
+                            <input 
+                                type="date" 
+                                value={endDate}
+                                onChange={(e) => setEndDate(e.target.value)}
+                                style={{ backgroundColor: '#f9fafb', border: '1px solid var(--border-light)', borderRadius: '10px', padding: '0.625rem 0.75rem', fontSize: '0.875rem', outline: 'none', fontWeight: 600 }}
+                            />
+                        </div>
+                    </div>
+                </div>
+
                 {/* Holidays */}
                 <div style={{ backgroundColor: 'white', borderRadius: '20px', border: '1px solid var(--border-light)', boxShadow: 'var(--shadow-md)', padding: '1.5rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem' }}>

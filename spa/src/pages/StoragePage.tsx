@@ -167,8 +167,14 @@ export const StoragePage: React.FC = () => {
     setSuccessMsg(null);
     const formData = new FormData();
     formData.append('file', file);
+    
+    const isTeacherImport = selectedFolder === 'Доступность преподавателей';
+    const endpoint = isTeacherImport 
+        ? 'http://localhost:8000/api/v1/scheduler/teachers/import'
+        : 'http://localhost:8000/api/v1/scheduler/import/streams';
+
     try {
-      const res = await fetch('http://localhost:8000/api/v1/scheduler/import/streams', {
+      const res = await fetch(endpoint, {
         method: 'POST',
         body: formData,
       });
@@ -177,8 +183,13 @@ export const StoragePage: React.FC = () => {
         throw new Error(data.detail || 'Upload failed');
       }
       const data = await res.json();
-      setSuccessMsg(`Успешно загружено! Добавлено потоков: ${data.streams_added}, групп: ${data.groups_added}`);
-      await fetchHistory();
+      
+      if (isTeacherImport) {
+          setSuccessMsg(`Успешно! Обновлено преподавателей: ${data.updated_teachers}`);
+      } else {
+          setSuccessMsg(`Успешно загружено! Добавлено потоков: ${data.streams_added}, групп: ${data.groups_added}`);
+          await fetchHistory();
+      }
     } catch(err: any) {
       setError(err.message);
     } finally {
@@ -253,10 +264,33 @@ export const StoragePage: React.FC = () => {
             <Folder size={64} color="var(--brand)" strokeWidth={1.5} />
             <h3 style={{ fontSize: '1.125rem', fontWeight: 800 }}>Нагрузка и аудитории</h3>
           </button>
+
+          <button 
+            className="card"
+            onClick={() => setSelectedFolder('Доступность преподавателей')}
+            style={{ 
+              display: 'flex', 
+              flexDirection: 'column', 
+              alignItems: 'center', 
+              gap: '1rem', 
+              padding: '3rem 2rem',
+              transition: 'all 0.2s',
+              cursor: 'pointer'
+            }}
+            onMouseOver={(e) => e.currentTarget.style.transform = 'translateY(-4px)'}
+            onMouseOut={(e) => e.currentTarget.style.transform = 'translateY(0)'}
+          >
+            <Folder size={64} color="#f59e0b" strokeWidth={1.5} />
+            <h3 style={{ fontSize: '1.125rem', fontWeight: 800 }}>Доступность преподавателей</h3>
+          </button>
         </div>
       </div>
     );
   }
+
+  const handleExportTeachers = () => {
+    window.open('http://localhost:8000/api/v1/scheduler/teachers/export', '_blank');
+  };
 
   return (
     <div className="space-y-8">
@@ -275,8 +309,24 @@ export const StoragePage: React.FC = () => {
         {successMsg && <div style={{marginTop: '1rem', padding: '1rem', background: '#dcfce7', color: '#15803d', borderRadius: '12px'}}>{successMsg}</div>}
       </header>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: '2.5rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: selectedFolder === 'Доступность преподавателей' ? '1fr' : '1.5fr 1fr', gap: '2.5rem' }}>
         <div className="space-y-6">
+          {selectedFolder === 'Доступность преподавателей' && (
+            <div className="card" style={{ padding: '2rem', backgroundColor: 'rgba(245, 158, 11, 0.05)', border: '1px solid rgba(245, 158, 11, 0.2)' }}>
+                <h3 style={{ fontWeight: 800, marginBottom: '1rem', color: '#b45309' }}>Управление доступностью</h3>
+                <p style={{ fontSize: '0.875rem', color: '#92400e', marginBottom: '1.5rem', lineHeight: 1.6 }}>
+                    Вы можете выгрузить текущий список преподавателей в Excel, отредактировать их окна доступности и загрузить файл обратно. 
+                    Формат: День_Пара (например, 0_1 для Пн 1 пара) или ГГГГ-ММ-ДД_Пара для конкретных дат.
+                </p>
+                <button 
+                    onClick={handleExportTeachers}
+                    className="btn-primary" 
+                    style={{ backgroundColor: '#f59e0b', boxShadow: '0 4px 12px rgba(245, 158, 11, 0.3)' }}
+                >
+                    Скачать текущую доступность (Excel)
+                </button>
+            </div>
+          )}
           <DragDropZone 
             onDrop={handleDrop} 
             isDragging={isDragging} 
@@ -284,29 +334,31 @@ export const StoragePage: React.FC = () => {
           />
         </div>
 
-        <div className="space-y-4">
-          <h3 style={{ fontSize: '1.125rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            Загруженные файлы
-            <span style={{ fontSize: '0.75rem', padding: '0.125rem 0.5rem', backgroundColor: 'var(--bg-base)', borderRadius: '100px', color: 'var(--text-tertiary)' }}>
-              {files.length}
-            </span>
-            {isUploading && <span style={{ fontSize: '0.8rem', color: 'var(--brand)' }}>Загрузка...</span>}
-          </h3>
-          <div className="space-y-3">
-            {files.map((file, idx) => (
-              <FileListItem 
-                key={idx} 
-                file={file} 
-                onRemove={() => removeFile(idx)} 
-              />
-            ))}
-            {files.length === 0 && (
-              <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-tertiary)', border: '1px dashed var(--border-light)', borderRadius: '24px' }}>
-                Папка пуста
-              </div>
-            )}
-          </div>
-        </div>
+        {selectedFolder !== 'Доступность преподавателей' && (
+            <div className="space-y-4">
+            <h3 style={{ fontSize: '1.125rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                Загруженные файлы
+                <span style={{ fontSize: '0.75rem', padding: '0.125rem 0.5rem', backgroundColor: 'var(--bg-base)', borderRadius: '100px', color: 'var(--text-tertiary)' }}>
+                {files.length}
+                </span>
+                {isUploading && <span style={{ fontSize: '0.8rem', color: 'var(--brand)' }}>Загрузка...</span>}
+            </h3>
+            <div className="space-y-3">
+                {files.map((file, idx) => (
+                <FileListItem 
+                    key={idx} 
+                    file={file} 
+                    onRemove={() => removeFile(idx)} 
+                />
+                ))}
+                {files.length === 0 && (
+                <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-tertiary)', border: '1px dashed var(--border-light)', borderRadius: '24px' }}>
+                    Папка пуста
+                </div>
+                )}
+            </div>
+            </div>
+        )}
       </div>
     </div>
   );

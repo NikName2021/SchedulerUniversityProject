@@ -19,3 +19,5 @@ spa/package-lock.json
 /src/app/uploads/*
 /src/app/scheduler.db
 /src/.env
+*.xls
+*.xlsx

@@ -1,10 +1,12 @@
-import datetime
 import collections
+import datetime
+
 from ortools.sat.python import cp_model
 
-from consts_clean import (START, END, LESSONS, STUDY_DAYS, HOLIDAYS, GROUPS, GROUP_SIZES, 
-                    subjects, STREAMS, ROOMS, UNAVAILABLE_TIMES, FIXED_SCHEDULES, is_valid)
+from consts_clean import (START, END, LESSONS, STUDY_DAYS, HOLIDAYS, GROUPS, GROUP_SIZES,
+                          subjects, STREAMS, ROOMS, UNAVAILABLE_TIMES, FIXED_SCHEDULES, is_valid)
 from draw import save
+
 
 # =========================
 # ГЕНЕРАЦИЯ СЛОТОВ

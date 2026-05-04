@@ -35,6 +35,26 @@ def parse_streams_content(file_bytes: bytes):
             
         key = (event_name, stream_type)
         
+        # Extract hours/lessons
+        # Try to find a column with lessons count
+        lessons_raw = row.get('Событий в расп.') or row.get('Кол-во пар') or row.get('Занятий')
+        
+        # Fallback to hours if lessons count is not found
+        if pd.isna(lessons_raw):
+            hours_raw = row.get('Нагрузка') or row.get('Часы') or 2
+            try:
+                hours = float(hours_raw)
+                lessons = max(1, int(hours // 2))
+            except:
+                lessons = 1
+        else:
+            try:
+                lessons = int(float(lessons_raw))
+            except:
+                lessons = 1
+            
+        lessons = max(1, lessons)
+
         groups_raw = str(row.get('Группа', '')).strip()
         groups_parsed = []
         if groups_raw and groups_raw != 'nan':
@@ -53,6 +73,7 @@ def parse_streams_content(file_bytes: bytes):
                 "event": event_name,
                 "type": stream_type,
                 "teacher": teacher_clean,
+                "lessons_count": lessons,
                 "groups": []
             }
         

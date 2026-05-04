@@ -40,6 +40,7 @@ class Stream(DeclBase):
     
     event_name = Column(String, nullable=False)
     stream_type = Column(String, nullable=True)
+    lessons_count = Column(Integer, default=1)
     is_ignored = Column(Boolean, default=False)
     
     import_batch = relationship("ImportBatch", back_populates="streams")
@@ -60,6 +61,8 @@ class GenerationTask(DeclBase):
     id = Column(Integer, primary_key=True, index=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     status = Column(String, default="pending") # pending, success, failed
+    start_date = Column(DateTime, nullable=True)
+    end_date = Column(DateTime, nullable=True)
     groups_json = Column(String) # List of groups
     holidays_json = Column(String) # List of holidays
     settings_json = Column(String) # Dict of other settings

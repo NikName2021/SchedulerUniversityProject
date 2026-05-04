@@ -18,6 +18,8 @@ interface GenerationTask {
   id: number;
   created_at: string;
   status: string;
+  start_date: string | null;
+  end_date: string | null;
   groups_json: string;
   holidays_json: string;
   settings_json: string;
@@ -66,7 +68,9 @@ const HistoryPage: React.FC = () => {
         state: { 
           groups: safeParse(task.groups_json, []),
           holidays: safeParse(task.holidays_json, []),
-          settings: safeParse(task.settings_json, {})
+          settings: safeParse(task.settings_json, {}),
+          start_date: task.start_date,
+          end_date: task.end_date
         } 
       });
     } catch (e) {
