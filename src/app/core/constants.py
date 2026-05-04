@@ -30,3 +30,4 @@ PENALTY_SATURDAY = 60
 PENALTY_WINDOW = 20      # Per gap between lessons
 PENALTY_SYNC_STREAM = 10 # Per lesson difference between groups in stream
 PENALTY_PROGRESS_VIOLATION = 2 # When seminar happens before corresponding lecture
+PENALTY_MORNING_PRIORITY = 30  # Penalty per hour late for high-priority subjects

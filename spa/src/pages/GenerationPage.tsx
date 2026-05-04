@@ -63,9 +63,45 @@ export const GenerationPage: React.FC = () => {
   // Filter types
   const [enabledTypes, setEnabledTypes] = useState<string[]>(inheritedData?.settings?.enabled_types || ['Лекция', 'Семинар', 'Лабораторная']);
 
+  // Subject priorities
+  const [subjectSummary, setSubjectSummary] = useState<Record<string, string[]>>({});
+  const [subjectPriorities, setSubjectPriorities] = useState<Record<string, string>>(inheritedData?.settings?.priorities || {});
+  const [isSummaryLoading, setIsSummaryLoading] = useState(false);
+  const [expandedDirections, setExpandedDirections] = useState<string[]>([]);
+
   useEffect(() => {
     fetchInitialData();
   }, []);
+
+  useEffect(() => {
+    if (selectedGroups.length > 0 && enabledTypes.length > 0) {
+      fetchSubjectSummary();
+    } else {
+      setSubjectSummary({});
+    }
+  }, [selectedGroups, enabledTypes]);
+
+  const fetchSubjectSummary = async () => {
+    setIsSummaryLoading(true);
+    try {
+      const groupsParam = encodeURIComponent(selectedGroups.join(','));
+      const typesParam = encodeURIComponent(enabledTypes.join(','));
+      const res = await fetch(`http://localhost:8000/api/v1/scheduler/subjects-summary?groups=${groupsParam}&types=${typesParam}`);
+      if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || 'Failed to fetch summary');
+      }
+      const data = await res.json();
+      setSubjectSummary(data);
+      // Auto-expand all directions
+      setExpandedDirections(Object.keys(data));
+    } catch (e) {
+      console.error('Subject summary error:', e);
+      setSubjectSummary({});
+    } finally {
+      setIsSummaryLoading(false);
+    }
+  };
 
   const fetchInitialData = async () => {
     setIsLoading(true);
@@ -143,6 +179,7 @@ export const GenerationPage: React.FC = () => {
           end_date: endDate,
           settings: { 
             enabled_types: enabledTypes,
+            priorities: subjectPriorities,
             created_at: new Date().toISOString() 
           }
         })
@@ -299,6 +336,90 @@ export const GenerationPage: React.FC = () => {
                         </button>
                     ))}
                 </div>
+            </div>
+
+            {/* Subject Priorities Grouped by Direction */}
+            <div style={{ backgroundColor: 'white', borderRadius: '20px', border: '1px solid var(--border-light)', boxShadow: 'var(--shadow-md)', padding: '1.5rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem' }}>
+                    <div style={{ width: '40px', height: '40px', borderRadius: '10px', backgroundColor: 'rgba(79, 70, 229, 0.1)', color: 'var(--brand)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <Zap size={20} />
+                    </div>
+                    <div>
+                        <h3 style={{ fontWeight: 800 }}>Приоритет предметов</h3>
+                        <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Настройте желаемое время для каждого предмета ({Object.values(subjectSummary).flat().length} дисциплин)</p>
+                    </div>
+                </div>
+
+                {isSummaryLoading ? (
+                    <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-tertiary)' }}>Загрузка списка предметов...</div>
+                ) : Object.keys(subjectSummary).length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxHeight: '500px', overflowY: 'auto', paddingRight: '0.5rem' }}>
+                        {Object.entries(subjectSummary).map(([direction, subjects]) => (
+                            <div key={direction} style={{ border: '1px solid var(--border-light)', borderRadius: '12px', overflow: 'hidden', flexShrink: 0 }}>
+                                <div 
+                                    onClick={() => setExpandedDirections(prev => prev.includes(direction) ? prev.filter(d => d !== direction) : [...prev, direction])}
+                                    style={{ padding: '0.75rem 1rem', backgroundColor: '#fafafa', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                                >
+                                    <span style={{ fontSize: '0.75rem', fontWeight: 900, color: 'var(--text-primary)' }}>{direction}</span>
+                                    <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>{subjects.length} предметов</span>
+                                </div>
+                                {expandedDirections.includes(direction) && (
+                                    <div style={{ padding: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                                        {Array.isArray(subjects) && subjects.map(subj => {
+                                            const currentPref = subjectPriorities[subj] || 'day';
+                                            return (
+                                                <div 
+                                                    key={subj}
+                                                    style={{ 
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'space-between',
+                                                        gap: '1rem',
+                                                        padding: '0.5rem',
+                                                        borderBottom: '1px solid #f3f4f6'
+                                                    }}
+                                                >
+                                                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-primary)', flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={subj}>
+                                                        {subj}
+                                                    </span>
+                                                    
+                                                    <div style={{ display: 'flex', backgroundColor: '#f3f4f6', padding: '0.25rem', borderRadius: '8px', gap: '0.125rem' }}>
+                                                        {[
+                                                            { id: 'morning', label: 'Утро', color: 'var(--brand)' },
+                                                            { id: 'day', label: 'День', color: 'var(--text-secondary)' },
+                                                            { id: 'evening', label: 'Вечер', color: '#f59e0b' }
+                                                        ].map(opt => (
+                                                            <button
+                                                                key={opt.id}
+                                                                onClick={() => setSubjectPriorities(prev => ({ ...prev, [subj]: opt.id }))}
+                                                                style={{
+                                                                    padding: '0.25rem 0.625rem',
+                                                                    borderRadius: '6px',
+                                                                    fontSize: '0.625rem',
+                                                                    fontWeight: 800,
+                                                                    border: 'none',
+                                                                    cursor: 'pointer',
+                                                                    backgroundColor: currentPref === opt.id ? 'white' : 'transparent',
+                                                                    color: currentPref === opt.id ? opt.color : 'var(--text-tertiary)',
+                                                                    boxShadow: currentPref === opt.id ? '0 2px 4px rgba(0,0,0,0.05)' : 'none',
+                                                                    transition: 'all 0.15s'
+                                                                }}
+                                                            >
+                                                                {opt.label}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: '0.875rem' }}>Выберите группы, чтобы увидеть список предметов</div>
+                )}
             </div>
 
             {/* Preview Section */}

@@ -163,6 +163,21 @@ async def get_groups(db: AsyncSession = Depends(async_get_db)):
     groups = result.scalars().all()
     return {"groups": groups}
 
+@router.get("/subjects-summary")
+async def get_subjects_summary(
+    groups: str = Query(...), # Comma separated
+    types: str = Query(...)  # Comma separated
+):
+    selected_groups = groups.split(",")
+    enabled_types = types.split(",")
+    try:
+        from services.generation_service import GenerationService
+        summary = await GenerationService.get_subjects_summary(selected_groups, enabled_types)
+        return summary
+    except Exception as e:
+        logger.error(f"Error getting subjects summary: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/streams")
 async def get_streams_by_group(group_name: str = Query(..., description="Group name filter"), db: AsyncSession = Depends(async_get_db)):
     stmt = (

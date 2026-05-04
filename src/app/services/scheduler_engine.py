@@ -28,8 +28,16 @@ def solve_schedule(
         rooms,
         unavailable_times,
         fixed_schedules=None,
-        max_time_seconds=300
+        max_time_seconds=300,
+        priorities=None
 ):
+    from core.constants import (
+        PENALTY_UNASSIGNED, PENALTY_LATE_LESSON, PENALTY_SATURDAY,
+        PENALTY_WINDOW, PENALTY_SYNC_STREAM, PENALTY_PROGRESS_VIOLATION,
+        PENALTY_MORNING_PRIORITY
+    )
+    if priorities is None: priorities = {}
+
     model = cp_model.CpModel()
     SLOTS = generate_slots(start_date, end_date, study_days, lessons, holidays)
     if not SLOTS:
@@ -39,16 +47,10 @@ def solve_schedule(
     teachers = set(s["teacher"] for s in subjects.values() if s.get("teacher"))
     fixed_schedules = fixed_schedules or {}
 
-    from core.constants import (
-        PENALTY_UNASSIGNED, PENALTY_LATE_LESSON, PENALTY_SATURDAY,
-        PENALTY_WINDOW, PENALTY_SYNC_STREAM, PENALTY_PROGRESS_VIOLATION
-    )
-
     x = {}  # x[(g, subj, t, s)] — логическая переменная
     penalties = []
     unassigned_vars = {}
 
-    # 0. Инициализация переменных
     for subj, subj_data in subjects.items():
         relevant_groups = streams_map.get(subj, [])
         for g in relevant_groups:
@@ -61,8 +63,17 @@ def solve_schedule(
                     var = model.NewBoolVar(f"x_{g}_{subj}_{t}_{s[0]}_{s[1]}")
                     x[(g, subj, t, s)] = var
                     
-                    # Штраф за поздние пары
+                    # Глобальный штраф за поздние пары
                     penalties.append(var * s[1] * PENALTY_LATE_LESSON)
+
+                    # Штраф за приоритет (Утро / День / Вечер)
+                    pref = priorities.get(subj, "day")
+                    if pref == "morning":
+                        if s[1] > 2: # Если позже 2-й пары
+                            penalties.append(var * (s[1] - 2) * PENALTY_MORNING_PRIORITY)
+                    elif pref == "evening":
+                        if s[1] < 5: # Если раньше 5-й пары
+                            penalties.append(var * (5 - s[1]) * PENALTY_MORNING_PRIORITY)
 
                     # Штраф за субботу
                     if s[0].weekday() == 5:
@@ -81,10 +92,17 @@ def solve_schedule(
                 vars_for_g_subj_t = [x[(g, subj, t, s)] for s in SLOTS if (g, subj, t, s) in x]
                 if not vars_for_g_subj_t: continue
                 
-                deficit = model.NewIntVar(0, target_count, f"deficit_{g}_{subj}_{t}")
+                deficit = model.NewIntVar(0, target_count, f"def_{g}_{subj}_{t}")
                 model.Add(sum(vars_for_g_subj_t) + deficit == target_count)
-                unassigned_vars[(g, subj, t)] = (deficit, target_count)
                 penalties.append(deficit * PENALTY_UNASSIGNED)
+                unassigned_vars[(g, subj, t)] = (deficit, target_count)
+                
+                # Максимум 1 лекция в день для группы по ОДНОМУ предмету
+                if t == "lec":
+                    for day in days:
+                        day_vars = [x[(g, subj, t, s)] for s in SLOTS if s[0] == day and (g, subj, t, s) in x]
+                        if day_vars:
+                            model.Add(sum(day_vars) <= 1)
 
     # 2. Не более одной пары у группы в слот + Определение занятости слота
     has_class = {}
@@ -271,6 +289,7 @@ def solve_schedule(
     
     if LOGGING_ENABLED:
         print(f"[ENGINE] Инициализация решения: {len(groups)} групп, {len(subjects)} предметов, {len(SLOTS)} слотов")
+        solver.parameters.log_search_progress = True
     
     status = solver.Solve(model)
     
