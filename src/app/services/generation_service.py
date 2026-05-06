@@ -1,18 +1,18 @@
 import json
 import logging
-import anyio
-from typing import List, Dict
-from datetime import datetime, date
-from sqlalchemy import select, update
-from sqlalchemy.orm import selectinload
+from datetime import datetime
+from typing import List
 
+import anyio
 from core.config import sessionmaker
-from database.all_models import Stream, Teacher, ScheduleEntry, StreamGroup, GenerationTask
-from services.scheduler_engine import solve_schedule
 from core.constants import (
-    DEFAULT_START_DATE, DEFAULT_END_DATE, STUDY_DAYS, LESSONS, 
+    DEFAULT_START_DATE, DEFAULT_END_DATE, STUDY_DAYS, LESSONS,
     ROOMS as DEFAULT_ROOMS, MAX_TIME_SECONDS
 )
+from database.all_models import Stream, ScheduleEntry, StreamGroup, GenerationTask
+from services.scheduler_engine import solve_schedule
+from sqlalchemy import select, update
+from sqlalchemy.orm import selectinload
 
 logger = logging.getLogger(__name__)
 
@@ -103,26 +103,34 @@ class GenerationService:
                     grouped[s.event_name].append(s)
 
                 for event_name, event_streams in grouped.items():
-                    lec_s = next((s for s in event_streams if s.stream_type == 'Лекция'), None)
-                    sem_s = [s for s in event_streams if s.stream_type != 'Лекция']
+                    lecs = [s for s in event_streams if s.stream_type == 'Лекция']
+                    sems = [s for s in event_streams if s.stream_type == 'Семинар']
+                    labs = [s for s in event_streams if s.stream_type == 'Лабораторная']
                     
                     main_t = "Неизвестно"
-                    if lec_s and lec_s.teacher: main_t = lec_s.teacher.name
-                    elif sem_s and sem_s[0].teacher: main_t = sem_s[0].teacher.name
+                    all_teachers = [s.teacher.name for s in event_streams if s.teacher]
+                    if all_teachers: main_t = all_teachers[0]
 
-                    lec_groups = [g.group_name for g in lec_s.groups if g.group_name in selected_groups] if lec_s else []
+                    lec_groups = []
+                    for s in lecs: lec_groups.extend(
+                        [g.group_name for g in s.groups if g.group_name in selected_groups])
+                    
                     sem_groups = []
-                    for ss in sem_s:
-                        sem_groups.extend([g.group_name for g in ss.groups if g.group_name in selected_groups])
+                    for s in sems: sem_groups.extend(
+                        [g.group_name for g in s.groups if g.group_name in selected_groups])
+
+                    lab_groups = []
+                    for s in labs: lab_groups.extend(
+                        [g.group_name for g in s.groups if g.group_name in selected_groups])
 
                     subjects_engine[event_name] = {
                         "display_name": event_name,
                         "teacher": main_t,
-                        "lectures": lec_s.lessons_count if lec_s else 0,
-                        "seminars": sem_s[0].lessons_count if sem_s else 0,
-                        "type_sem": "lab" if any(ss.stream_type == 'Лабораторная' for ss in sem_s) else "sem"
+                        "lectures": lecs[0].lessons_count if lecs else 0,
+                        "seminars": sems[0].lessons_count if sems else 0,
+                        "labs": labs[0].lessons_count if labs else 0
                     }
-                    streams_map_engine[event_name] = sorted(list(set(lec_groups + sem_groups)))
+                    streams_map_engine[event_name] = sorted(list(set(lec_groups + sem_groups + lab_groups)))
                     
                     for s in event_streams:
                         for g in s.groups:
@@ -208,7 +216,8 @@ class GenerationService:
                             task_id=task_id,
                             group_name=entry["group"],
                             event_name=display_name,
-                            stream_type="Лекция" if entry["type"] == "lec" else "Семинар",
+                            stream_type="Лекция" if entry["type"] == "lec" else (
+                                "Лабораторная" if entry["type"] == "lab" else "Семинар"),
                             teacher_name=entry["teacher"],
                             room_name=entry["room"],
                             date=datetime.combine(entry["slot"][0], datetime.min.time()),

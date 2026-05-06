@@ -55,8 +55,12 @@ def solve_schedule(
         relevant_groups = streams_map.get(subj, [])
         for g in relevant_groups:
             if g not in groups: continue
-            for t in ["lec", "sem"]:
-                target_count = subj_data.get("lectures", 0) if t == "lec" else subj_data.get("seminars", 0)
+            for t in ["lec", "sem", "lab"]:
+                target_count = 0
+                if t == "lec": target_count = subj_data.get("lectures", 0)
+                elif t == "sem": target_count = subj_data.get("seminars", 0)
+                elif t == "lab": target_count = subj_data.get("labs", 0)
+
                 if target_count == 0:
                     continue
                 for s in SLOTS:
@@ -75,34 +79,46 @@ def solve_schedule(
                         if s[1] < 5: # Если раньше 5-й пары
                             penalties.append(var * (5 - s[1]) * PENALTY_MORNING_PRIORITY)
 
-                    # Штраф за субботу
-                    if s[0].weekday() == 5:
-                        penalties.append(var * PENALTY_SATURDAY)
+                    # Штраф за субботу (закомментировано по просьбе)
+                    # if s[0].weekday() == 5:
+                    #     penalties.append(var * PENALTY_SATURDAY)
 
     # 1. Точное количество занятий (с возможностью "не поставить" со штрафом)
     for subj, subj_data in subjects.items():
         relevant_groups = streams_map.get(subj, [])
         for g in relevant_groups:
             if g not in groups: continue
-            for t in ["lec", "sem"]:
-                target_count = subj_data.get("lectures", 0) if t == "lec" else subj_data.get("seminars", 0)
-                if target_count == 0:
-                    continue
+            for t in ["lec", "sem", "lab"]:
+                target = 0
+                if t == "lec": target = subj_data.get("lectures", 0)
+                elif t == "sem": target = subj_data.get("seminars", 0)
+                elif t == "lab": target = subj_data.get("labs", 0)
+                
+                if target == 0: continue
                 
                 vars_for_g_subj_t = [x[(g, subj, t, s)] for s in SLOTS if (g, subj, t, s) in x]
                 if not vars_for_g_subj_t: continue
                 
-                deficit = model.NewIntVar(0, target_count, f"def_{g}_{subj}_{t}")
-                model.Add(sum(vars_for_g_subj_t) + deficit == target_count)
+                deficit = model.NewIntVar(0, target, f"def_{g}_{subj}_{t}")
+                model.Add(sum(vars_for_g_subj_t) + deficit == target)
                 penalties.append(deficit * PENALTY_UNASSIGNED)
-                unassigned_vars[(g, subj, t)] = (deficit, target_count)
+                unassigned_vars[(g, subj, t)] = (deficit, target)
                 
-                # Максимум 1 лекция в день для группы по ОДНОМУ предмету
-                if t == "lec":
-                    for day in days:
-                        day_vars = [x[(g, subj, t, s)] for s in SLOTS if s[0] == day and (g, subj, t, s) in x]
-                        if day_vars:
-                            model.Add(sum(day_vars) <= 1)
+                # Динамический лимит пар в неделю (чтобы предмет не "проглатывался" за 1 месяц)
+                total_weeks = max(1, (end_date - start_date).days // 7 + 1)
+                weekly_limit = (target // total_weeks) + 2  # Равномерное распределение + небольшой запас
+                
+                for w in range(total_weeks):
+                    week_vars = [x[(g, subj, t, s)] for s in SLOTS if (s[0] - start_date).days // 7 == w and (g, subj, t, s) in x]
+                    if week_vars:
+                        model.Add(sum(week_vars) <= weekly_limit)
+
+                # Лимит пар в день по ОДНОМУ предмету (лекции - 1, семинары/лабы - до 2-х)
+                daily_limit = 1 if t == "lec" else 2 
+                for day in days:
+                    day_vars = [x[(g, subj, t, s)] for s in SLOTS if s[0] == day and (g, subj, t, s) in x]
+                    if day_vars:
+                        model.Add(sum(day_vars) <= daily_limit)
 
     # 2. Не более одной пары у группы в слот + Определение занятости слота
     has_class = {}
@@ -112,6 +128,7 @@ def solve_schedule(
             for subj in subjects.keys():
                 if (g, subj, "lec", s) in x: events.append(x[(g, subj, "lec", s)])
                 if (g, subj, "sem", s) in x: events.append(x[(g, subj, "sem", s)])
+                if (g, subj, "lab", s) in x: events.append(x[(g, subj, "lab", s)])
             
             hc = model.NewBoolVar(f"hc_{g}_{s[0]}_{s[1]}")
             if events:
@@ -306,11 +323,19 @@ def solve_schedule(
                     {"group": g, "subject": subj, "type": t, "slot": s, "teacher": subjects[subj]["teacher"]})
 
         unassigned_warnings = []
+        print("\n" + "="*40)
+        print("ОТЧЕТ ПО НЕВЫСТАВЛЕННЫМ ПАРАМ:")
         for (g, subj, t), (deficit_var, target) in unassigned_vars.items():
             val = solver.Value(deficit_var)
             if val > 0:
-                unassigned_warnings.append(
-                    {"group": g, "subject": subj, "type": t, "msg": f"Не удалось выставить {val} из {target} пар"})
+                type_name = "Лекция" if t == "lec" else ("Лабораторная" if t == "lab" else "Семинар")
+                msg = f"Группа {g}: не выставлено {val} из {target} пар ({subj}, {type_name})"
+                print(f" [!] {msg}")
+                unassigned_warnings.append({"group": g, "subject": subj, "type": t, "msg": msg})
+        
+        if not unassigned_warnings:
+            print(" Все пары успешно выставлены!")
+        print("="*40 + "\n")
 
         # Phase 2: Rooms (Greedy)
         final_schedule, room_warnings = assign_rooms(schedule, SLOTS, rooms, group_sizes, subjects, unavailable_times)
@@ -358,7 +383,7 @@ def assign_rooms(schedule, SLOTS, rooms, group_sizes, subjects, unavailable_time
         for ev in events:
             best_room = None
             best_score = -9999
-            target_type = "lec" if ev["type"] == "lec" else subjects[ev["subject"]].get("type_sem", "sem")
+            target_type = ev["type"]
 
             for r in available_rooms:
                 r_data = rooms[r]
