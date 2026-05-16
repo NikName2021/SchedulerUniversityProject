@@ -1,13 +1,12 @@
 from datetime import datetime
 
+from database import Settings, User
 from fastapi import HTTPException
+from helpers import create_jwt_token, create_refresh_token
+from repositories import FavoritesDTO, SettingDTO, UserDTO, UserRepository
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 from starlette.responses import JSONResponse
-
-from database import User, Settings
-from helpers import create_jwt_token, create_refresh_token
-from repositories import UserRepository, UserDTO, SettingDTO, FavoritesDTO
 
 
 class UserService:
@@ -17,13 +16,16 @@ class UserService:
             "id": user.id,
             "telegram_id": user.telegram_id,
             "username": user.username,
-            "sub_start": user.sub_start.strftime("%d.%m.%y %H:%M") if user.sub_end > datetime.now() else "",
-            "sub_end": user.sub_end.strftime("%d.%m.%y %H:%M") if user.sub_end > datetime.now() else "",
+            "sub_start": user.sub_start.strftime("%d.%m.%y %H:%M")
+            if user.sub_end > datetime.now()
+            else "",
+            "sub_end": user.sub_end.strftime("%d.%m.%y %H:%M")
+            if user.sub_end > datetime.now()
+            else "",
             "subscription": bool(user.sub_end > datetime.now()),
             "last_login": user.last_login.strftime("%d.%m.%y %H:%M"),
             "created_date": user.created_date.strftime("%d.%m.%y %H:%M"),
             "notification": user.notification,
-
         }
 
     @staticmethod
@@ -63,14 +65,15 @@ class UserService:
             settings = await UserRepository.create_settings(settings_dto, db)
 
         answer = {
-            "auth": {"access_token": create_jwt_token(user_data),
-                     "refresh_token": create_refresh_token(user_data, user.id),
-                     "token_type": "bearer"},
+            "auth": {
+                "access_token": create_jwt_token(user_data),
+                "refresh_token": create_refresh_token(user_data, user.id),
+                "token_type": "bearer",
+            },
             "information": {
                 "user": UserService._form_user(user),
-                "settings": UserService._form_setting(settings)
-            }
-
+                "settings": UserService._form_setting(settings),
+            },
         }
 
         return JSONResponse(content=answer, status_code=200)
@@ -81,7 +84,7 @@ class UserService:
 
         answer = {
             "user": UserService._form_user(user),
-            "settings": UserService._form_setting(settings)
+            "settings": UserService._form_setting(settings),
         }
 
         return JSONResponse(content=answer, status_code=200)
@@ -93,7 +96,7 @@ class UserService:
         if data.type_site not in [0, 1]:
             raise HTTPException(
                 status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-                detail="Неверный тип type_site"
+                detail="Неверный тип type_site",
             )
 
         settings.type_site = data.type_site
@@ -102,7 +105,7 @@ class UserService:
 
         answer = {
             "user": UserService._form_user(user),
-            "settings": UserService._form_setting(settings)
+            "settings": UserService._form_setting(settings),
         }
         return JSONResponse(content=answer, status_code=200)
 
@@ -111,22 +114,25 @@ class UserService:
         favorites = await UserRepository.get_user_favorites(user.id, db)
 
         answer = {
-            "favorites": [UserService._form_favorite(favorite) for favorite in favorites]
+            "favorites": [
+                UserService._form_favorite(favorite) for favorite in favorites
+            ]
         }
         return JSONResponse(content=answer, status_code=200)
 
     @staticmethod
-    async def check_favorite(user: User, league_id: int, db: AsyncSession) -> JSONResponse:
+    async def check_favorite(
+        user: User, league_id: int, db: AsyncSession
+    ) -> JSONResponse:
         favorite = await UserRepository.get_user_favorite_match(user.id, league_id, db)
 
-        answer = {
-            "favorite": bool(favorite),
-            "league_id": int(league_id)
-        }
+        answer = {"favorite": bool(favorite), "league_id": int(league_id)}
         return JSONResponse(content=answer, status_code=200)
 
     @staticmethod
-    async def create_delete_favorite(user: User, league_id: int, db: AsyncSession) -> JSONResponse:
+    async def create_delete_favorite(
+        user: User, league_id: int, db: AsyncSession
+    ) -> JSONResponse:
         favorite = await UserRepository.get_user_favorite_match(user.id, league_id, db)
         if not favorite:
             favorite_dto = FavoritesDTO(league_id=league_id, user_id=user.id)
@@ -137,8 +143,5 @@ class UserService:
             await db.commit()
             status = "delete"
 
-        answer = {
-            "status": status,
-            "code": 1
-        }
+        answer = {"status": status, "code": 1}
         return JSONResponse(content=answer, status_code=200)

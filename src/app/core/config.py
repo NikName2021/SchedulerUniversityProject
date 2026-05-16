@@ -1,18 +1,16 @@
 import logging
+import os
 from logging.config import dictConfig
 from typing import AsyncGenerator
 
+from database.db_session import get_db_path
 from fastapi.security import HTTPBearer
 from passlib.context import CryptContext
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from starlette.config import Config
 from starlette.datastructures import Secret
 
-from database.db_session import get_db_path
 from .logging import logging_config
-
-import os
-from starlette.config import Config
 
 if os.path.exists(".env"):
     config = Config(".env")
@@ -43,8 +41,10 @@ POSTGRES_DB: str = config("POSTGRES_DATABASE", cast=str, default="postgres")
 BOT_TOKEN: str = config("BOT_TOKEN", cast=str, default="")
 
 engine = create_async_engine(
-    get_db_path(POSTGRES_USER, POSTGRES_HOST, POSTGRES_PORT, POSTGRES_DB,
-                POSTGRES_PASSWORD))
+    get_db_path(
+        POSTGRES_USER, POSTGRES_HOST, POSTGRES_PORT, POSTGRES_DB, POSTGRES_PASSWORD
+    )
+)
 sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
 
 security = HTTPBearer()

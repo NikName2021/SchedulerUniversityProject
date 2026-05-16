@@ -1,5 +1,5 @@
 // Имитация сетевой задержки Backend
-const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
+const delay = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
 export interface Teacher {
   id: string;
@@ -20,21 +20,25 @@ export const MockAPI = {
     await delay(300);
     return [
       { id: 1, name: "ИТ-Инженерия", groups: ["ИТ-1", "ИТ-2"] },
-      { id: 2, name: "Прикладная математика", groups: ["ПМ-1", "ПМ-2", "ПМ-3"] }
+      {
+        id: 2,
+        name: "Прикладная математика",
+        groups: ["ПМ-1", "ПМ-2", "ПМ-3"],
+      },
     ];
   },
-  
+
   // 2. Преподаватели
   getTeachers: async (): Promise<Teacher[]> => {
     await delay(400);
     return [
-       { id: '1', name: "Иванов А.С.", dept: "Высшая математика", blocked: [] },
-       { id: '2', name: "Петров В.М.", dept: "Кафедра математики", blocked: [] },
-       { id: '3', name: "Сидорова Е.Ю.", dept: "Кафедра физики", blocked: [] },
-       { id: '4', name: "Козлов Д.А.", dept: "Кафедра ИИ", blocked: [] }
+      { id: "1", name: "Иванов А.С.", dept: "Высшая математика", blocked: [] },
+      { id: "2", name: "Петров В.М.", dept: "Кафедра математики", blocked: [] },
+      { id: "3", name: "Сидорова Е.Ю.", dept: "Кафедра физики", blocked: [] },
+      { id: "4", name: "Козлов Д.А.", dept: "Кафедра ИИ", blocked: [] },
     ];
   },
-  
+
   // 3. Расписание (Генерация алгоритма)
   startGeneration: async () => {
     await delay(800);
@@ -53,8 +57,8 @@ export const MockAPI = {
         "Загрузка данных из PostgreSQL... OK",
         "Инициализация модели орто-маршрутизации (OR-Tools)... OK",
         "Добавление мягких ограничений... OK",
-        "Оптимизация... В процессе"
-      ]
+        "Оптимизация... В процессе",
+      ],
     };
-  }
+  },
 };

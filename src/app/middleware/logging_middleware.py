@@ -1,15 +1,16 @@
 import time
 import uuid
 
+from core.config import logger
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response
 
-from core.config import logger
-
 
 class LoggingMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+    async def dispatch(
+        self, request: Request, call_next: RequestResponseEndpoint
+    ) -> Response:
         request_id = str(uuid.uuid4())
         request.state.request_id = request_id
 
@@ -36,7 +37,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
                     "request_id": request_id,
                     "request_details": logging_dict,
                 },
-                exc_info=e
+                exc_info=e,
             )
             raise e
         finally:
@@ -48,8 +49,8 @@ class LoggingMiddleware(BaseHTTPMiddleware):
                 extra={
                     "log_type": "request_log",
                     "request_id": request_id,
-                    "request_details": logging_dict
-                }
+                    "request_details": logging_dict,
+                },
             )
 
             if response:

@@ -1,10 +1,15 @@
 import jwt
+from core.config import ALGORITHM, SECRET_KEY
+from database import IssuedJWTToken, Role, User
 from fastapi import HTTPException, status
-from core.config import SECRET_KEY, ALGORITHM
-from database import User, Role, IssuedJWTToken
-from helpers import hash_password, verify_password, create_access_token, create_refresh_token
-from schemas import UserCreate, UserLogin, Token, UserResponse
+from helpers import (
+    create_access_token,
+    create_refresh_token,
+    hash_password,
+    verify_password,
+)
 from repositories import AuthRepository
+from schemas import Token, UserCreate, UserLogin, UserResponse
 
 
 class AuthService:
@@ -24,7 +29,7 @@ class AuthService:
             email=user_data.email,
             username=user_data.username,
             hashed_password=hash_password(user_data.password),
-            role=Role.USER
+            role=Role.USER,
         )
         return await self.repo.create_user(new_user)
 
@@ -46,13 +51,12 @@ class AuthService:
         except jwt.PyJWTError:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Недействительный refresh token"
+                detail="Недействительный refresh token",
             )
 
         if payload.get("type") != "refresh":
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Это не refresh token"
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Это не refresh token"
             )
 
         user_id = payload.get("user_id")
@@ -61,7 +65,9 @@ class AuthService:
 
         token_obj = await self.repo.get_valid_refresh_token(refresh_token_str, user_id)
         if not token_obj:
-            raise HTTPException(status_code=401, detail="Refresh token отозван или истёк")
+            raise HTTPException(
+                status_code=401, detail="Refresh token отозван или истёк"
+            )
 
         user = await self.repo.get_user_by_id(user_id)
         if not user:
@@ -75,14 +81,11 @@ class AuthService:
         access_token = create_access_token(payload)
         refresh_token = create_refresh_token(payload)
 
-        token_obj = IssuedJWTToken(
-            user_id=user.id,
-            jti=refresh_token
-        )
+        token_obj = IssuedJWTToken(user_id=user.id, jti=refresh_token)
         await self.repo.save_token(token_obj)
 
         return Token(
             access_token=access_token,
             refresh_token=refresh_token,
-            user=UserResponse.model_validate(user)
+            user=UserResponse.model_validate(user),
         )

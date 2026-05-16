@@ -1,6 +1,6 @@
 from typing import Optional, Union
 
-from fastapi import Form, File, UploadFile
+from fastapi import File, Form, UploadFile
 from pydantic import BaseModel, EmailStr
 
 
@@ -27,12 +27,12 @@ def validate_file(file: Union[UploadFile, str, None]) -> Optional[UploadFile]:
 
 class EventCreateForm:
     def __init__(
-            self,
-            name: str = Form(...),
-            date_str: str = Form(...),
-            description: str = Form(...),
-            image: Union[UploadFile, str, None] = File(None),
-            csv_file: Union[UploadFile, str, None] = File(None)
+        self,
+        name: str = Form(...),
+        date_str: str = Form(...),
+        description: str = Form(...),
+        image: Union[UploadFile, str, None] = File(None),
+        csv_file: Union[UploadFile, str, None] = File(None),
     ):
         self.name = name
         self.date_str = date_str
@@ -43,12 +43,12 @@ class EventCreateForm:
 
 class EventUpdateForm:
     def __init__(
-            self,
-            name: Optional[str] = Form(None),
-            date_str: Optional[str] = Form(None),
-            description: Optional[str] = Form(None),
-            image: Union[UploadFile, str, None] = File(None),
-            csv_file: Union[UploadFile, str, None] = File(None)
+        self,
+        name: Optional[str] = Form(None),
+        date_str: Optional[str] = Form(None),
+        description: Optional[str] = Form(None),
+        image: Union[UploadFile, str, None] = File(None),
+        csv_file: Union[UploadFile, str, None] = File(None),
     ):
         self.name = name
         self.date_str = date_str

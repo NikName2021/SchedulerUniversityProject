@@ -1,11 +1,10 @@
 from datetime import datetime
 
+from database import IssuedJWTToken, Settings, User
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-
-from database import User, Settings, IssuedJWTToken
 
 """class User(DeclBase):
     __tablename__ = "user"
@@ -45,10 +44,11 @@ class IssuedJWTTokenDTO(BaseModel):
 class UserRepository:
     @staticmethod
     async def get_user(telegram_id: int, session: AsyncSession):
-        stmt = (select(User)
-                .options(selectinload(User.settings))
-                .where(User.telegram_id == telegram_id)
-                )
+        stmt = (
+            select(User)
+            .options(selectinload(User.settings))
+            .where(User.telegram_id == telegram_id)
+        )
         user = await session.execute(stmt)
         return user.scalar()
 
@@ -67,16 +67,19 @@ class UserRepository:
         return settings.scalar()
 
     @staticmethod
-    async def create_settings(settings_dto: SettingDTO, session: AsyncSession) -> Settings:
+    async def create_settings(
+        settings_dto: SettingDTO, session: AsyncSession
+    ) -> Settings:
         setting = Settings(**settings_dto.model_dump())
         session.add(setting)
         await session.commit()
         await session.refresh(setting)
         return setting
 
-
     @staticmethod
-    async def create_refresh(jwt_dto: IssuedJWTTokenDTO, session: AsyncSession) -> IssuedJWTToken:
+    async def create_refresh(
+        jwt_dto: IssuedJWTTokenDTO, session: AsyncSession
+    ) -> IssuedJWTToken:
         jwt = IssuedJWTToken(**jwt_dto.model_dump())
         session.add(jwt)
         await session.commit()

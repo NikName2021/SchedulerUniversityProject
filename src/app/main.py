@@ -1,10 +1,17 @@
 import uvicorn
+from api.routes.api import router as api_router
+from core.config import (
+    API_PREFIX,
+    DEBUG,
+    HOST,
+    MEMOIZATION_FLAG,
+    PORT,
+    PROJECT_NAME,
+    VERSION,
+)
+from core.events import create_start_app_handler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
-from api.routes.api import router as api_router
-from core.config import API_PREFIX, DEBUG, PROJECT_NAME, VERSION, MEMOIZATION_FLAG, HOST, PORT
-from core.events import create_start_app_handler
 from middleware import LoggingMiddleware
 
 # origins = [
@@ -12,9 +19,7 @@ from middleware import LoggingMiddleware
 # ]
 
 
-origins = [
-    "*"
-]
+origins = ["*"]
 
 
 def get_application() -> FastAPI:

@@ -1,17 +1,17 @@
-import { useEffect, useRef } from 'react';
-import { useAppStore } from '../store/useAppStore';
+import { useEffect, useRef } from "react";
+import { useAppStore } from "../store/useAppStore";
 
 export const useGenerationProgress = () => {
-  const { 
-    isGenerating, 
-    jobId, 
-    progress, 
-    logs, 
-    startGeneration, 
+  const {
+    isGenerating,
+    jobId,
+    progress,
+    logs,
+    startGeneration,
     updateJobProgress,
-    resetJob
+    resetJob,
   } = useAppStore();
-  
+
   const pollingInterval = useRef<number | null>(null);
 
   useEffect(() => {
@@ -40,6 +40,6 @@ export const useGenerationProgress = () => {
     isGenerating,
     logs,
     start: startGeneration,
-    reset: resetJob
+    reset: resetJob,
   };
 };

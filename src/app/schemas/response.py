@@ -1,8 +1,7 @@
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict
-
 from database import Role
+from pydantic import BaseModel, ConfigDict
 
 
 class ParticipantResponse(BaseModel):

@@ -1,0 +1,13 @@
+[tool.ruff]
+# Включаем проверку стиля (E, F) и плагины вроде flake8-bugbear (B)
+select = ["E", "F", "B", "I"]
+ignore = []
+
+[tool.ruff.lint]
+# Агент обязан использовать Type Hinting, проверяем это
+extend-select = ["ANN"] 
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q --tb=short"
+testpaths = ["tests"]

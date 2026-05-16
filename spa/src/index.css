@@ -1,24 +1,44 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand: var(--brand);
+  --color-brand-light: var(--brand-light);
+  --color-brand-hover: var(--brand-hover);
+  --color-bg-base: var(--bg-base);
+  --color-bg-light: var(--bg-light);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+  --color-border-light: var(--border-light);
+
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+
+  --radius-xl: 0.75rem;
+  --radius-2xl: 1rem;
+}
+
 :root {
   /* Colors */
   --brand: #0f4c81;
   --brand-hover: #0a3a63;
   --bg-base: #f4f5f8;
   --bg-card: #ffffff;
-  
+
   --text-primary: #1a1f36;
   --text-secondary: #6b7280;
   --text-tertiary: #9ca3af;
-  
+
   --border-light: #e5e7eb;
-  
+
   --blocked: #fee2e2;
   --blocked-border: #fca5a5;
   --blocked-text: #b91c1c;
-  
+
   --emerald: #10b981;
   --emerald-bg: #ecfdf5;
   --emerald-text: #065f46;
-  
+
   --amber: #f59e0b;
   --amber-bg: #fffbeb;
   --amber-text: #92400e;
@@ -42,13 +62,20 @@
 body {
   background-color: var(--bg-base);
   color: var(--text-primary);
-  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family:
+    "Plus Jakarta Sans",
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
   margin: 0;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-h1, h2, h3, h4 {
+h1,
+h2,
+h3,
+h4 {
   margin: 0;
 }
 
@@ -61,7 +88,10 @@ button {
   border: none;
   background: none;
   font-family: inherit;
-  transition: transform var(--transition-fast), background-color var(--transition-fast), color var(--transition-fast);
+  transition:
+    transform var(--transition-fast),
+    background-color var(--transition-fast),
+    color var(--transition-fast);
 }
 
 button:active {
@@ -70,8 +100,14 @@ button:active {
 
 /* Animations */
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .animate-fade-in {
@@ -160,33 +196,95 @@ button:active {
 }
 
 /* Utility Classes for Layout */
-.flex { display: flex; }
-.items-center { align-items: center; }
-.justify-between { justify-content: space-between; }
-.flex-col { flex-direction: column; }
-.gap-2 { gap: 0.5rem; }
-.gap-4 { gap: 1rem; }
-.gap-6 { gap: 1.5rem; }
-.gap-8 { gap: 2rem; }
-.space-y-4 > * + * { margin-top: 1rem; }
-.space-y-6 > * + * { margin-top: 1.5rem; }
-.space-y-8 > * + * { margin-top: 2rem; }
-.space-y-10 > * + * { margin-top: 2.5rem; }
-.grid { display: grid; }
-.grid-cols-3 { grid-template-columns: repeat(3, 1fr); }
-.min-h-screen { min-height: 100vh; }
-.w-full { width: 100%; }
-.max-w-6xl { max-width: 1152px; margin-left: auto; margin-right: auto; }
-.p-10 { padding: 2.5rem; }
-.mt-2 { margin-top: 0.5rem; }
+.flex {
+  display: flex;
+}
+.items-center {
+  align-items: center;
+}
+.justify-between {
+  justify-content: space-between;
+}
+.flex-col {
+  flex-direction: column;
+}
+.gap-2 {
+  gap: 0.5rem;
+}
+.gap-4 {
+  gap: 1rem;
+}
+.gap-6 {
+  gap: 1.5rem;
+}
+.gap-8 {
+  gap: 2rem;
+}
+.space-y-4 > * + * {
+  margin-top: 1rem;
+}
+.space-y-6 > * + * {
+  margin-top: 1.5rem;
+}
+.space-y-8 > * + * {
+  margin-top: 2rem;
+}
+.space-y-10 > * + * {
+  margin-top: 2.5rem;
+}
+.grid {
+  display: grid;
+}
+.grid-cols-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+.min-h-screen {
+  min-height: 100vh;
+}
+.w-full {
+  width: 100%;
+}
+.max-w-6xl {
+  max-width: 1152px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.p-10 {
+  padding: 2.5rem;
+}
+.mt-2 {
+  margin-top: 0.5rem;
+}
 
 /* Text styles */
-.text-3xl { font-size: 1.875rem; line-height: 2.25rem; }
-.text-lg { font-size: 1.125rem; line-height: 1.75rem; }
-.text-sm { font-size: 0.875rem; line-height: 1.25rem; }
-.text-xs { font-size: 0.75rem; line-height: 1rem; }
-.font-bold { font-weight: 700; }
-.font-black { font-weight: 900; }
-.text-brand { color: var(--brand); }
-.text-text-secondary { color: var(--text-secondary); }
-.text-text-tertiary { color: var(--text-tertiary); }
+.text-3xl {
+  font-size: 1.875rem;
+  line-height: 2.25rem;
+}
+.text-lg {
+  font-size: 1.125rem;
+  line-height: 1.75rem;
+}
+.text-sm {
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+.text-xs {
+  font-size: 0.75rem;
+  line-height: 1rem;
+}
+.font-bold {
+  font-weight: 700;
+}
+.font-black {
+  font-weight: 900;
+}
+.text-brand {
+  color: var(--brand);
+}
+.text-text-secondary {
+  color: var(--text-secondary);
+}
+.text-text-tertiary {
+  color: var(--text-tertiary);
+}

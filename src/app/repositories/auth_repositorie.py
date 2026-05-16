@@ -1,17 +1,16 @@
+from database import IssuedJWTToken, User
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from database import User, IssuedJWTToken
 
 
 class AuthRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def get_user_by_email_or_username(self, email: str, username: str) -> User | None:
-        query = select(User).where(
-            or_(User.email == email, User.username == username)
-        )
+    async def get_user_by_email_or_username(
+        self, email: str, username: str
+    ) -> User | None:
+        query = select(User).where(or_(User.email == email, User.username == username))
         result = await self.db.execute(query)
         return result.scalar_one_or_none()
 
@@ -35,11 +34,13 @@ class AuthRepository:
         self.db.add(token)
         await self.db.commit()
 
-    async def get_valid_refresh_token(self, token_jti: str, user_id: int) -> IssuedJWTToken | None:
+    async def get_valid_refresh_token(
+        self, token_jti: str, user_id: int
+    ) -> IssuedJWTToken | None:
         query = select(IssuedJWTToken).where(
             IssuedJWTToken.jti == token_jti,
             IssuedJWTToken.user_id == user_id,
-            IssuedJWTToken.revoked.is_(False)
+            IssuedJWTToken.revoked.is_(False),
         )
         result = await self.db.execute(query)
         return result.scalar_one_or_none()

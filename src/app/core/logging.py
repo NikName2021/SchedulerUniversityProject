@@ -4,7 +4,6 @@
 logging_config = {
     "version": 1,
     "disable_existing_loggers": False,
-
     # 1. ДОБАВЛЯЕМ НОВЫЙ ФОРМАТТЕР ДЛЯ ТЕКСТА
     "formatters": {
         "default_console": {
@@ -20,10 +19,9 @@ logging_config = {
         "json": {
             "()": "pythonjsonlogger.jsonlogger.JsonFormatter",
             "format": "%(asctime)s %(levelname)s %(name)s %(message)s",
-            "datefmt": "%Y-%m-%dT%H:%M:%S%z"
+            "datefmt": "%Y-%m-%dT%H:%M:%S%z",
         },
     },
-
     # 2. ДОБАВЛЯЕМ НОВЫЙ ОБРАБОТЧИК ДЛЯ .LOG ФАЙЛА
     "handlers": {
         "console": {
@@ -52,7 +50,6 @@ logging_config = {
             "level": "INFO",
         },
     },
-
     # 3. ДОБАВЛЯЕМ file_log В СПИСОК ОБРАБОТЧИКОВ
     "loggers": {
         # Корневой логгер для нашего приложения

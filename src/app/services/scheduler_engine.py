@@ -2,13 +2,17 @@ import collections
 import datetime
 import logging
 
-from ortools.sat.python import cp_model
-
 from core.constants import (
-    PENALTY_UNASSIGNED, PENALTY_LATE_LESSON, PENALTY_SATURDAY,
-    PENALTY_WINDOW, PENALTY_SYNC_STREAM, PENALTY_PROGRESS_VIOLATION,
-    PENALTY_MORNING_PRIORITY, NUM_WORKERS, LOGGING_ENABLED
+    LOGGING_ENABLED,
+    NUM_WORKERS,
+    PENALTY_LATE_LESSON,
+    PENALTY_MORNING_PRIORITY,
+    PENALTY_PROGRESS_VIOLATION,
+    PENALTY_SYNC_STREAM,
+    PENALTY_UNASSIGNED,
+    PENALTY_WINDOW,
 )
+from ortools.sat.python import cp_model
 
 logger = logging.getLogger(__name__)
 
@@ -68,20 +72,20 @@ def _is_slot_blocked(teacher, group, slot, unavail):
 
 
 def solve_schedule(
-        start_date,
-        end_date,
-        study_days,
-        lessons,
-        holidays,
-        groups,
-        group_sizes,
-        subjects,
-        streams_map,
-        rooms,
-        unavailable_times,
-        fixed_schedules=None,
-        max_time_seconds=300,
-        priorities=None
+    start_date,
+    end_date,
+    study_days,
+    lessons,
+    holidays,
+    groups,
+    group_sizes,
+    subjects,
+    streams_map,
+    rooms,
+    unavailable_times,
+    fixed_schedules=None,
+    max_time_seconds=300,
+    priorities=None,
 ):
     if priorities is None:
         priorities = {}
@@ -141,10 +145,14 @@ def solve_schedule(
                     pref = priorities.get(subj, "day")
                     if pref == "morning":
                         if s[1] > 2:
-                            penalties.append(var * (s[1] - 2) * PENALTY_MORNING_PRIORITY)
+                            penalties.append(
+                                var * (s[1] - 2) * PENALTY_MORNING_PRIORITY
+                            )
                     elif pref == "evening":
                         if s[1] < 5:
-                            penalties.append(var * (5 - s[1]) * PENALTY_MORNING_PRIORITY)
+                            penalties.append(
+                                var * (5 - s[1]) * PENALTY_MORNING_PRIORITY
+                            )
 
     # 1. Точное количество занятий + дневные/недельные лимиты
     for subj, subj_data in subjects.items():
@@ -157,7 +165,9 @@ def solve_schedule(
                 if target == 0:
                     continue
 
-                vars_for_g_subj_t = [x[(g, subj, t, s)] for s in SLOTS if (g, subj, t, s) in x]
+                vars_for_g_subj_t = [
+                    x[(g, subj, t, s)] for s in SLOTS if (g, subj, t, s) in x
+                ]
                 if not vars_for_g_subj_t:
                     continue
 
@@ -169,13 +179,17 @@ def solve_schedule(
                 # Недельный лимит (равномерное распределение + запас)
                 weekly_limit = (target // total_weeks) + 2
                 for w, week_slots in slots_by_week.items():
-                    week_vars = [x[(g, subj, t, s)] for s in week_slots if (g, subj, t, s) in x]
+                    week_vars = [
+                        x[(g, subj, t, s)] for s in week_slots if (g, subj, t, s) in x
+                    ]
                     if week_vars:
                         model.Add(sum(week_vars) <= weekly_limit)
 
                 # Дневной лимит: не более 1 занятия каждого типа по предмету в день
                 for day, day_slots in slots_by_day.items():
-                    day_vars = [x[(g, subj, t, s)] for s in day_slots if (g, subj, t, s) in x]
+                    day_vars = [
+                        x[(g, subj, t, s)] for s in day_slots if (g, subj, t, s) in x
+                    ]
                     if day_vars:
                         model.Add(sum(day_vars) <= 1)
 
@@ -202,7 +216,9 @@ def solve_schedule(
         for other_g in active_stream[1:]:
             for s in SLOTS:
                 if (base_g, subj, "lec", s) in x and (other_g, subj, "lec", s) in x:
-                    model.Add(x[(base_g, subj, "lec", s)] == x[(other_g, subj, "lec", s)])
+                    model.Add(
+                        x[(base_g, subj, "lec", s)] == x[(other_g, subj, "lec", s)]
+                    )
 
     # 4. Преподаватель может вести только одну пару в слоте
     for s in SLOTS:
@@ -260,9 +276,13 @@ def solve_schedule(
                     if (other_g, subj, "sem", s) in x:
                         cum_other = cum_other + x[(other_g, subj, "sem", s)]
 
-                diff = model.NewIntVar(-100, 100, f"diff_sem_{subj}_{base_g}_{other_g}_{day}")
+                diff = model.NewIntVar(
+                    -100, 100, f"diff_sem_{subj}_{base_g}_{other_g}_{day}"
+                )
                 model.Add(diff == cum_base - cum_other)
-                abs_diff = model.NewIntVar(0, 100, f"abs_diff_sem_{subj}_{base_g}_{other_g}_{day}")
+                abs_diff = model.NewIntVar(
+                    0, 100, f"abs_diff_sem_{subj}_{base_g}_{other_g}_{day}"
+                )
                 model.AddAbsEquality(abs_diff, diff)
                 penalties.append(abs_diff * PENALTY_SYNC_STREAM)
 
@@ -299,7 +319,9 @@ def solve_schedule(
             model.AddMinEquality(crosses_lunch, [start_le_3, end_ge_4])
 
             windows = model.NewIntVar(0, 10, f"windows_{g}_{day}")
-            model.Add(windows == end_idx - start_idx + 1 - total_classes - crosses_lunch).OnlyEnforceIf(day_active)
+            model.Add(
+                windows == end_idx - start_idx + 1 - total_classes - crosses_lunch
+            ).OnlyEnforceIf(day_active)
             model.Add(windows == 0).OnlyEnforceIf(day_active.Not())
             penalties.append(windows * PENALTY_WINDOW)
 
@@ -322,8 +344,9 @@ def solve_schedule(
         base_g = active_stream[0]
 
         # Precompute which groups actually have seminar variables
-        groups_with_sems = [g for g in active_stream
-                           if any((g, subj, "sem", s) in x for s in SLOTS)]
+        groups_with_sems = [
+            g for g in active_stream if any((g, subj, "sem", s) in x for s in SLOTS)
+        ]
 
         # Build incremental cumulative sums per group
         cum_sems = {g: 0 for g in groups_with_sems}
@@ -352,9 +375,15 @@ def solve_schedule(
     solver.parameters.num_search_workers = NUM_WORKERS
 
     num_vars = len(x)
-    num_constraints = model.Proto().constraints.__len__() if hasattr(model.Proto().constraints, '__len__') else '?'
-    logger.info(f"[ENGINE] Модель: {len(groups)} групп, {len(subjects)} предметов, "
-                f"{len(SLOTS)} слотов, {num_vars} переменных")
+    num_constraints = (
+        model.Proto().constraints.__len__()
+        if hasattr(model.Proto().constraints, "__len__")
+        else "?"
+    )
+    logger.info(
+        f"[ENGINE] Модель: {len(groups)} групп, {len(subjects)} предметов, "
+        f"{len(SLOTS)} слотов, {num_vars} переменных"
+    )
 
     if LOGGING_ENABLED:
         solver.parameters.log_search_progress = True
@@ -364,12 +393,22 @@ def solve_schedule(
     logger.info(f"[ENGINE] Статус решения: {solver.StatusName(status)}")
 
     if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        logger.info(f"[ENGINE] Найдено решение. Целевая функция: {solver.ObjectiveValue()}")
+        logger.info(
+            f"[ENGINE] Найдено решение. Целевая функция: {solver.ObjectiveValue()}"
+        )
         schedule = []
         for (g, subj, t, s), var in x.items():
             if solver.Value(var) == 1:
                 schedule.append(
-                    {"group": g, "subject": subj, "type": t, "slot": s, "teacher": subjects[subj]["teacher"]})
+                    {
+                        "group": g,
+                        "subject": subj,
+                        "type": t,
+                        "slot": s,
+                        "teacher": subjects[subj]["teacher"],
+                        "teacher_id": subjects[subj].get("teacher_id"),
+                    }
+                )
 
         unassigned_warnings = []
         logger.info("=" * 40)
@@ -377,17 +416,25 @@ def solve_schedule(
         for (g, subj, t), (deficit_var, target) in unassigned_vars.items():
             val = solver.Value(deficit_var)
             if val > 0:
-                type_name = "Лекция" if t == "lec" else ("Лабораторная" if t == "lab" else "Семинар")
+                type_name = (
+                    "Лекция"
+                    if t == "lec"
+                    else ("Лабораторная" if t == "lab" else "Семинар")
+                )
                 msg = f"Группа {g}: не выставлено {val} из {target} пар ({subj}, {type_name})"
                 logger.warning(f" [!] {msg}")
-                unassigned_warnings.append({"group": g, "subject": subj, "type": t, "msg": msg})
+                unassigned_warnings.append(
+                    {"group": g, "subject": subj, "type": t, "msg": msg, "count": val}
+                )
 
         if not unassigned_warnings:
             logger.info(" Все пары успешно выставлены!")
         logger.info("=" * 40)
 
         # Phase 2: Rooms (Greedy)
-        final_schedule, room_warnings = assign_rooms(schedule, SLOTS, rooms, group_sizes, subjects, unavailable_times)
+        final_schedule, room_warnings = assign_rooms(
+            schedule, SLOTS, rooms, group_sizes, subjects, unavailable_times
+        )
         return final_schedule, SLOTS, unassigned_warnings + room_warnings
     else:
         return None, SLOTS, ["Решение не найдено. Слишком жесткие ограничения."]
@@ -402,15 +449,23 @@ def assign_rooms(schedule, SLOTS, rooms, group_sizes, subjects, unavailable_time
 
     for s in SLOTS:
         day_events = by_slot[s]
-        if not day_events: continue
+        if not day_events:
+            continue
 
         events = []
         # Seminars
         for ev in day_events:
             if ev["type"] == "sem":
                 size = group_sizes.get(ev["group"], 20)
-                events.append({"subject": ev["subject"], "type": ev["type"], "groups": [ev["group"]], "size": size,
-                               "original": [ev]})
+                events.append(
+                    {
+                        "subject": ev["subject"],
+                        "type": ev["type"],
+                        "groups": [ev["group"]],
+                        "size": size,
+                        "original": [ev],
+                    }
+                )
         # Lectures
         lec_grouped = collections.defaultdict(list)
         for ev in [e for e in day_events if e["type"] == "lec"]:
@@ -418,7 +473,14 @@ def assign_rooms(schedule, SLOTS, rooms, group_sizes, subjects, unavailable_time
         for subj, evs in lec_grouped.items():
             size = sum(group_sizes.get(e["group"], 20) for e in evs)
             events.append(
-                {"subject": subj, "type": "lec", "groups": [e["group"] for e in evs], "size": size, "original": evs})
+                {
+                    "subject": subj,
+                    "type": "lec",
+                    "groups": [e["group"] for e in evs],
+                    "size": size,
+                    "original": evs,
+                }
+            )
 
         events.sort(key=lambda x: x["size"], reverse=True)
         available_rooms = set(rooms.keys())
@@ -437,7 +499,8 @@ def assign_rooms(schedule, SLOTS, rooms, group_sizes, subjects, unavailable_time
             for r in available_rooms:
                 r_data = rooms[r]
                 score = 0
-                if r_data["type"] == target_type: score += 100
+                if r_data["type"] == target_type:
+                    score += 100
                 cap_diff = r_data["capacity"] - ev["size"]
                 if cap_diff >= 0:
                     score += 50 - cap_diff
@@ -461,16 +524,30 @@ def assign_rooms(schedule, SLOTS, rooms, group_sizes, subjects, unavailable_time
                     cp["room"] = best_room
                     if w_msg:
                         cp["warning"] = w_msg
-                        warnings.append({"date": s[0], "lesson": s[1], "group": cp["group"], "subject": cp["subject"],
-                                         "msg": w_msg})
+                        warnings.append(
+                            {
+                                "date": s[0],
+                                "lesson": s[1],
+                                "group": cp["group"],
+                                "subject": cp["subject"],
+                                "msg": w_msg,
+                            }
+                        )
                     final_schedule.append(cp)
             else:
                 for orig in ev["original"]:
                     cp = dict(orig)
                     cp["room"] = "НЕТ АУДИТОРИИ"
                     cp["warning"] = "Не хватило аудиторий"
-                    warnings.append({"date": s[0], "lesson": s[1], "group": cp["group"], "subject": cp["subject"],
-                                     "msg": "Нет аудитории"})
+                    warnings.append(
+                        {
+                            "date": s[0],
+                            "lesson": s[1],
+                            "group": cp["group"],
+                            "subject": cp["subject"],
+                            "msg": "Нет аудитории",
+                        }
+                    )
                     final_schedule.append(cp)
 
     return final_schedule, warnings
