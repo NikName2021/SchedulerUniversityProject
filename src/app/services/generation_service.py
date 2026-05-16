@@ -199,9 +199,17 @@ class GenerationService:
                                                         d_str, l_str = str(item).split(
                                                             sep
                                                         )
-                                                        d = int(d_str) - 1
+                                                        # Frontend uses JS getDay(): 0=Sun, 1=Mon, ..., 6=Sat
+                                                        # Engine uses Python weekday(): 0=Mon, ..., 6=Sun
+                                                        # Convert: JS 1-6 → Python 0-5, JS 0 → Python 6
+                                                        js_day = int(d_str)
+                                                        py_day = (
+                                                            js_day - 1
+                                                        ) % 7  # 1→0, 2→1, ..., 6→5, 0→6
                                                         l = int(l_str)
-                                                        selected_slots.append((d, l))
+                                                        selected_slots.append(
+                                                            (py_day, l)
+                                                        )
                                                         break
                                                     except:
                                                         continue
@@ -314,11 +322,15 @@ class GenerationService:
 
                     # --- Save Unassigned Entries ---
                     unassigned_entries = []
-                    for warn in [w for w in warnings if isinstance(w, dict) and "count" in w]:
+                    for warn in [
+                        w for w in warnings if isinstance(w, dict) and "count" in w
+                    ]:
                         s_id = warn["subject"]
                         subj_info = subjects_engine.get(s_id, {})
-                        display_name = subj_info.get("display_name", s_id).split(" (")[0]
-                        
+                        display_name = subj_info.get("display_name", s_id).split(" (")[
+                            0
+                        ]
+
                         count = warn.get("count", 1)
                         for _ in range(count):
                             unassigned_entries.append(
@@ -326,12 +338,17 @@ class GenerationService:
                                     task_id=task_id,
                                     group_name=warn["group"],
                                     event_name=display_name,
-                                    stream_type="Лекция" if warn["type"] == "lec" 
-                                                else ("Лабораторная" if warn["type"] == "lab" else "Семинар"),
+                                    stream_type="Лекция"
+                                    if warn["type"] == "lec"
+                                    else (
+                                        "Лабораторная"
+                                        if warn["type"] == "lab"
+                                        else "Семинар"
+                                    ),
                                     teacher_id=subj_info.get("teacher_id"),
                                     date=None,
                                     lesson_number=None,
-                                    warning=warn["msg"]
+                                    warning=warn["msg"],
                                 )
                             )
                     if unassigned_entries:

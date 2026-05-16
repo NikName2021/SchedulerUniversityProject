@@ -1,7 +1,7 @@
 from datetime import date
 
 # Generation Settings
-MAX_TIME_SECONDS = 660
+MAX_TIME_SECONDS = 100
 NUM_WORKERS = 8
 LOGGING_ENABLED = True
 

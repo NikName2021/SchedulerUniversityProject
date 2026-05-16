@@ -40,6 +40,8 @@ async def generate_excel_report(session, task_id: int | None = None):
 
     rows = []
     for ev in entries:
+        if ev.date is None:
+            continue
         wd = ev.date.weekday()
         subject_str = f"{ev.event_name} ({ev.stream_type})\n{ev.teacher.name if ev.teacher else ''}\nАуд: {ev.room_id or ''}"
 

@@ -551,6 +551,173 @@ async def get_schedule(
     ]
 
 
+async def refresh_task_warnings(task_id: int, db: AsyncSession):
+    stmt = (
+        select(ScheduleEntry)
+        .options(selectinload(ScheduleEntry.teacher))
+        .where(ScheduleEntry.task_id == task_id)
+    )
+    res = await db.execute(stmt)
+    all_entries = res.scalars().all()
+
+    by_slot: dict[tuple[str, int], list] = {}
+    for e in all_entries:
+        if e.date and e.lesson_number:
+            date_key = (
+                e.date.strftime("%Y-%m-%d")
+                if hasattr(e.date, "strftime")
+                else str(e.date)
+            )
+            key = (date_key, e.lesson_number)
+            if key not in by_slot:
+                by_slot[key] = []
+            by_slot[key].append(e)
+        else:
+            e.warning = None
+
+    for (d, l), slot_entries in by_slot.items():
+        for e1 in slot_entries:
+            slot_warnings: list[str] = []
+
+            # 1. Overlap checks
+            for e2 in slot_entries:
+                if e1.id == e2.id:
+                    continue
+
+                # Same teacher = conflict (unless same event+group = stream lecture)
+                if (
+                    e1.teacher_id
+                    and e1.teacher_id == e2.teacher_id
+                    and not (
+                        e1.event_name == e2.event_name
+                        and e1.stream_type == e2.stream_type
+                        and e1.stream_type in ("Лекция", "lecture")
+                    )
+                ):
+                    slot_warnings.append(
+                        f"Преподаватель занят: {e2.event_name} ({e2.group_name})"
+                    )
+
+                # Same group = real conflict
+                if e1.group_name == e2.group_name:
+                    slot_warnings.append(
+                        f"У группы {e1.group_name} уже есть пара ({e2.event_name})"
+                    )
+
+            # 2. Personal Teacher Availability
+            if e1.teacher and e1.teacher.restrictions_json:
+                try:
+                    restrs = json.loads(e1.teacher.restrictions_json)
+                    if not isinstance(restrs, dict):
+                        restrs = {
+                            "mode": "blacklist",
+                            "recurring": restrs,
+                            "specific": [],
+                        }
+
+                    mode = restrs.get("mode", "blacklist")
+                    recurring = restrs.get("recurring", [])
+                    specific = restrs.get("specific", [])
+
+                    # Frontend uses JS Date.getDay(): 0=Sun, 1=Mon, ..., 6=Sat
+                    # Python weekday(): 0=Mon, ..., 6=Sun
+                    # Convert Python weekday to JS getDay: (weekday + 1) % 7
+                    # Mon: (0+1)%7=1, Tue: (1+1)%7=2, ..., Sat: (5+1)%7=6, Sun: (6+1)%7=0
+                    py_wd = e1.date.weekday() if hasattr(e1.date, "weekday") else -1
+                    js_weekday = (py_wd + 1) % 7 if py_wd >= 0 else -1
+                    lesson = e1.lesson_number
+                    date_str = (
+                        e1.date.strftime("%Y-%m-%d")
+                        if hasattr(e1.date, "strftime")
+                        else str(e1.date)
+                    )
+
+                    # Check recurring: format is "WEEKDAY-LESSON" e.g. "1-3" (Mon slot 3)
+                    is_in_recurring = False
+                    for item in recurring:
+                        item_str = str(item)
+                        for sep in ["-", "_", ":"]:
+                            if sep in item_str:
+                                try:
+                                    d_s, l_s = item_str.split(sep, 1)
+                                    if int(d_s) == js_weekday and int(l_s) == lesson:
+                                        is_in_recurring = True
+                                        break
+                                except Exception:
+                                    continue
+                        if is_in_recurring:
+                            break
+
+                    # Check specific: format is "YYYY-MM-DD-LESSON" e.g. "2026-05-16-3"
+                    is_in_specific = False
+                    for item in specific:
+                        item_str = str(item)
+                        if len(item_str) > 10:
+                            # Use rsplit to split off the last segment (lesson number)
+                            # "2026-05-16-3" → ("2026-05-16", "3")
+                            for sep in ["-", "_", ":"]:
+                                try:
+                                    parts = item_str.rsplit(sep, 1)
+                                    if (
+                                        len(parts) == 2
+                                        and parts[0] == date_str
+                                        and int(parts[1]) == lesson
+                                    ):
+                                        is_in_specific = True
+                                        break
+                                except Exception:
+                                    continue
+                        if is_in_specific:
+                            break
+
+                    is_blocked = False
+                    if mode == "whitelist":
+                        # In whitelist mode, only listed slots are ALLOWED
+                        if not is_in_recurring and not is_in_specific:
+                            is_blocked = True
+                    else:  # blacklist
+                        # In blacklist mode, listed slots are FORBIDDEN
+                        if is_in_recurring or is_in_specific:
+                            is_blocked = True
+
+                    if is_blocked:
+                        slot_warnings.append(
+                            "Преподаватель недоступен по личному расписанию"
+                        )
+                except Exception as ex:
+                    logger.error(
+                        f"Error parsing restrictions for teacher {e1.teacher.name}: {ex}"
+                    )
+
+            e1.warning = "; ".join(slot_warnings) if slot_warnings else None
+
+
+async def get_task_entries_json(task_id: int, db: AsyncSession):
+    stmt = (
+        select(ScheduleEntry)
+        .options(selectinload(ScheduleEntry.teacher))
+        .where(ScheduleEntry.task_id == task_id)
+    )
+    result = await db.execute(stmt)
+    entries = result.scalars().all()
+    return [
+        {
+            "id": e.id,
+            "task_id": e.task_id,
+            "group_name": e.group_name,
+            "event_name": e.event_name,
+            "stream_type": e.stream_type,
+            "teacher": e.teacher.name if e.teacher else None,
+            "teacher_id": e.teacher_id,
+            "room_id": e.room_id,
+            "date": e.date.strftime("%Y-%m-%d") if e.date else None,
+            "lesson_number": e.lesson_number,
+            "warning": e.warning,
+        }
+        for e in entries
+    ]
+
+
 @router.patch("/schedule/{entry_id}")
 async def update_schedule_entry(
     entry_id: int,
@@ -589,40 +756,14 @@ async def update_schedule_entry(
     elif "room_id" in payload.model_fields_set:
         entry.room_id = None
 
-    # --- Conflict Detection ---
-    # 1. Clear current warning
-    entry.warning = None
-
-    # 2. Check for overlaps in the same task
-    # We check: teacher, room, and group (though group is mostly handled by UI grid structure)
-    conflicts_stmt = select(ScheduleEntry).where(
-        ScheduleEntry.task_id == entry.task_id,
-        ScheduleEntry.date == entry.date,
-        ScheduleEntry.lesson_number == entry.lesson_number,
-        ScheduleEntry.id != entry.id,
-    )
-    result = await db.execute(conflicts_stmt)
-    other_entries = result.scalars().all()
-
-    warnings = []
-    for other in other_entries:
-        if entry.teacher_id and entry.teacher_id == other.teacher_id:
-            warnings.append(f"Преподаватель занят: {other.event_name}")
-        if entry.room_id and entry.room_id == other.room_id:
-            warnings.append(f"Аудитория занята: {other.event_name}")
-        if entry.group_name == other.group_name:
-            warnings.append(f"У группы {entry.group_name} уже есть пара")
-
-    if warnings:
-        entry.warning = "; ".join(warnings)
-
-    # --- Side Effect: Recalculate warnings for others ---
-    # If we moved AWAY from a conflict, the other entry might now be clean.
-    # For simplicity in MVP, we just commit here.
-    # A full consistency check would re-scan all entries in the task.
-
+    # --- Conflict Detection & Warning Refresh ---
+    await refresh_task_warnings(entry.task_id, db)
     await db.commit()
-    return {"detail": "Entry updated successfully", "warning": entry.warning}
+
+    return {
+        "detail": "Entry updated successfully",
+        "entries": await get_task_entries_json(entry.task_id, db),
+    }
 
 
 @router.delete("/schedule/{entry_id}")
@@ -636,6 +777,14 @@ async def delete_schedule_entry(
     if not entry:
         raise HTTPException(status_code=404, detail="Schedule entry not found")
 
+    task_id = entry.task_id
     await db.delete(entry)
     await db.commit()
-    return {"detail": "Entry deleted successfully"}
+
+    entries = []
+    if task_id:
+        await refresh_task_warnings(task_id, db)
+        await db.commit()
+        entries = await get_task_entries_json(task_id, db)
+
+    return {"detail": "Entry deleted successfully", "entries": entries}

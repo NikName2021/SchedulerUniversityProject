@@ -19,6 +19,7 @@ import {
   closestCenter,
   KeyboardSensor,
   PointerSensor,
+  TouchSensor,
   useSensor,
   useSensors,
   useDroppable,
@@ -77,17 +78,21 @@ const getTypeStyles = (type: string) => {
 const DraggableCard: React.FC<{
   entry: ScheduleEntry;
   selectedGroup: string;
-}> = ({ entry, selectedGroup }) => {
+  dayIdx?: number;
+  pairNum?: number;
+  count?: number;
+}> = ({ entry, selectedGroup, dayIdx, pairNum, count }) => {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({
-      id: entry.id.toString(),
-      data: entry,
+      id: `card-${entry.id}`,
+      data: { ...entry, dayIdx, pairNum },
     });
 
   const style = {
     transform: CSS.Translate.toString(transform),
     zIndex: isDragging ? 100 : 1,
     opacity: isDragging ? 0.5 : 1,
+    touchAction: "none",
   };
 
   const styles = getTypeStyles(entry.stream_type);
@@ -96,16 +101,25 @@ const DraggableCard: React.FC<{
     <div
       ref={setNodeRef}
       style={style}
+      {...attributes}
+      {...listeners}
       className={`${styles.bg} ${styles.border} border border-l-4 rounded-lg p-2 shadow-sm relative group/card hover:shadow-md transition-shadow cursor-grab active:cursor-grabbing ${entry.warning ? "ring-2 ring-red-500 ring-offset-1" : ""}`}
       title={entry.warning || undefined}
     >
+      {count && count > 1 && (
+        <div className="absolute -top-2 -right-2 bg-brand text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full shadow-sm border border-white z-10">
+          {count}
+        </div>
+      )}
+      {count && count > 1 && (
+        <div className="absolute inset-0 border border-black/5 rounded-lg -rotate-1 -translate-x-1 translate-y-1 bg-white/50 -z-10" />
+      )}
+      {count && count > 2 && (
+        <div className="absolute inset-0 border border-black/5 rounded-lg -rotate-2 -translate-x-2 translate-y-2 bg-white/30 -z-20" />
+      )}
       <div className="flex justify-between items-start mb-1">
         <div className="flex items-center gap-1">
-          <div
-            {...listeners}
-            {...attributes}
-            className="p-0.5 hover:bg-black/5 rounded cursor-grab"
-          >
+          <div className="p-0.5 hover:bg-black/5 rounded">
             <GripVertical size={10} className="text-text-tertiary" />
           </div>
           <span className={`text-[9px] font-bold uppercase ${styles.text}`}>
@@ -115,26 +129,28 @@ const DraggableCard: React.FC<{
         <div className="flex gap-1 opacity-0 group-hover/card:opacity-100 transition-opacity">
           {entry.date ? (
             <button
+              onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
                 (
                   window as unknown as { unassignEntry: (id: number) => void }
                 ).unassignEntry(entry.id);
               }}
-              className="p-1 hover:bg-black/5 rounded text-text-tertiary hover:text-orange-500"
+              className="p-1 hover:bg-black/5 rounded text-text-tertiary hover:text-orange-500 pointer-events-auto"
               title="Убрать в невыставленные"
             >
               <X size={12} />
             </button>
           ) : (
             <button
+              onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
                 (
                   window as unknown as { deleteEntry: (id: number) => void }
                 ).deleteEntry(entry.id);
               }}
-              className="p-1 hover:bg-black/5 rounded text-text-tertiary hover:text-red-500"
+              className="p-1 hover:bg-black/5 rounded text-text-tertiary hover:text-red-500 pointer-events-auto"
               title="Удалить навсегда"
             >
               <Trash2 size={12} />
@@ -161,8 +177,9 @@ const DraggableCard: React.FC<{
         )}
       </div>
       {entry.warning && (
-        <div className="mt-1 flex items-center gap-1 text-[9px] text-red-500 font-bold">
-          <AlertCircle size={10} /> Конфликт
+        <div className="mt-2 p-1.5 bg-red-50 border border-red-100 rounded text-[9px] text-red-600 font-medium flex items-start gap-1">
+          <AlertCircle size={10} className="shrink-0 mt-0.5" />
+          <span>{entry.warning}</span>
         </div>
       )}
     </div>
@@ -215,14 +232,20 @@ export const SchedulePage: React.FC = () => {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(
     taskId || null,
   );
-  const [selectedGroup, setSelectedGroup] = useState<string>("Все");
+  const [selectedGroup, setSelectedGroup] = useState<string>("");
   const [groups, setGroups] = useState<string[]>([]);
   const [selectedWeek, setSelectedWeek] = useState<string | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
-        distance: 8,
+        distance: 5,
+      },
+    }),
+    useSensor(TouchSensor, {
+      activationConstraint: {
+        delay: 250,
+        tolerance: 5,
       },
     }),
     useSensor(KeyboardSensor, {
@@ -247,7 +270,9 @@ export const SchedulePage: React.FC = () => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/v1/scheduler/groups`);
       const data = await res.json();
-      setGroups(data.groups || []);
+      const fetchedGroups = data.groups || [];
+      setGroups(fetchedGroups);
+      setSelectedGroup((prev) => (prev ? prev : fetchedGroups[0] || ""));
     } catch {
       console.error("Failed to fetch groups");
     }
@@ -295,10 +320,13 @@ export const SchedulePage: React.FC = () => {
   const availableWeeks = React.useMemo(() => {
     const weekMap = new Map<string, string>();
     entries.forEach((e) => {
+      if (!e.date) return;
       const d = new Date(e.date);
+      if (isNaN(d.getTime())) return;
+
       const monday = new Date(d);
       monday.setDate(d.getDate() - ((d.getDay() + 6) % 7));
-      const weekKey = monday.toISOString().split("T")[0];
+      const weekKey = `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, "0")}-${String(monday.getDate()).padStart(2, "0")}`;
 
       if (!weekMap.has(weekKey)) {
         const sunday = new Date(monday);
@@ -323,14 +351,15 @@ export const SchedulePage: React.FC = () => {
   const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
 
-    if (over && active.id !== over.id) {
-      const entryId = active.id;
+    if (over) {
+      const activeId = active.id.toString();
+      if (!activeId.startsWith("card-")) return;
+      const entryId = activeId.replace("card-", "");
       const { dayIdx, pairNum, isSidebar } = over.data.current as {
         dayIdx?: number;
         pairNum?: number;
         isSidebar?: boolean;
       };
-      const entry = active.data.current as ScheduleEntry;
 
       if (isSidebar) {
         // Move to sidebar
@@ -338,16 +367,17 @@ export const SchedulePage: React.FC = () => {
         return;
       }
 
-      if (dayIdx === undefined || pairNum === undefined) return;
+      if (dayIdx === undefined || pairNum === undefined || !selectedWeek)
+        return;
 
-      // Calculate new date based on dayIdx
-      // For now, we assume the schedule is for a specific week starting from some Monday
-      // We'll find the first Monday of the current task's range
-      const currentEntryDate = new Date(entry.date);
-      const diff = dayIdx - ((currentEntryDate.getDay() + 6) % 7);
-      const newDate = new Date(currentEntryDate);
-      newDate.setDate(newDate.getDate() + diff);
-      const dateStr = newDate.toISOString().split("T")[0];
+      // Parse selectedWeek as local date to avoid timezone shift
+      const [year, month, day] = selectedWeek.split("-").map(Number);
+      const mondayDate = new Date(year, month - 1, day);
+
+      const targetDate = new Date(mondayDate);
+      targetDate.setDate(mondayDate.getDate() + dayIdx);
+
+      const dateStr = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, "0")}-${String(targetDate.getDate()).padStart(2, "0")}`;
 
       // Optimistic update
       setEntries((prev) =>
@@ -371,17 +401,11 @@ export const SchedulePage: React.FC = () => {
           },
         );
         const result = await res.json();
-
-        // Update with backend warning if any
-        setEntries((prev) =>
-          prev.map((e) =>
-            e.id.toString() === entryId.toString()
-              ? { ...e, warning: result.warning }
-              : e,
-          ),
-        );
-      } catch (e) {
-        console.error("Update failed:", e);
+        if (result.entries) {
+          setEntries(result.entries);
+        }
+      } catch (error) {
+        console.error("Update failed:", error);
       }
     }
   };
@@ -392,9 +416,16 @@ export const SchedulePage: React.FC = () => {
     setEntries((prev) => prev.filter((e) => e.id !== id));
 
     try {
-      await fetch(`${API_BASE_URL}/api/v1/scheduler/schedule/${id}`, {
-        method: "DELETE",
-      });
+      const res = await fetch(
+        `${API_BASE_URL}/api/v1/scheduler/schedule/${id}`,
+        {
+          method: "DELETE",
+        },
+      );
+      const result = await res.json();
+      if (result.entries) {
+        setEntries(result.entries);
+      }
     } catch (e) {
       console.error("Delete failed:", e);
     }
@@ -411,14 +442,21 @@ export const SchedulePage: React.FC = () => {
       }
 
       try {
-        await fetch(`${API_BASE_URL}/api/v1/scheduler/schedule/${id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            date: null,
-            lesson_number: null,
-          }),
-        });
+        const res = await fetch(
+          `${API_BASE_URL}/api/v1/scheduler/schedule/${id}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              date: null,
+              lesson_number: null,
+            }),
+          },
+        );
+        const result = await res.json();
+        if (result.entries) {
+          setEntries(result.entries);
+        }
       } catch (e) {
         console.error("Unassign failed:", e);
       }
@@ -445,6 +483,18 @@ export const SchedulePage: React.FC = () => {
   const filteredUnassigned = unassignedEntries.filter(
     (e) => selectedGroup === "Все" || e.group_name === selectedGroup,
   );
+
+  const groupedUnassigned = React.useMemo(() => {
+    const groups: Record<string, ScheduleEntry[]> = {};
+    filteredUnassigned.forEach((e) => {
+      const key = `${e.event_name}-${e.stream_type}-${e.group_name}-${e.teacher_id || "none"}`;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(e);
+    });
+    return Object.values(groups).sort((a, b) =>
+      a[0].event_name.localeCompare(b[0].event_name),
+    );
+  }, [filteredUnassigned]);
 
   return (
     <div className="space-y-6">
@@ -494,7 +544,6 @@ export const SchedulePage: React.FC = () => {
             onChange={(e) => setSelectedGroup(e.target.value)}
             className="bg-transparent border-none font-semibold text-text-primary focus:ring-0 cursor-pointer"
           >
-            <option value="Все">Все группы</option>
             {groups.map((g) => (
               <option key={g} value={g}>
                 {g}
@@ -603,13 +652,16 @@ export const SchedulePage: React.FC = () => {
                       </td>
                       {DAYS.map((day, dayIdx) => {
                         const dayEntries = assignedEntries.filter((e) => {
+                          if (!e.date) return false;
                           const d = new Date(e.date);
+                          if (isNaN(d.getTime())) return false;
+
                           const dayNum = (d.getDay() + 6) % 7;
 
                           // Week filtering
                           const monday = new Date(d);
                           monday.setDate(d.getDate() - ((d.getDay() + 6) % 7));
-                          const weekKey = monday.toISOString().split("T")[0];
+                          const weekKey = `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, "0")}-${String(monday.getDate()).padStart(2, "0")}`;
 
                           return (
                             dayNum === dayIdx &&
@@ -631,6 +683,8 @@ export const SchedulePage: React.FC = () => {
                                 key={entry.id}
                                 entry={entry}
                                 selectedGroup={selectedGroup}
+                                dayIdx={dayIdx}
+                                pairNum={pair.num}
                               />
                             ))}
                           </DroppableCell>
@@ -665,11 +719,12 @@ export const SchedulePage: React.FC = () => {
                     </p>
                   </div>
                 ) : (
-                  filteredUnassigned.map((entry) => (
+                  groupedUnassigned.map((group) => (
                     <DraggableCard
-                      key={entry.id}
-                      entry={entry}
+                      key={group[0].id}
+                      entry={group[0]}
                       selectedGroup={selectedGroup}
+                      count={group.length}
                     />
                   ))
                 )}
