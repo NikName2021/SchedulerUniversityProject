@@ -10,8 +10,12 @@ import {
   Repeat,
   ShieldCheck,
   ShieldAlert,
+  Clock,
+  Trash2,
+  Plus,
 } from "lucide-react";
-import { useAppStore } from "../store/useAppStore";
+import { useAppStore, getSlotsForInterval } from "../store/useAppStore";
+import type { TimeInterval } from "../store/useAppStore";
 
 const TIMES = [
   "09:00 - 10:30",
@@ -78,6 +82,16 @@ const formatDateFull = (date: Date) => {
   return `${y}-${m}-${d}`;
 };
 
+const WEEK_DAYS_FULL = [
+  "Воскресенье",
+  "Понедельник",
+  "Вторник",
+  "Среда",
+  "Четверг",
+  "Пятница",
+  "Суббота",
+];
+
 export const CalendarPage: React.FC = () => {
   const {
     teachers,
@@ -86,6 +100,8 @@ export const CalendarPage: React.FC = () => {
     toggleRestriction,
     setRestrictionMode,
     saveTeacherRestrictions,
+    addInterval,
+    removeInterval,
     fetchInitialData,
     isLoading,
   } = useAppStore();
@@ -109,9 +125,21 @@ export const CalendarPage: React.FC = () => {
   });
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [editMode, setEditMode] = useState<"specific" | "recurring">(
+  const [editMode, setEditMode] = useState<"specific" | "recurring" | "time">(
     "specific",
   );
+
+  // Time interval form state
+  const [intervalStart, setIntervalStart] = useState("09:00");
+  const [intervalEnd, setIntervalEnd] = useState("15:00");
+  const [intervalType, setIntervalType] = useState<"recurring" | "specific">(
+    "recurring",
+  );
+  const [intervalDay, setIntervalDay] = useState(1); // JS weekday
+  const [intervalDate, setIntervalDate] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  });
 
   const filteredTeachers = teachers.filter(
     (t) =>
@@ -556,6 +584,31 @@ export const CalendarPage: React.FC = () => {
                       >
                         <Repeat size={14} /> Повтор (еженедельно)
                       </button>
+                      <button
+                        onClick={() => setEditMode("time")}
+                        style={{
+                          padding: "0.25rem 0.75rem",
+                          borderRadius: "4px",
+                          fontSize: "0.75rem",
+                          fontWeight: 600,
+                          backgroundColor:
+                            editMode === "time" ? "white" : "transparent",
+                          boxShadow:
+                            editMode === "time"
+                              ? "0 1px 3px rgba(0,0,0,0.1)"
+                              : "none",
+                          color:
+                            editMode === "time"
+                              ? "var(--brand)"
+                              : "var(--text-secondary)",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "0.375rem",
+                          cursor: "pointer",
+                        }}
+                      >
+                        <Clock size={14} /> По времени
+                      </button>
                     </div>
                   </div>
 
@@ -903,6 +956,350 @@ export const CalendarPage: React.FC = () => {
                     </React.Fragment>
                   ))}
                 </div>
+
+                {/* Time Interval Panel */}
+                {editMode === "time" && selectedTeacher && (
+                  <div
+                    style={{
+                      marginTop: "1.5rem",
+                      padding: "1.25rem",
+                      backgroundColor: "#fafafa",
+                      borderRadius: "10px",
+                      border: "1px solid var(--border-light)",
+                    }}
+                  >
+                    <h3
+                      style={{
+                        fontSize: "0.9rem",
+                        fontWeight: 700,
+                        marginBottom: "1rem",
+                      }}
+                    >
+                      <Clock
+                        size={16}
+                        style={{
+                          display: "inline",
+                          verticalAlign: "middle",
+                          marginRight: "0.5rem",
+                        }}
+                      />
+                      Добавить временной интервал
+                    </h3>
+
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "0.75rem",
+                        alignItems: "flex-end",
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      {/* Type toggle */}
+                      <div>
+                        <label
+                          style={{
+                            fontSize: "0.7rem",
+                            fontWeight: 600,
+                            color: "var(--text-secondary)",
+                            display: "block",
+                            marginBottom: "4px",
+                          }}
+                        >
+                          Тип
+                        </label>
+                        <select
+                          value={intervalType}
+                          onChange={(e) =>
+                            setIntervalType(
+                              e.target.value as "recurring" | "specific",
+                            )
+                          }
+                          style={{
+                            padding: "0.45rem 0.6rem",
+                            borderRadius: "6px",
+                            border: "1px solid var(--border-light)",
+                            fontSize: "0.8rem",
+                            backgroundColor: "white",
+                          }}
+                        >
+                          <option value="recurring">Еженедельно</option>
+                          <option value="specific">Конкретная дата</option>
+                        </select>
+                      </div>
+
+                      {/* Day or Date selector */}
+                      {intervalType === "recurring" ? (
+                        <div>
+                          <label
+                            style={{
+                              fontSize: "0.7rem",
+                              fontWeight: 600,
+                              color: "var(--text-secondary)",
+                              display: "block",
+                              marginBottom: "4px",
+                            }}
+                          >
+                            День недели
+                          </label>
+                          <select
+                            value={intervalDay}
+                            onChange={(e) =>
+                              setIntervalDay(Number(e.target.value))
+                            }
+                            style={{
+                              padding: "0.45rem 0.6rem",
+                              borderRadius: "6px",
+                              border: "1px solid var(--border-light)",
+                              fontSize: "0.8rem",
+                              backgroundColor: "white",
+                            }}
+                          >
+                            {[1, 2, 3, 4, 5, 6].map((wd) => (
+                              <option key={wd} value={wd}>
+                                {WEEK_DAYS_FULL[wd]}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      ) : (
+                        <div>
+                          <label
+                            style={{
+                              fontSize: "0.7rem",
+                              fontWeight: 600,
+                              color: "var(--text-secondary)",
+                              display: "block",
+                              marginBottom: "4px",
+                            }}
+                          >
+                            Дата
+                          </label>
+                          <input
+                            type="date"
+                            value={intervalDate}
+                            onChange={(e) => setIntervalDate(e.target.value)}
+                            style={{
+                              padding: "0.45rem 0.6rem",
+                              borderRadius: "6px",
+                              border: "1px solid var(--border-light)",
+                              fontSize: "0.8rem",
+                              backgroundColor: "white",
+                            }}
+                          />
+                        </div>
+                      )}
+
+                      {/* Start time */}
+                      <div>
+                        <label
+                          style={{
+                            fontSize: "0.7rem",
+                            fontWeight: 600,
+                            color: "var(--text-secondary)",
+                            display: "block",
+                            marginBottom: "4px",
+                          }}
+                        >
+                          С
+                        </label>
+                        <input
+                          type="time"
+                          value={intervalStart}
+                          onChange={(e) => setIntervalStart(e.target.value)}
+                          style={{
+                            padding: "0.45rem 0.6rem",
+                            borderRadius: "6px",
+                            border: "1px solid var(--border-light)",
+                            fontSize: "0.8rem",
+                            backgroundColor: "white",
+                          }}
+                        />
+                      </div>
+
+                      {/* End time */}
+                      <div>
+                        <label
+                          style={{
+                            fontSize: "0.7rem",
+                            fontWeight: 600,
+                            color: "var(--text-secondary)",
+                            display: "block",
+                            marginBottom: "4px",
+                          }}
+                        >
+                          До
+                        </label>
+                        <input
+                          type="time"
+                          value={intervalEnd}
+                          onChange={(e) => setIntervalEnd(e.target.value)}
+                          style={{
+                            padding: "0.45rem 0.6rem",
+                            borderRadius: "6px",
+                            border: "1px solid var(--border-light)",
+                            fontSize: "0.8rem",
+                            backgroundColor: "white",
+                          }}
+                        />
+                      </div>
+
+                      {/* Preview */}
+                      <div
+                        style={{
+                          fontSize: "0.75rem",
+                          color: "var(--text-tertiary)",
+                          paddingBottom: "0.45rem",
+                        }}
+                      >
+                        Пары:{" "}
+                        {getSlotsForInterval(intervalStart, intervalEnd).join(
+                          ", ",
+                        ) || "—"}
+                      </div>
+
+                      {/* Add button */}
+                      <button
+                        onClick={() => {
+                          if (!selectedTeacherId) return;
+                          const data: Omit<TimeInterval, "id"> = {
+                            start: intervalStart,
+                            end: intervalEnd,
+                            type: intervalType,
+                            ...(intervalType === "recurring"
+                              ? { day: intervalDay }
+                              : { date: intervalDate }),
+                          };
+                          addInterval(selectedTeacherId, data);
+                          saveTeacherRestrictions(selectedTeacherId);
+                        }}
+                        disabled={
+                          getSlotsForInterval(intervalStart, intervalEnd)
+                            .length === 0
+                        }
+                        style={{
+                          padding: "0.45rem 1rem",
+                          borderRadius: "6px",
+                          backgroundColor:
+                            getSlotsForInterval(intervalStart, intervalEnd)
+                              .length > 0
+                              ? "var(--brand)"
+                              : "#e5e7eb",
+                          color:
+                            getSlotsForInterval(intervalStart, intervalEnd)
+                              .length > 0
+                              ? "white"
+                              : "#9ca3af",
+                          fontSize: "0.8rem",
+                          fontWeight: 600,
+                          cursor:
+                            getSlotsForInterval(intervalStart, intervalEnd)
+                              .length > 0
+                              ? "pointer"
+                              : "not-allowed",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "0.375rem",
+                          border: "none",
+                        }}
+                      >
+                        <Plus size={14} /> Добавить
+                      </button>
+                    </div>
+
+                    {/* Saved intervals list */}
+                    {selectedTeacher.restrictions.intervals.length > 0 && (
+                      <div style={{ marginTop: "1rem" }}>
+                        <div
+                          style={{
+                            fontSize: "0.75rem",
+                            fontWeight: 600,
+                            color: "var(--text-secondary)",
+                            marginBottom: "0.5rem",
+                          }}
+                        >
+                          Сохранённые интервалы
+                        </div>
+                        <div
+                          style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: "0.375rem",
+                          }}
+                        >
+                          {selectedTeacher.restrictions.intervals.map((iv) => (
+                            <div
+                              key={iv.id}
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                padding: "0.5rem 0.75rem",
+                                backgroundColor: "white",
+                                borderRadius: "6px",
+                                border: "1px solid var(--border-light)",
+                                fontSize: "0.8rem",
+                              }}
+                            >
+                              <div
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "0.75rem",
+                                }}
+                              >
+                                <Clock size={14} color="var(--brand)" />
+                                <span style={{ fontWeight: 600 }}>
+                                  {iv.start} – {iv.end}
+                                </span>
+                                <span
+                                  style={{
+                                    color: "var(--text-tertiary)",
+                                    fontSize: "0.75rem",
+                                  }}
+                                >
+                                  {iv.type === "recurring"
+                                    ? WEEK_DAYS_FULL[iv.day ?? 0]
+                                    : iv.date}
+                                </span>
+                                <span
+                                  style={{
+                                    color: "var(--text-tertiary)",
+                                    fontSize: "0.7rem",
+                                  }}
+                                >
+                                  → пары{" "}
+                                  {getSlotsForInterval(iv.start, iv.end).join(
+                                    ", ",
+                                  )}
+                                </span>
+                              </div>
+                              <button
+                                onClick={() => {
+                                  if (!selectedTeacherId) return;
+                                  removeInterval(selectedTeacherId, iv.id);
+                                  saveTeacherRestrictions(selectedTeacherId);
+                                }}
+                                style={{
+                                  padding: "0.25rem",
+                                  borderRadius: "4px",
+                                  backgroundColor: "transparent",
+                                  color: "#ef4444",
+                                  cursor: "pointer",
+                                  border: "none",
+                                  display: "flex",
+                                  alignItems: "center",
+                                }}
+                                className="hover:bg-red-50"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </>
           ) : (

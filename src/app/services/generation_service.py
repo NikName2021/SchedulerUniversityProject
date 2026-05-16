@@ -34,7 +34,7 @@ class GenerationService:
                 select(Stream)
                 .join(Stream.groups)
                 .filter(StreamGroup.group_name.in_(selected_groups))
-                .filter(not Stream.is_ignored)
+                .filter(Stream.is_ignored == False)
                 .filter(Stream.stream_type.in_(enabled_types))
                 .options(selectinload(Stream.groups))
             )
@@ -94,7 +94,7 @@ class GenerationService:
                     select(Stream)
                     .join(Stream.groups)
                     .filter(StreamGroup.group_name.in_(selected_groups))
-                    .filter(not Stream.is_ignored)
+                    .filter(Stream.is_ignored == False)
                     .filter(Stream.stream_type.in_(enabled_types))
                     .options(selectinload(Stream.groups), selectinload(Stream.teacher))
                 )
@@ -349,6 +349,26 @@ class GenerationService:
                                     warning=warn["msg"],
                                 )
                             )
+                            
+                    # --- Add Extracurriculars & Exams ---
+                    for s in streams:
+                        if s.stream_type not in ("Лекция", "Семинар", "Лабораторная"):
+                            for g in s.groups:
+                                if g.group_name in selected_groups:
+                                    for _ in range(s.lessons_count):
+                                        unassigned_entries.append(
+                                            ScheduleEntry(
+                                                task_id=task_id,
+                                                group_name=g.group_name,
+                                                event_name=s.event_name,
+                                                stream_type=s.stream_type,
+                                                teacher_id=s.teacher.id if s.teacher else None,
+                                                date=None,
+                                                lesson_number=None,
+                                                warning="Требует ручной установки",
+                                            )
+                                        )
+
                     if unassigned_entries:
                         session.add_all(unassigned_entries)
 

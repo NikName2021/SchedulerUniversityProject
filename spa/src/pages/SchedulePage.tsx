@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import {
   Calendar,
-  Filter,
   Download,
   AlertCircle,
   MapPin,
@@ -13,6 +12,8 @@ import {
   ChevronRight,
   X,
   Layers,
+  Users,
+  UserCheck,
 } from "lucide-react";
 import {
   DndContext,
@@ -78,10 +79,11 @@ const getTypeStyles = (type: string) => {
 const DraggableCard: React.FC<{
   entry: ScheduleEntry;
   selectedGroup: string;
+  viewMode?: "group" | "teacher";
   dayIdx?: number;
   pairNum?: number;
   count?: number;
-}> = ({ entry, selectedGroup, dayIdx, pairNum, count }) => {
+}> = ({ entry, selectedGroup, viewMode, dayIdx, pairNum, count }) => {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({
       id: `card-${entry.id}`,
@@ -170,7 +172,7 @@ const DraggableCard: React.FC<{
           <User size={10} className="shrink-0" />
           <span className="truncate">{entry.teacher || "—"}</span>
         </div>
-        {selectedGroup === "Все" && (
+        {(selectedGroup === "Все" || viewMode === "teacher") && (
           <div className="mt-1 pt-1 border-t border-black/5 text-[9px] font-bold text-text-tertiary">
             {entry.group_name}
           </div>
@@ -234,7 +236,12 @@ export const SchedulePage: React.FC = () => {
   );
   const [selectedGroup, setSelectedGroup] = useState<string>("");
   const [groups, setGroups] = useState<string[]>([]);
+  const [teachers, setTeachers] = useState<{ id: string; name: string }[]>([]);
+  const [selectedTeacherId, setSelectedTeacherId] = useState<string>("");
+  const [viewMode, setViewMode] = useState<"group" | "teacher">("group");
   const [selectedWeek, setSelectedWeek] = useState<string | null>(null);
+  const [applyExtracurricularToStream, setApplyExtracurricularToStream] =
+    useState(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -272,19 +279,38 @@ export const SchedulePage: React.FC = () => {
       const data = await res.json();
       const fetchedGroups = data.groups || [];
       setGroups(fetchedGroups);
-      setSelectedGroup((prev) => (prev ? prev : fetchedGroups[0] || ""));
+      if (!selectedGroup) {
+        setSelectedGroup(fetchedGroups[0] || "");
+      }
     } catch {
       console.error("Failed to fetch groups");
     }
-  }, []);
+  }, [selectedGroup]);
+
+  const fetchTeachersList = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/scheduler/teachers`);
+      const data = await res.json();
+      setTeachers(data);
+      if (!selectedTeacherId && data.length > 0) {
+        setSelectedTeacherId(data[0].id);
+      }
+    } catch {
+      console.error("Failed to fetch teachers");
+    }
+  }, [selectedTeacherId]);
 
   const fetchSchedule = useCallback(
-    async (id: string) => {
+    async (id: string, mode: "group" | "teacher", filterId: string) => {
       setIsLoading(true);
       try {
-        const res = await fetch(
-          `${API_BASE_URL}/api/v1/scheduler/schedule?task_id=${id}`,
-        );
+        let url = `${API_BASE_URL}/api/v1/scheduler/schedule?task_id=${id}`;
+        if (mode === "group" && filterId) {
+          url += `&group_name=${encodeURIComponent(filterId)}`;
+        } else if (mode === "teacher" && filterId) {
+          url += `&teacher_id=${filterId}`;
+        }
+        const res = await fetch(url);
         const data = await res.json();
         setEntries(data);
       } catch (e) {
@@ -308,13 +334,21 @@ export const SchedulePage: React.FC = () => {
   useEffect(() => {
     fetchTasks();
     fetchGroups();
-  }, [fetchTasks, fetchGroups]);
+    fetchTeachersList();
+  }, [fetchTasks, fetchGroups, fetchTeachersList]);
 
   useEffect(() => {
     if (selectedTaskId) {
-      fetchSchedule(selectedTaskId);
+      const filterId = viewMode === "group" ? selectedGroup : selectedTeacherId;
+      fetchSchedule(selectedTaskId, viewMode, filterId);
     }
-  }, [selectedTaskId, fetchSchedule]);
+  }, [
+    selectedTaskId,
+    viewMode,
+    selectedGroup,
+    selectedTeacherId,
+    fetchSchedule,
+  ]);
 
   // Derive weeks from entries
   const availableWeeks = React.useMemo(() => {
@@ -397,6 +431,7 @@ export const SchedulePage: React.FC = () => {
             body: JSON.stringify({
               date: dateStr,
               lesson_number: pairNum,
+              apply_to_stream: applyExtracurricularToStream,
             }),
           },
         );
@@ -480,9 +515,12 @@ export const SchedulePage: React.FC = () => {
 
   const assignedEntries = entries.filter((e) => e.date);
   const unassignedEntries = entries.filter((e) => !e.date);
-  const filteredUnassigned = unassignedEntries.filter(
-    (e) => selectedGroup === "Все" || e.group_name === selectedGroup,
-  );
+  const filteredUnassigned = unassignedEntries.filter((e) => {
+    if (viewMode === "group") {
+      return selectedGroup === "Все" || e.group_name === selectedGroup;
+    }
+    return e.teacher_id?.toString() === selectedTeacherId;
+  });
 
   const groupedUnassigned = React.useMemo(() => {
     const groups: Record<string, ScheduleEntry[]> = {};
@@ -495,6 +533,13 @@ export const SchedulePage: React.FC = () => {
       a[0].event_name.localeCompare(b[0].event_name),
     );
   }, [filteredUnassigned]);
+
+  const academicUnassigned = groupedUnassigned.filter(
+    (g) => g[0].stream_type !== "Внеучебное мероприятие",
+  );
+  const extracurricularUnassigned = groupedUnassigned.filter(
+    (g) => g[0].stream_type === "Внеучебное мероприятие",
+  );
 
   return (
     <div className="space-y-6">
@@ -537,19 +582,61 @@ export const SchedulePage: React.FC = () => {
 
         <div className="h-6 w-px bg-border-light mx-2" />
 
-        <div className="flex items-center gap-2">
-          <Filter size={18} className="text-text-tertiary" />
-          <select
-            value={selectedGroup}
-            onChange={(e) => setSelectedGroup(e.target.value)}
-            className="bg-transparent border-none font-semibold text-text-primary focus:ring-0 cursor-pointer"
-          >
-            {groups.map((g) => (
-              <option key={g} value={g}>
-                {g}
-              </option>
-            ))}
-          </select>
+        {/* Mode & Filters Toolbar */}
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-4">
+            <div className="flex bg-gray-100 p-1 rounded-lg">
+              <button
+                onClick={() => setViewMode("group")}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                  viewMode === "group"
+                    ? "bg-white text-brand shadow-sm"
+                    : "text-text-secondary hover:text-text-primary"
+                }`}
+              >
+                <Users size={16} />
+                По группам
+              </button>
+              <button
+                onClick={() => setViewMode("teacher")}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                  viewMode === "teacher"
+                    ? "bg-white text-brand shadow-sm"
+                    : "text-text-secondary hover:text-text-primary"
+                }`}
+              >
+                <UserCheck size={16} />
+                По педагогам
+              </button>
+            </div>
+
+            {viewMode === "group" ? (
+              <select
+                value={selectedGroup}
+                onChange={(e) => setSelectedGroup(e.target.value)}
+                className="bg-transparent border-none font-semibold text-text-primary focus:ring-0 cursor-pointer"
+              >
+                {groups.map((g) => (
+                  <option key={g} value={g}>
+                    {g}
+                  </option>
+                ))}
+                <option value="Все">Все группы</option>
+              </select>
+            ) : (
+              <select
+                value={selectedTeacherId}
+                onChange={(e) => setSelectedTeacherId(e.target.value)}
+                className="bg-transparent border-none font-semibold text-text-primary focus:ring-0 cursor-pointer"
+              >
+                {teachers.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
         </div>
 
         {availableWeeks.length > 1 && (
@@ -667,8 +754,10 @@ export const SchedulePage: React.FC = () => {
                             dayNum === dayIdx &&
                             weekKey === selectedWeek &&
                             e.lesson_number === pair.num &&
-                            (selectedGroup === "Все" ||
-                              e.group_name === selectedGroup)
+                            (viewMode === "group"
+                              ? selectedGroup === "Все" ||
+                                e.group_name === selectedGroup
+                              : e.teacher_id?.toString() === selectedTeacherId)
                           );
                         });
 
@@ -683,6 +772,7 @@ export const SchedulePage: React.FC = () => {
                                 key={entry.id}
                                 entry={entry}
                                 selectedGroup={selectedGroup}
+                                viewMode={viewMode}
                                 dayIdx={dayIdx}
                                 pairNum={pair.num}
                               />
@@ -702,11 +792,11 @@ export const SchedulePage: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <Layers size={18} className="text-brand" />
                   <h2 className="font-bold text-text-primary">
-                    Невыставленные
+                    {viewMode === "group" ? "Невыставленные" : "Пары педагога"}
                   </h2>
                 </div>
                 <span className="bg-brand/10 text-brand text-xs font-bold px-2 py-0.5 rounded-full">
-                  {filteredUnassigned.length}
+                  {groupedUnassigned.length}
                 </span>
               </div>
 
@@ -719,14 +809,50 @@ export const SchedulePage: React.FC = () => {
                     </p>
                   </div>
                 ) : (
-                  groupedUnassigned.map((group) => (
-                    <DraggableCard
-                      key={group[0].id}
-                      entry={group[0]}
-                      selectedGroup={selectedGroup}
-                      count={group.length}
-                    />
-                  ))
+                  <>
+                    {academicUnassigned.length > 0 && (
+                      <div className="text-[10px] font-bold text-text-tertiary uppercase mt-1">
+                        Учебные пары
+                      </div>
+                    )}
+                    {academicUnassigned.map((group) => (
+                      <DraggableCard
+                        key={group[0].id}
+                        entry={group[0]}
+                        selectedGroup={selectedGroup}
+                        viewMode={viewMode}
+                        count={group.length}
+                      />
+                    ))}
+
+                    {extracurricularUnassigned.length > 0 && (
+                      <>
+                        <div className="mt-2 pt-3 border-t border-border-light text-[10px] font-bold text-text-tertiary uppercase">
+                          Внеучебные мероприятия
+                        </div>
+                        <label className="flex items-center gap-2 cursor-pointer text-xs font-medium text-text-secondary mb-1">
+                          <input
+                            type="checkbox"
+                            checked={applyExtracurricularToStream}
+                            onChange={(e) =>
+                              setApplyExtracurricularToStream(e.target.checked)
+                            }
+                            className="rounded border-gray-300 text-brand focus:ring-brand"
+                          />
+                          Ставить всему потоку
+                        </label>
+                        {extracurricularUnassigned.map((group) => (
+                          <DraggableCard
+                            key={group[0].id}
+                            entry={group[0]}
+                            selectedGroup={selectedGroup}
+                            viewMode={viewMode}
+                            count={group.length}
+                          />
+                        ))}
+                      </>
+                    )}
+                  </>
                 )}
               </SidebarDroppable>
 

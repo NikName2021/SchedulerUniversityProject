@@ -49,10 +49,20 @@ class StreamUpdateModel(BaseModel):
     is_ignored: bool | None = None
 
 
+class TimeIntervalModel(BaseModel):
+    id: str = ""
+    start: str  # "HH:MM"
+    end: str  # "HH:MM"
+    type: str  # "recurring" | "specific"
+    day: int | None = None  # JS weekday for recurring
+    date: str | None = None  # "YYYY-MM-DD" for specific
+
+
 class TeacherRestrictionsDetails(BaseModel):
     mode: str
     specific: list[str]
     recurring: list[str]
+    intervals: list[TimeIntervalModel] = []
 
 
 class TeacherRestrictionsModel(BaseModel):
@@ -72,6 +82,7 @@ class ScheduleUpdateModel(BaseModel):
     date: str | None = None
     teacher_id: int | None = None
     room_id: str | None = None  # room_id is string in model
+    apply_to_stream: bool | None = None
 
 
 @router.post("/import/streams")
@@ -315,7 +326,7 @@ async def update_teacher_restrictions(
     if not teacher:
         raise HTTPException(status_code=404, detail="Teacher not found")
 
-    teacher.restrictions_json = json.dumps(payload.restrictions.dict())
+    teacher.restrictions_json = json.dumps(payload.restrictions.model_dump())
     await db.commit()
     return {"detail": "Restrictions updated"}
 
@@ -758,30 +769,59 @@ async def update_schedule_entry(
     if not entry:
         raise HTTPException(status_code=404, detail="Schedule entry not found")
 
-    if payload.lesson_number is not None:
-        entry.lesson_number = payload.lesson_number
-    elif "lesson_number" in payload.model_fields_set:
-        entry.lesson_number = None
+    entries_to_update = [entry]
+    
+    is_lecture = entry.stream_type and "лекция" in entry.stream_type.lower()
+    is_extracur = entry.stream_type and "внеучебное" in entry.stream_type.lower()
+    
+    if is_lecture or (is_extracur and payload.apply_to_stream):
+        date_cond = ScheduleEntry.date == entry.date if entry.date is not None else ScheduleEntry.date.is_(None)
+        lesson_cond = ScheduleEntry.lesson_number == entry.lesson_number if entry.lesson_number is not None else ScheduleEntry.lesson_number.is_(None)
+        teacher_cond = ScheduleEntry.teacher_id == entry.teacher_id if entry.teacher_id is not None else ScheduleEntry.teacher_id.is_(None)
+        
+        stmt_related = select(ScheduleEntry).where(
+            ScheduleEntry.task_id == entry.task_id,
+            ScheduleEntry.event_name == entry.event_name,
+            ScheduleEntry.stream_type == entry.stream_type,
+            teacher_cond,
+            date_cond,
+            lesson_cond,
+            ScheduleEntry.id != entry.id
+        )
+        res_related = await db.execute(stmt_related)
+        related_all = res_related.scalars().all()
+        
+        seen_groups = {entry.group_name}
+        for r in related_all:
+            if r.group_name not in seen_groups:
+                entries_to_update.append(r)
+                seen_groups.add(r.group_name)
 
-    if payload.date is not None:
-        try:
-            entry.date = datetime.strptime(payload.date, "%Y-%m-%d")
-        except ValueError:
-            raise HTTPException(
-                status_code=400, detail="Invalid date format. Use YYYY-MM-DD"
-            ) from None
-    elif "date" in payload.model_fields_set:
-        entry.date = None
+    for e in entries_to_update:
+        if payload.lesson_number is not None:
+            e.lesson_number = payload.lesson_number
+        elif "lesson_number" in payload.model_fields_set:
+            e.lesson_number = None
 
-    if payload.teacher_id is not None:
-        entry.teacher_id = payload.teacher_id
-    elif "teacher_id" in payload.model_fields_set:
-        entry.teacher_id = None
+        if payload.date is not None:
+            try:
+                e.date = datetime.strptime(payload.date, "%Y-%m-%d")
+            except ValueError:
+                raise HTTPException(
+                    status_code=400, detail="Invalid date format. Use YYYY-MM-DD"
+                ) from None
+        elif "date" in payload.model_fields_set:
+            e.date = None
 
-    if payload.room_id is not None:
-        entry.room_id = payload.room_id
-    elif "room_id" in payload.model_fields_set:
-        entry.room_id = None
+        if payload.teacher_id is not None:
+            e.teacher_id = payload.teacher_id
+        elif "teacher_id" in payload.model_fields_set:
+            e.teacher_id = None
+
+        if payload.room_id is not None:
+            e.room_id = payload.room_id
+        elif "room_id" in payload.model_fields_set:
+            e.room_id = None
 
     # --- Conflict Detection & Warning Refresh ---
     await refresh_task_warnings(entry.task_id, db)

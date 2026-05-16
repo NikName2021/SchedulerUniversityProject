@@ -19,9 +19,9 @@ interface GenerationTask {
   status: string;
   start_date: string | null;
   end_date: string | null;
-  groups_json: string;
-  holidays_json: string;
-  settings_json: string;
+  groups: string[];
+  holidays: string[];
+  settings: Record<string, unknown>;
   result_count: number;
   error_message: string | null;
 }
@@ -47,15 +47,6 @@ const HistoryPage: React.FC = () => {
     fetchTasks();
   }, [fetchTasks]);
 
-  const safeParse = (jsonStr: string, fallback: unknown) => {
-    try {
-      return jsonStr ? JSON.parse(jsonStr) : fallback;
-    } catch (e) {
-      console.error("JSON Parse Error:", e, jsonStr);
-      return fallback;
-    }
-  };
-
   const handleDownload = (taskId: number) => {
     window.open(
       `${API_BASE_URL}/api/v1/scheduler/export?task_id=${taskId}`,
@@ -68,12 +59,9 @@ const HistoryPage: React.FC = () => {
       // Navigate to generation page with loaded state
       navigate("/generation", {
         state: {
-          groups: safeParse(task.groups_json, []) as string[],
-          holidays: safeParse(task.holidays_json, []) as string[],
-          settings: safeParse(task.settings_json, {}) as Record<
-            string,
-            unknown
-          >,
+          groups: task.groups || [],
+          holidays: task.holidays || [],
+          settings: task.settings || {},
           start_date: task.start_date,
           end_date: task.end_date,
         },
@@ -284,8 +272,8 @@ const HistoryPage: React.FC = () => {
                     gap: "0.4rem",
                   }}
                 >
-                  <UsersIcon size={14} />{" "}
-                  {(safeParse(task.groups_json, []) as string[]).length} групп
+                  <UsersIcon size={14} /> {task.groups ? task.groups.length : 0}{" "}
+                  групп
                 </div>
                 {task.status === "success" && (
                   <div
