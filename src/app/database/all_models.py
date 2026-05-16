@@ -107,6 +107,6 @@ class ScheduleEntry(DeclBase):
     teacher = relationship("Teacher")
 
 
-async def create_tables(engine: AsyncEngine):
+async def create_tables(engine: AsyncEngine) -> None:
     async with engine.begin() as conn:
         await conn.run_sync(DeclBase.metadata.create_all)

@@ -13,7 +13,7 @@ from schemas import Token, UserCreate, UserLogin, UserResponse
 
 
 class AuthService:
-    def __init__(self, repo: AuthRepository):
+    def __init__(self, repo: AuthRepository) -> None:
         self.repo = repo
 
     async def register_user(self, user_data: UserCreate) -> User:

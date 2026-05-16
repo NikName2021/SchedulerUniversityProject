@@ -1,7 +1,8 @@
+import collections
 import json
 import logging
 from datetime import datetime
-from typing import List
+from typing import Any, Dict, List, Optional
 
 import anyio
 from core.config import sessionmaker
@@ -26,14 +27,14 @@ class GenerationService:
     @staticmethod
     async def get_subjects_summary(
         selected_groups: List[str], enabled_types: List[str]
-    ):
+    ) -> Dict[str, List[str]]:
         """Returns subjects grouped by direction (prefix before /)"""
         async with sessionmaker() as session:
             stmt = (
                 select(Stream)
                 .join(Stream.groups)
                 .filter(StreamGroup.group_name.in_(selected_groups))
-                .filter(Stream.is_ignored == False)
+                .filter(not Stream.is_ignored)
                 .filter(Stream.stream_type.in_(enabled_types))
                 .options(selectinload(Stream.groups))
             )
@@ -64,7 +65,7 @@ class GenerationService:
         enabled_types: List[str],
         start_date_str: str | None = None,
         end_date_str: str | None = None,
-    ):
+    ) -> Optional[bool]:
         logger.info(
             f"Starting generation for task {task_id}, groups: {selected_groups}"
         )
@@ -74,7 +75,7 @@ class GenerationService:
         for h in holidays_str:
             try:
                 holidays.append(datetime.strptime(h, "%Y-%m-%d").date())
-            except:
+            except Exception:
                 pass
 
         async with sessionmaker() as session:
@@ -93,7 +94,7 @@ class GenerationService:
                     select(Stream)
                     .join(Stream.groups)
                     .filter(StreamGroup.group_name.in_(selected_groups))
-                    .filter(Stream.is_ignored == False)
+                    .filter(not Stream.is_ignored)
                     .filter(Stream.stream_type.in_(enabled_types))
                     .options(selectinload(Stream.groups), selectinload(Stream.teacher))
                 )
@@ -115,9 +116,7 @@ class GenerationService:
                 group_sizes_engine = {}
                 unavailable_times = {"teacher": {}, "group": {}, "room": {}}
 
-                from collections import defaultdict
-
-                grouped = defaultdict(list)
+                grouped = collections.defaultdict(list)
                 for s in streams:
                     grouped[s.event_name].append(s)
 
@@ -199,19 +198,17 @@ class GenerationService:
                                                         d_str, l_str = str(item).split(
                                                             sep
                                                         )
-                                                        # Frontend uses JS getDay(): 0=Sun, 1=Mon, ..., 6=Sat
-                                                        # Engine uses Python weekday(): 0=Mon, ..., 6=Sun
-                                                        # Convert: JS 1-6 → Python 0-5, JS 0 → Python 6
+                                                        # JS getDay(): 0=Sun, 1=Mon, ..., 6=Sat
+                                                        # Engine weekday(): 0=Mon, ..., 6=Sun
+                                                        # Convert: JS 1-6 → Python 0-5, 0 → 6
                                                         js_day = int(d_str)
-                                                        py_day = (
-                                                            js_day - 1
-                                                        ) % 7  # 1→0, 2→1, ..., 6→5, 0→6
-                                                        l = int(l_str)
+                                                        py_day = (js_day - 1) % 7
+                                                        lesson_num = int(l_str)
                                                         selected_slots.append(
-                                                            (py_day, l)
+                                                            (py_day, lesson_num)
                                                         )
                                                         break
-                                                    except:
+                                                    except Exception:
                                                         continue
 
                                     specific_keys = restrs.get("specific", [])
@@ -228,19 +225,19 @@ class GenerationService:
                                                             dt = datetime.strptime(
                                                                 d_str, "%Y-%m-%d"
                                                             ).date()
-                                                            l = int(l_str)
+                                                            lesson_num = int(l_str)
                                                             specific_slots.append(
-                                                                (dt, l)
+                                                                (dt, lesson_num)
                                                             )
                                                             break
-                                                    except:
+                                                    except Exception:
                                                         continue
 
                                     if mode == "whitelist":
                                         for d_idx in [0, 1, 2, 3, 4, 5]:
-                                            for l in [1, 2, 3, 4, 5, 6, 7]:
-                                                if (d_idx, l) not in selected_slots:
-                                                    unavailable_list.append((d_idx, l))
+                                            for l_idx in [1, 2, 3, 4, 5, 6, 7]:
+                                                if (d_idx, l_idx) not in selected_slots:
+                                                    unavailable_list.append((d_idx, l_idx))
                                     else:
                                         unavailable_list.extend(selected_slots)
                                         unavailable_list.extend(specific_slots)
@@ -250,7 +247,8 @@ class GenerationService:
                                 )
                             except Exception as e:
                                 logger.error(
-                                    f"Error parsing restrictions for {teacher_name}: {e}"
+                                    f"Error parsing restrictions for "
+                                    f"{teacher_name}: {e}"
                                 )
 
                 START_DATE = DEFAULT_START_DATE

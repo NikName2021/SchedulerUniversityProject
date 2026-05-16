@@ -12,7 +12,7 @@ def parse_streams_content(file_bytes: bytes):
 
     streams_map = {}
 
-    for idx, row in df.iterrows():
+    for _idx, row in df.iterrows():
         event_name = str(row.get("Мероприятие", "")).strip()
         if not event_name or event_name == "nan":
             continue

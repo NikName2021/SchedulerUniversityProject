@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from core.config import engine
 
 
-async def preload_model():
+async def preload_model() -> None:
     await create_tables(engine)
     """
     In order to load model on memory to each worker

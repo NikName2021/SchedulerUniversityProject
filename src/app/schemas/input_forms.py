@@ -33,7 +33,7 @@ class EventCreateForm:
         description: str = Form(...),
         image: Union[UploadFile, str, None] = File(None),
         csv_file: Union[UploadFile, str, None] = File(None),
-    ):
+    ) -> None:
         self.name = name
         self.date_str = date_str
         self.description = description
@@ -49,7 +49,7 @@ class EventUpdateForm:
         description: Optional[str] = Form(None),
         image: Union[UploadFile, str, None] = File(None),
         csv_file: Union[UploadFile, str, None] = File(None),
-    ):
+    ) -> None:
         self.name = name
         self.date_str = date_str
         self.description = description

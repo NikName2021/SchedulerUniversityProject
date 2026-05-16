@@ -82,7 +82,7 @@ async def get_current_user(
 class RoleChecker:
     """Проверка ролей пользователя"""
 
-    def __init__(self, allowed_roles: list[Role]):
+    def __init__(self, allowed_roles: list[Role]) -> None:
         self.allowed_roles = allowed_roles
 
     def __call__(self, user: User = Depends(get_current_user)) -> User:

@@ -22,8 +22,8 @@ security = HTTPBearer()
 def verify_telegram_hash(tg_web_app_data: dict) -> dict:
     # Получаем данные пользователя и hash
     user = tg_web_app_data.get("user", {})
-    auth_date = tg_web_app_data.get("auth_date")
-    received_hash = tg_web_app_data.get("hash")
+    tg_web_app_data.get("auth_date")
+    tg_web_app_data.get("hash")
 
     # if not all([user, auth_date, received_hash]):
     #     raise HTTPException(
@@ -48,7 +48,7 @@ def verify_telegram_hash(tg_web_app_data: dict) -> dict:
     ).digest()
 
     # Вычисляем hash
-    calculated_hash = hmac.new(
+    hmac.new(
         secret_key, data_check_string.encode(), hashlib.sha256
     ).hexdigest()
 

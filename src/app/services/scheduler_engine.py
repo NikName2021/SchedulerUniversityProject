@@ -20,12 +20,18 @@ TYPE_MAP = {"lec": "lectures", "sem": "seminars", "lab": "labs"}
 LESSON_TYPES = ["lec", "sem", "lab"]
 
 
-def _get_target(subj_data, lesson_type):
+def _get_target(subj_data: dict, lesson_type: str) -> int:
     """Get target count for a lesson type from subject data."""
     return subj_data.get(TYPE_MAP[lesson_type], 0)
 
 
-def generate_slots(start_date, end_date, study_days, lessons, holidays):
+def generate_slots(
+    start_date: datetime.date,
+    end_date: datetime.date,
+    study_days: list[int],
+    lessons: list[int],
+    holidays: set[datetime.date],
+) -> list[tuple[datetime.date, int]]:
     slots = []
     d = start_date
     while d <= end_date:
@@ -36,7 +42,9 @@ def generate_slots(start_date, end_date, study_days, lessons, holidays):
     return slots
 
 
-def _build_slot_indices(slots, start_date):
+def _build_slot_indices(
+    slots: list[tuple[datetime.date, int]], start_date: datetime.date
+) -> tuple[dict[datetime.date, list], dict[int, list]]:
     """Build lookup indices for slots by day and by week."""
     slots_by_day = collections.defaultdict(list)
     slots_by_week = collections.defaultdict(list)
@@ -47,7 +55,7 @@ def _build_slot_indices(slots, start_date):
     return slots_by_day, slots_by_week
 
 
-def _preprocess_unavailable(unavailable_times):
+def _preprocess_unavailable(unavailable_times: dict) -> dict:
     """Convert unavailable_times lists to sets for O(1) lookup."""
     processed = {}
     for category, items in unavailable_times.items():
@@ -57,7 +65,9 @@ def _preprocess_unavailable(unavailable_times):
     return processed
 
 
-def _is_slot_blocked(teacher, group, slot, unavail):
+def _is_slot_blocked(
+    teacher: str | None, group: str, slot: tuple[datetime.date, int], unavail: dict
+) -> bool:
     """Check if a slot is blocked for a teacher or group."""
     d, lesson = slot
     if teacher and teacher in unavail.get("teacher", {}):
@@ -72,21 +82,21 @@ def _is_slot_blocked(teacher, group, slot, unavail):
 
 
 def solve_schedule(
-    start_date,
-    end_date,
-    study_days,
-    lessons,
-    holidays,
-    groups,
-    group_sizes,
-    subjects,
-    streams_map,
-    rooms,
-    unavailable_times,
-    fixed_schedules=None,
-    max_time_seconds=300,
-    priorities=None,
-):
+    start_date: datetime.date,
+    end_date: datetime.date,
+    study_days: list[int],
+    lessons: list[int],
+    holidays: set[datetime.date],
+    groups: list[str],
+    group_sizes: dict[str, int],
+    subjects: dict[str, dict],
+    streams_map: dict[str, list[str]],
+    rooms: dict[str, dict],
+    unavailable_times: dict,
+    fixed_schedules: dict | None = None,
+    max_time_seconds: int = 300,
+    priorities: dict | None = None,
+) -> tuple[list[dict] | None, list[tuple[datetime.date, int]], list[str]]:
     if priorities is None:
         priorities = {}
 
@@ -178,7 +188,7 @@ def solve_schedule(
 
                 # Недельный лимит (равномерное распределение + запас)
                 weekly_limit = (target // total_weeks) + 2
-                for w, week_slots in slots_by_week.items():
+                for _w, week_slots in slots_by_week.items():
                     week_vars = [
                         x[(g, subj, t, s)] for s in week_slots if (g, subj, t, s) in x
                     ]
@@ -186,7 +196,7 @@ def solve_schedule(
                         model.Add(sum(week_vars) <= weekly_limit)
 
                 # Дневной лимит: не более 1 занятия каждого типа по предмету в день
-                for day, day_slots in slots_by_day.items():
+                for _day, day_slots in slots_by_day.items():
                     day_vars = [
                         x[(g, subj, t, s)] for s in day_slots if (g, subj, t, s) in x
                     ]
@@ -361,8 +371,9 @@ def solve_schedule(
                     if (g, subj, "sem", s) in x:
                         cum_sems[g] = cum_sems[g] + x[(g, subj, "sem", s)]
 
-                # Пропорция лекций должна быть >= пропорции семинаров
-                # cum_lec / total_lec >= cum_sem / total_sem => cum_lec * total_sem >= cum_sem * total_lec
+                # Proportion of lectures should be >= proportion of seminars
+                # cum_lec / total_lec >= cum_sem / total_sem
+                # => cum_lec * total_sem >= cum_sem * total_lec
                 viol = model.NewIntVar(-1000, 1000, f"viol_{subj}_{g}_{day}")
                 model.Add(viol == cum_sems[g] * total_lec - cum_lec * total_sem)
                 viol_pos = model.NewIntVar(0, 1000, f"viol_pos_{subj}_{g}_{day}")
@@ -375,7 +386,7 @@ def solve_schedule(
     solver.parameters.num_search_workers = NUM_WORKERS
 
     num_vars = len(x)
-    num_constraints = (
+    (
         model.Proto().constraints.__len__()
         if hasattr(model.Proto().constraints, "__len__")
         else "?"
@@ -421,7 +432,10 @@ def solve_schedule(
                     if t == "lec"
                     else ("Лабораторная" if t == "lab" else "Семинар")
                 )
-                msg = f"Группа {g}: не выставлено {val} из {target} пар ({subj}, {type_name})"
+                msg = (
+                    f"Группа {g}: не выставлено {val} из {target} "
+                    f"пар ({subj}, {type_name})"
+                )
                 logger.warning(f" [!] {msg}")
                 unassigned_warnings.append(
                     {"group": g, "subject": subj, "type": t, "msg": msg, "count": val}
@@ -440,7 +454,14 @@ def solve_schedule(
         return None, SLOTS, ["Решение не найдено. Слишком жесткие ограничения."]
 
 
-def assign_rooms(schedule, SLOTS, rooms, group_sizes, subjects, unavailable_times):
+def assign_rooms(
+    schedule: list[dict],
+    SLOTS: list[tuple[datetime.date, int]],
+    rooms: dict[str, dict],
+    group_sizes: dict[str, int],
+    subjects: dict[str, dict],
+    unavailable_times: dict,
+) -> tuple[list[dict], list[dict]]:
     final_schedule = []
     warnings = []
     by_slot = collections.defaultdict(list)

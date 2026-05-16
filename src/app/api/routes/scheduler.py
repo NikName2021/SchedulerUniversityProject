@@ -1,8 +1,12 @@
+import io
 import json
 import logging
 import os
 import uuid
+
+import pandas as pd
 from datetime import datetime
+from typing import Annotated, Any
 
 from core.config import async_get_db
 from database.all_models import (
@@ -23,7 +27,7 @@ from fastapi import (
     Query,
     UploadFile,
 )
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from services.export_service import generate_excel_report
 from services.generation_service import GenerationService
@@ -194,7 +198,9 @@ async def delete_import_batch(batch_id: int, db: AsyncSession = Depends(async_ge
 
 
 @router.get("/groups")
-async def get_groups(db: AsyncSession = Depends(async_get_db)):
+async def get_groups(
+    db: Annotated[AsyncSession, Depends(async_get_db)] = None,
+) -> dict[str, Any]:
     stmt = select(distinct(StreamGroup.group_name)).order_by(StreamGroup.group_name)
     result = await db.execute(stmt)
     groups = result.scalars().all()
@@ -203,13 +209,12 @@ async def get_groups(db: AsyncSession = Depends(async_get_db)):
 
 @router.get("/subjects-summary")
 async def get_subjects_summary(
-    groups: str = Query(...),  # Comma separated
-    types: str = Query(...),  # Comma separated
-):
+    groups: Annotated[str, Query(...)] = None,  # Comma separated
+    types: Annotated[str, Query(...)] = None,  # Comma separated
+) -> dict[str, list[str]]:
     selected_groups = groups.split(",")
     enabled_types = types.split(",")
     try:
-        from services.generation_service import GenerationService
 
         summary = await GenerationService.get_subjects_summary(
             selected_groups, enabled_types
@@ -217,14 +222,14 @@ async def get_subjects_summary(
         return summary
     except Exception as e:
         logger.error(f"Error getting subjects summary: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from None
 
 
 @router.get("/streams")
 async def get_streams_by_group(
-    group_name: str = Query(..., description="Group name filter"),
-    db: AsyncSession = Depends(async_get_db),
-):
+    group_name: Annotated[str, Query(..., description="Group name filter")] = None,
+    db: Annotated[AsyncSession, Depends(async_get_db)] = None,
+) -> list[dict[str, Any]]:
     stmt = (
         select(Stream)
         .join(StreamGroup, StreamGroup.stream_id == Stream.id)
@@ -254,8 +259,10 @@ async def get_streams_by_group(
 
 @router.patch("/streams/{stream_id}")
 async def update_stream(
-    stream_id: int, payload: StreamUpdateModel, db: AsyncSession = Depends(async_get_db)
-):
+    stream_id: int,
+    payload: StreamUpdateModel,
+    db: Annotated[AsyncSession, Depends(async_get_db)] = None,
+) -> JSONResponse:
     stmt = select(Stream).where(Stream.id == stream_id)
     result = await db.execute(stmt)
     stream = result.scalar_one_or_none()
@@ -273,7 +280,9 @@ async def update_stream(
 
 
 @router.get("/teachers")
-async def get_teachers(db: AsyncSession = Depends(async_get_db)):
+async def get_teachers(
+    db: Annotated[AsyncSession, Depends(async_get_db)] = None,
+) -> list[dict[str, Any]]:
     stmt = select(Teacher).order_by(Teacher.name)
     result = await db.execute(stmt)
     teachers = result.scalars().all()
@@ -284,7 +293,7 @@ async def get_teachers(db: AsyncSession = Depends(async_get_db)):
         if t.restrictions_json:
             try:
                 blocked = json.loads(t.restrictions_json)
-            except:
+            except Exception:
                 blocked = []
 
         response.append(
@@ -297,8 +306,8 @@ async def get_teachers(db: AsyncSession = Depends(async_get_db)):
 async def update_teacher_restrictions(
     teacher_id: int,
     payload: TeacherRestrictionsModel,
-    db: AsyncSession = Depends(async_get_db),
-):
+    db: Annotated[AsyncSession, Depends(async_get_db)] = None,
+) -> JSONResponse:
     stmt = select(Teacher).where(Teacher.id == teacher_id)
     result = await db.execute(stmt)
     teacher = result.scalar_one_or_none()
@@ -312,12 +321,14 @@ async def update_teacher_restrictions(
 
 
 @router.get("/stats")
-async def get_scheduler_stats(db: AsyncSession = Depends(async_get_db)):
+async def get_scheduler_stats(
+    db: Annotated[AsyncSession, Depends(async_get_db)] = None,
+) -> dict[str, Any]:
     stmt_streams = select(func.count(Stream.id))
     result_streams = await db.execute(stmt_streams)
     total_streams = result_streams.scalar()
 
-    stmt_ignored = select(func.count(Stream.id)).where(Stream.is_ignored == True)
+    stmt_ignored = select(func.count(Stream.id)).where(Stream.is_ignored)
     result_ignored = await db.execute(stmt_ignored)
     ignored_streams = result_ignored.scalar()
 
@@ -342,14 +353,15 @@ async def get_scheduler_stats(db: AsyncSession = Depends(async_get_db)):
 
 
 @router.get("/teachers/export")
-async def export_teacher_availability(db: AsyncSession = Depends(async_get_db)):
+async def export_teacher_availability(
+    db: Annotated[AsyncSession, Depends(async_get_db)] = None,
+) -> StreamingResponse:
     stmt = select(Teacher)
     result = await db.execute(stmt)
     teachers = result.scalars().all()
 
     data = []
     for t in teachers:
-        import json
 
         try:
             res = (
@@ -357,7 +369,7 @@ async def export_teacher_availability(db: AsyncSession = Depends(async_get_db)):
                 if t.restrictions_json
                 else {"mode": "all", "recurring": [], "specific": []}
             )
-        except:
+        except Exception:
             res = {"mode": "all", "recurring": [], "specific": []}
 
         data.append(
@@ -369,10 +381,6 @@ async def export_teacher_availability(db: AsyncSession = Depends(async_get_db)):
             }
         )
 
-    import io
-
-    import pandas as pd
-    from fastapi.responses import StreamingResponse
 
     df = pd.DataFrame(data)
     output = io.BytesIO()
@@ -393,12 +401,9 @@ async def export_teacher_availability(db: AsyncSession = Depends(async_get_db)):
 
 @router.post("/teachers/import")
 async def import_teacher_availability(
-    file: UploadFile = File(...), db: AsyncSession = Depends(async_get_db)
-):
-    import io
-    import json
-
-    import pandas as pd
+    file: Annotated[UploadFile, File(...)],
+    db: Annotated[AsyncSession, Depends(async_get_db)] = None,
+) -> JSONResponse:
 
     content = await file.read()
     df = pd.read_excel(io.BytesIO(content))
@@ -448,8 +453,8 @@ async def import_teacher_availability(
 async def generate_schedule(
     task: GenerationTaskModel,
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(async_get_db),
-):
+    db: Annotated[AsyncSession, Depends(async_get_db)] = None,
+) -> JSONResponse:
     # 1. Parse dates
     start_dt = (
         datetime.strptime(task.start_date, "%Y-%m-%d") if task.start_date else None
@@ -489,8 +494,9 @@ async def generate_schedule(
 
 @router.get("/export")
 async def export_schedule(
-    task_id: int | None = None, db: AsyncSession = Depends(async_get_db)
-):
+    task_id: int | None = None,
+    db: Annotated[AsyncSession, Depends(async_get_db)] = None,
+) -> StreamingResponse:
     output = await generate_excel_report(db, task_id)
     if not output:
         raise HTTPException(status_code=404, detail="No schedule found to export")
@@ -507,10 +513,27 @@ async def export_schedule(
 
 
 @router.get("/tasks")
-async def get_generation_tasks(db: AsyncSession = Depends(async_get_db)):
+async def get_generation_tasks(
+    db: Annotated[AsyncSession, Depends(async_get_db)] = None,
+) -> list[dict[str, Any]]:
     stmt = select(GenerationTask).order_by(GenerationTask.created_at.desc())
     result = await db.execute(stmt)
-    return result.scalars().all()
+    tasks = result.scalars().all()
+    return [
+        {
+            "id": t.id,
+            "status": t.status,
+            "created_at": t.created_at.isoformat() if t.created_at else None,
+            "start_date": t.start_date.isoformat() if t.start_date else None,
+            "end_date": t.end_date.isoformat() if t.end_date else None,
+            "groups": json.loads(t.groups_json) if t.groups_json else [],
+            "holidays": json.loads(t.holidays_json) if t.holidays_json else [],
+            "settings": json.loads(t.settings_json) if t.settings_json else {},
+            "result_count": t.result_count,
+            "error_message": t.error_message,
+        }
+        for t in tasks
+    ]
 
 
 @router.get("/schedule")
@@ -518,8 +541,8 @@ async def get_schedule(
     task_id: int | None = None,
     group_name: str | None = None,
     teacher_id: int | None = None,
-    db: AsyncSession = Depends(async_get_db),
-):
+    db: Annotated[AsyncSession, Depends(async_get_db)] = None,
+) -> list[dict[str, Any]]:
     stmt = select(ScheduleEntry).options(selectinload(ScheduleEntry.teacher))
 
     if task_id:
@@ -551,7 +574,7 @@ async def get_schedule(
     ]
 
 
-async def refresh_task_warnings(task_id: int, db: AsyncSession):
+async def refresh_task_warnings(task_id: int, db: AsyncSession) -> None:
     stmt = (
         select(ScheduleEntry)
         .options(selectinload(ScheduleEntry.teacher))
@@ -575,7 +598,7 @@ async def refresh_task_warnings(task_id: int, db: AsyncSession):
         else:
             e.warning = None
 
-    for (d, l), slot_entries in by_slot.items():
+    for (_d, _l), slot_entries in by_slot.items():
         for e1 in slot_entries:
             slot_warnings: list[str] = []
 
@@ -622,7 +645,8 @@ async def refresh_task_warnings(task_id: int, db: AsyncSession):
                     # Frontend uses JS Date.getDay(): 0=Sun, 1=Mon, ..., 6=Sat
                     # Python weekday(): 0=Mon, ..., 6=Sun
                     # Convert Python weekday to JS getDay: (weekday + 1) % 7
-                    # Mon: (0+1)%7=1, Tue: (1+1)%7=2, ..., Sat: (5+1)%7=6, Sun: (6+1)%7=0
+                    # Mon: (0+1)%7=1, Tue: (1+1)%7=2, ...
+                    # Sat: (5+1)%7=6, Sun: (6+1)%7=0
                     py_wd = e1.date.weekday() if hasattr(e1.date, "weekday") else -1
                     js_weekday = (py_wd + 1) % 7 if py_wd >= 0 else -1
                     lesson = e1.lesson_number
@@ -632,7 +656,7 @@ async def refresh_task_warnings(task_id: int, db: AsyncSession):
                         else str(e1.date)
                     )
 
-                    # Check recurring: format is "WEEKDAY-LESSON" e.g. "1-3" (Mon slot 3)
+                    # Check recurring: format is "WEEKDAY-LESSON" e.g. "1-3"
                     is_in_recurring = False
                     for item in recurring:
                         item_str = str(item)
@@ -686,13 +710,16 @@ async def refresh_task_warnings(task_id: int, db: AsyncSession):
                         )
                 except Exception as ex:
                     logger.error(
-                        f"Error parsing restrictions for teacher {e1.teacher.name}: {ex}"
+                        f"Error parsing restrictions for teacher "
+                        f"{e1.teacher.name}: {ex}"
                     )
 
             e1.warning = "; ".join(slot_warnings) if slot_warnings else None
 
 
-async def get_task_entries_json(task_id: int, db: AsyncSession):
+async def get_task_entries_json(
+    task_id: int, db: AsyncSession
+) -> list[dict[str, Any]]:
     stmt = (
         select(ScheduleEntry)
         .options(selectinload(ScheduleEntry.teacher))
@@ -722,8 +749,8 @@ async def get_task_entries_json(task_id: int, db: AsyncSession):
 async def update_schedule_entry(
     entry_id: int,
     payload: ScheduleUpdateModel,
-    db: AsyncSession = Depends(async_get_db),
-):
+    db: Annotated[AsyncSession, Depends(async_get_db)] = None,
+) -> JSONResponse:
     stmt = select(ScheduleEntry).where(ScheduleEntry.id == entry_id)
     result = await db.execute(stmt)
     entry = result.scalar_one_or_none()
@@ -742,7 +769,7 @@ async def update_schedule_entry(
         except ValueError:
             raise HTTPException(
                 status_code=400, detail="Invalid date format. Use YYYY-MM-DD"
-            )
+            ) from None
     elif "date" in payload.model_fields_set:
         entry.date = None
 
@@ -768,8 +795,8 @@ async def update_schedule_entry(
 
 @router.delete("/schedule/{entry_id}")
 async def delete_schedule_entry(
-    entry_id: int, db: AsyncSession = Depends(async_get_db)
-):
+    entry_id: int, db: Annotated[AsyncSession, Depends(async_get_db)] = None
+) -> JSONResponse:
     stmt = select(ScheduleEntry).where(ScheduleEntry.id == entry_id)
     result = await db.execute(stmt)
     entry = result.scalar_one_or_none()
