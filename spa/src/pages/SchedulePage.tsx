@@ -14,6 +14,8 @@ import {
   Layers,
   Users,
   UserCheck,
+  BarChart3,
+  ChevronDown,
 } from "lucide-react";
 import {
   DndContext,
@@ -243,6 +245,24 @@ export const SchedulePage: React.FC = () => {
   const [applyExtracurricularToStream, setApplyExtracurricularToStream] =
     useState(false);
 
+  // Quality analysis
+  interface QualityDetail {
+    score: number;
+    max: number;
+    [key: string]: unknown;
+  }
+  interface QualityData {
+    score: number;
+    grade: string;
+    total_entries: number;
+    assigned_entries: number;
+    details: Record<string, QualityDetail>;
+    recommendations: string[];
+  }
+  const [quality, setQuality] = useState<QualityData | null>(null);
+  const [qualityOpen, setQualityOpen] = useState(false);
+  const [qualityLoading, setQualityLoading] = useState(false);
+
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -349,6 +369,35 @@ export const SchedulePage: React.FC = () => {
     selectedTeacherId,
     fetchSchedule,
   ]);
+
+  // Fetch quality when group/task changes
+  useEffect(() => {
+    if (
+      !selectedTaskId ||
+      viewMode !== "group" ||
+      !selectedGroup ||
+      selectedGroup === "Все"
+    ) {
+      setQuality(null);
+      return;
+    }
+    const fetchQuality = async () => {
+      setQualityLoading(true);
+      try {
+        const res = await fetch(
+          `${API_BASE_URL}/api/v1/scheduler/schedule/quality?task_id=${selectedTaskId}&group_name=${encodeURIComponent(selectedGroup)}`,
+        );
+        if (res.ok) {
+          setQuality(await res.json());
+        }
+      } catch {
+        setQuality(null);
+      } finally {
+        setQualityLoading(false);
+      }
+    };
+    fetchQuality();
+  }, [selectedTaskId, selectedGroup, viewMode, entries.length]);
 
   // Derive weeks from entries
   const availableWeeks = React.useMemo(() => {
@@ -688,6 +737,137 @@ export const SchedulePage: React.FC = () => {
           </>
         )}
       </div>
+
+      {/* Quality Widget */}
+      {viewMode === "group" &&
+        selectedGroup &&
+        selectedGroup !== "Все" &&
+        !qualityLoading &&
+        quality && (
+          <div className="bg-white rounded-2xl border border-border-light shadow-sm overflow-hidden">
+            <button
+              onClick={() => setQualityOpen(!qualityOpen)}
+              className="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50/50 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <div
+                  className={`w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-sm ${
+                    quality.grade === "A"
+                      ? "bg-emerald-500"
+                      : quality.grade === "B"
+                        ? "bg-sky-500"
+                        : quality.grade === "C"
+                          ? "bg-amber-500"
+                          : quality.grade === "D"
+                            ? "bg-orange-500"
+                            : "bg-red-500"
+                  }`}
+                >
+                  {quality.grade}
+                </div>
+                <div className="text-left">
+                  <div className="text-sm font-bold text-text-primary">
+                    Качество расписания: {quality.score}/100
+                  </div>
+                  <div className="text-xs text-text-tertiary">
+                    {quality.assigned_entries} из {quality.total_entries} пар
+                    выставлено
+                  </div>
+                </div>
+                {/* Mini progress bar */}
+                <div className="w-32 h-2 bg-gray-100 rounded-full overflow-hidden ml-2">
+                  <div
+                    className={`h-full rounded-full transition-all ${
+                      quality.score >= 90
+                        ? "bg-emerald-500"
+                        : quality.score >= 75
+                          ? "bg-sky-500"
+                          : quality.score >= 60
+                            ? "bg-amber-500"
+                            : quality.score >= 40
+                              ? "bg-orange-500"
+                              : "bg-red-500"
+                    }`}
+                    style={{ width: `${quality.score}%` }}
+                  />
+                </div>
+              </div>
+              <div className="flex items-center gap-2 text-text-tertiary">
+                <BarChart3 size={16} />
+                <ChevronDown
+                  size={16}
+                  className={`transition-transform ${
+                    qualityOpen ? "rotate-180" : ""
+                  }`}
+                />
+              </div>
+            </button>
+
+            {qualityOpen && (
+              <div className="border-t border-border-light px-4 py-4">
+                <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
+                  {(
+                    [
+                      ["windows", "Окна", "🪟"],
+                      ["late_lessons", "Поздние пары", "🌙"],
+                      ["balance", "Равномерность", "⚖️"],
+                      ["lunch", "Обед", "🍽️"],
+                      ["progress", "Лекции→Сем.", "📚"],
+                      ["availability", "Доступность", "👤"],
+                    ] as const
+                  ).map(([key, label, icon]) => {
+                    const d = quality.details[key];
+                    if (!d) return null;
+                    const pct = d.max > 0 ? (d.score / d.max) * 100 : 100;
+                    return (
+                      <div key={key} className="bg-gray-50 rounded-xl p-3">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs font-semibold text-text-secondary">
+                            {icon} {label}
+                          </span>
+                          <span className="text-xs font-bold text-text-primary">
+                            {d.score}/{d.max}
+                          </span>
+                        </div>
+                        <div className="w-full h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all ${
+                              pct >= 80
+                                ? "bg-emerald-400"
+                                : pct >= 50
+                                  ? "bg-amber-400"
+                                  : "bg-red-400"
+                            }`}
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {quality.recommendations.length > 0 && (
+                  <div className="bg-amber-50 border border-amber-100 rounded-xl p-3">
+                    <div className="text-xs font-bold text-amber-700 mb-2">
+                      💡 Рекомендации
+                    </div>
+                    <ul className="space-y-1">
+                      {quality.recommendations.map((r, i) => (
+                        <li
+                          key={i}
+                          className="text-xs text-amber-800 flex items-start gap-1.5"
+                        >
+                          <span className="text-amber-400 mt-0.5">•</span>
+                          {r}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
       {isLoading ? (
         <div className="h-64 flex items-center justify-center text-text-secondary font-medium">

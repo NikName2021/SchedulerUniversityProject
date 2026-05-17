@@ -22,98 +22,70 @@ export const Layout: React.FC = () => {
   ];
 
   return (
-    <div className="min-h-screen">
-      {/* Header with Navigation Pills */}
-      <header
-        style={{
-          position: "sticky",
-          top: 0,
-          backgroundColor: "rgba(244, 245, 248, 0.8)",
-          backdropFilter: "blur(10px)",
-          zIndex: 100,
-          padding: "1.5rem 2.5rem",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          maxWidth: "1200px",
-          margin: "0 auto",
-        }}
-      >
-        <div className="flex items-center gap-4">
-          <div
-            style={{
-              background: "var(--brand)",
-              color: "white",
-              width: "40px",
-              height: "40px",
-              borderRadius: "12px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontWeight: 900,
-              fontSize: "1.25rem",
-            }}
-          >
-            S
+    <div className="min-h-screen flex bg-bg-base/30">
+      {/* Sidebar Navigation */}
+      <header className="sticky top-0 h-screen w-64 bg-white border-r border-border-light p-6 flex flex-col justify-between z-50 shrink-0">
+        <div className="flex flex-col w-full">
+          {/* Logo / Header Section */}
+          <div className="flex items-center gap-3">
+            <div className="bg-brand text-white w-10 h-10 rounded-xl flex items-center justify-center font-black text-lg shadow-sm">
+              S
+            </div>
+            <div>
+              <h1 className="text-sm font-extrabold text-text-primary tracking-tight leading-tight">
+                Scheduler
+              </h1>
+              <p className="text-[10px] text-text-secondary font-semibold">
+                University MVP
+              </p>
+            </div>
           </div>
-          <div>
-            <h1
-              style={{
-                fontSize: "1.125rem",
-                fontWeight: 800,
-                color: "var(--text-primary)",
-              }}
-            >
-              Scheduler
-            </h1>
-            <p
-              style={{
-                fontSize: "0.75rem",
-                color: "var(--text-secondary)",
-                fontWeight: 600,
-              }}
-            >
-              University MVP
-            </p>
-          </div>
+
+          {/* Navigation Items */}
+          <nav className="flex flex-col gap-1 w-full mt-8">
+            {navItems.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={({ isActive }) =>
+                  `flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all select-none ${
+                    isActive
+                      ? "bg-brand text-white shadow-md shadow-brand/10"
+                      : "text-text-secondary hover:text-brand hover:bg-bg-base"
+                  }`
+                }
+              >
+                <item.icon size={18} className="shrink-0" />
+                <span>{item.label}</span>
+              </NavLink>
+            ))}
+          </nav>
         </div>
 
-        <nav className="pills-nav">
-          {navItems.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              className={({ isActive }) => `pill ${isActive ? "active" : ""}`}
-            >
-              <div
-                style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
-              >
-                <item.icon size={18} />
-                <span>{item.label}</span>
+        {/* Bottom Section with User Profile and Settings Button */}
+        <div className="border-t border-border-light pt-4 mt-auto flex items-center justify-between w-full">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-brand/10 text-brand flex items-center justify-center font-bold text-sm">
+              А
+            </div>
+            <div>
+              <div className="text-xs font-bold text-text-primary">Админ</div>
+              <div className="text-[10px] text-text-tertiary">
+                Панель управления
               </div>
-            </NavLink>
-          ))}
-        </nav>
-
-        <button
-          style={{
-            padding: "0.75rem",
-            borderRadius: "12px",
-            backgroundColor: "white",
-            border: "1px solid var(--border-light)",
-            color: "var(--text-secondary)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            boxShadow: "var(--shadow-subtle)",
-          }}
-        >
-          <Settings size={20} />
-        </button>
+            </div>
+          </div>
+          <button
+            className="p-2.5 rounded-xl bg-white border border-border-light text-text-secondary hover:text-brand hover:bg-bg-base transition-all shadow-sm"
+            title="Настройки"
+          >
+            <Settings size={18} />
+          </button>
+        </div>
       </header>
 
-      {/* Main Content */}
-      <main className="p-10">
+      {/* Main Content Area */}
+      <main className="flex-1 p-10 overflow-y-auto">
         <div className="max-w-6xl animate-fade-in">
           <ErrorBoundary>
             <Outlet />

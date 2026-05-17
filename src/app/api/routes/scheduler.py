@@ -32,6 +32,7 @@ from pydantic import BaseModel
 from services.export_service import generate_excel_report
 from services.generation_service import GenerationService
 from services.parser_service import parse_streams_content
+from services.quality_service import ScheduleQualityService
 from sqlalchemy import distinct, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -545,6 +546,15 @@ async def get_generation_tasks(
         }
         for t in tasks
     ]
+
+
+@router.get("/schedule/quality")
+async def get_schedule_quality(
+    task_id: Annotated[int, Query(...)],
+    group_name: Annotated[str, Query(...)],
+    db: Annotated[AsyncSession, Depends(async_get_db)] = None,
+) -> dict[str, Any]:
+    return await ScheduleQualityService.analyze(task_id, group_name, db)
 
 
 @router.get("/schedule")
