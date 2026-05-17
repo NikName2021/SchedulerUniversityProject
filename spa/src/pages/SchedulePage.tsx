@@ -103,11 +103,12 @@ const DraggableCard: React.FC<{
 
   return (
     <div
+      id={`card-${entry.id}`}
       ref={setNodeRef}
       style={style}
       {...attributes}
       {...listeners}
-      className={`${styles.bg} ${styles.border} border border-l-4 rounded-lg p-2 shadow-sm relative group/card hover:shadow-md transition-shadow cursor-grab active:cursor-grabbing ${entry.warning ? "ring-2 ring-red-500 ring-offset-1" : ""}`}
+      className={`${styles.bg} ${styles.border} border border-l-4 rounded-lg p-2 shadow-sm relative group/card hover:shadow-md transition-all duration-300 cursor-grab active:cursor-grabbing ${entry.warning ? "ring-2 ring-red-500 ring-offset-1" : ""}`}
       title={entry.warning || undefined}
     >
       {count && count > 1 && (
@@ -262,6 +263,58 @@ export const SchedulePage: React.FC = () => {
   const [quality, setQuality] = useState<QualityData | null>(null);
   const [qualityOpen, setQualityOpen] = useState(false);
   const [qualityLoading, setQualityLoading] = useState(false);
+  const [conflictsOpen, setConflictsOpen] = useState(false);
+
+  const conflictedEntries = React.useMemo(() => {
+    return entries.filter((e) => e.warning);
+  }, [entries]);
+
+  const getEntryDayName = (dateStr: string) => {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return "";
+    const dayNum = (d.getDay() + 6) % 7;
+    return DAYS[dayNum];
+  };
+
+  const formatDateReadable = (dateStr: string) => {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return "";
+    return d.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" });
+  };
+
+  const focusConflict = (entry: ScheduleEntry) => {
+    if (entry.date) {
+      // Compute week key
+      const d = new Date(entry.date);
+      if (!isNaN(d.getTime())) {
+        const monday = new Date(d);
+        monday.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+        const weekKey = `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, "0")}-${String(monday.getDate()).padStart(2, "0")}`;
+        setSelectedWeek(weekKey);
+      }
+    }
+
+    setTimeout(() => {
+      const el = document.getElementById(`card-${entry.id}`);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.classList.add(
+          "ring-4",
+          "ring-red-500",
+          "ring-offset-2",
+          "scale-105",
+        );
+        setTimeout(() => {
+          el.classList.remove(
+            "ring-4",
+            "ring-red-500",
+            "ring-offset-2",
+            "scale-105",
+          );
+        }, 2000);
+      }
+    }, 150);
+  };
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -736,6 +789,25 @@ export const SchedulePage: React.FC = () => {
             </div>
           </>
         )}
+
+        <button
+          onClick={() => setConflictsOpen(!conflictsOpen)}
+          className={`ml-auto flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all shrink-0 cursor-pointer ${
+            conflictsOpen
+              ? "bg-red-50 text-red-600 ring-2 ring-red-500/20"
+              : "bg-white border border-border-light text-text-secondary hover:bg-gray-50 shadow-sm"
+          }`}
+        >
+          <AlertCircle
+            size={16}
+            className={
+              conflictedEntries.length > 0
+                ? "text-red-500 animate-pulse"
+                : "text-text-tertiary"
+            }
+          />
+          <span>Конфликты ({conflictedEntries.length})</span>
+        </button>
       </div>
 
       {/* Quality Widget */}
@@ -965,6 +1037,99 @@ export const SchedulePage: React.FC = () => {
                 </tbody>
               </table>
             </div>
+
+            {/* Collapsible Conflicts Sidebar */}
+            {conflictsOpen && (
+              <div className="w-80 bg-white rounded-2xl border border-border-light shadow-sm flex flex-col h-[800px] sticky top-6 animate-fade-in shrink-0">
+                <div className="p-4 border-b border-border-light bg-red-50/50 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle size={18} className="text-red-500" />
+                    <h2 className="font-bold text-text-primary text-sm">
+                      Конфликты ({conflictedEntries.length})
+                    </h2>
+                  </div>
+                  <button
+                    onClick={() => setConflictsOpen(false)}
+                    className="p-1 hover:bg-black/5 rounded text-text-secondary cursor-pointer"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                  {conflictedEntries.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-text-tertiary gap-2 py-20 text-center">
+                      <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-500 flex items-center justify-center font-bold text-lg">
+                        ✓
+                      </div>
+                      <p className="text-xs font-semibold text-emerald-600">
+                        Конфликты не обнаружены
+                      </p>
+                      <p className="text-[10px] text-text-secondary px-4">
+                        Расписание составлено корректно!
+                      </p>
+                    </div>
+                  ) : (
+                    conflictedEntries.map((entry) => {
+                      const dayName = entry.date
+                        ? getEntryDayName(entry.date)
+                        : "";
+                      const formattedDate = entry.date
+                        ? formatDateReadable(entry.date)
+                        : "";
+                      return (
+                        <div
+                          key={entry.id}
+                          onClick={() => focusConflict(entry)}
+                          className="p-3 bg-red-50/30 border border-red-100 hover:border-red-300 rounded-xl transition-all cursor-pointer group flex flex-col gap-2 relative shadow-sm hover:shadow"
+                        >
+                          <div className="flex justify-between items-start">
+                            <span className="text-[10px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded-full uppercase">
+                              {entry.stream_type}
+                            </span>
+                            {entry.date ? (
+                              <span className="text-[10px] text-text-secondary font-medium">
+                                {dayName} {formattedDate}, {entry.lesson_number}{" "}
+                                пара
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-orange-600 bg-orange-50 px-2 py-0.5 rounded-full font-bold">
+                                Не выставлен
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs font-extrabold text-text-primary group-hover:text-brand transition-colors line-clamp-1">
+                            {entry.event_name}
+                          </div>
+                          {entry.warning && (
+                            <div className="text-[10px] text-red-600 bg-white/60 p-2 rounded border border-red-100 leading-normal font-medium flex gap-1 items-start">
+                              <AlertCircle
+                                size={10}
+                                className="shrink-0 mt-0.5"
+                              />
+                              <span>{entry.warning}</span>
+                            </div>
+                          )}
+                          <div className="flex justify-between items-center mt-1 text-[9px] text-text-secondary font-semibold border-t border-red-50/50 pt-2">
+                            <span>Препод: {entry.teacher || "—"}</span>
+                            <span className="text-brand font-bold group-hover:translate-x-0.5 transition-transform flex items-center gap-0.5">
+                              Перейти →
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                <div className="p-4 bg-red-50/40 border-t border-red-100 rounded-b-2xl">
+                  <p className="text-[10px] text-red-700 leading-relaxed font-semibold">
+                    Нажмите на конфликт, чтобы автоматически сфокусироваться и
+                    подсветить занятие в сетке.
+                  </p>
+                </div>
+              </div>
+            )}
 
             {/* Unassigned Sidebar */}
             <div className="w-80 bg-white rounded-2xl border border-border-light shadow-sm flex flex-col h-[800px] sticky top-6">
