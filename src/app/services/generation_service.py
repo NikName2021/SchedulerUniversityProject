@@ -2,7 +2,7 @@ import collections
 import json
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 import anyio
 from core.config import sessionmaker
@@ -34,7 +34,7 @@ class GenerationService:
                 select(Stream)
                 .join(Stream.groups)
                 .filter(StreamGroup.group_name.in_(selected_groups))
-                .filter(Stream.is_ignored == False)
+                .filter(Stream.is_ignored.is_(False))
                 .filter(Stream.stream_type.in_(enabled_types))
                 .options(selectinload(Stream.groups))
             )
@@ -82,6 +82,13 @@ class GenerationService:
             try:
                 # 0. Fetch task settings for priorities
                 task = await session.get(GenerationTask, task_id)
+                if task and task.status == "success":
+                    logger.info("Task %s is already complete; skipping retry", task_id)
+                    return True
+                if task:
+                    task.status = "running"
+                    task.error_message = None
+                    await session.commit()
                 settings = (
                     json.loads(task.settings_json)
                     if task and task.settings_json
@@ -94,7 +101,7 @@ class GenerationService:
                     select(Stream)
                     .join(Stream.groups)
                     .filter(StreamGroup.group_name.in_(selected_groups))
-                    .filter(Stream.is_ignored == False)
+                    .filter(Stream.is_ignored.is_(False))
                     .filter(Stream.stream_type.in_(enabled_types))
                     .options(selectinload(Stream.groups), selectinload(Stream.teacher))
                 )
@@ -257,14 +264,14 @@ class GenerationService:
                         START_DATE = datetime.strptime(
                             start_date_str, "%Y-%m-%d"
                         ).date()
-                    except:
+                    except ValueError:
                         pass
 
                 END_DATE = DEFAULT_END_DATE
                 if end_date_str:
                     try:
                         END_DATE = datetime.strptime(end_date_str, "%Y-%m-%d").date()
-                    except:
+                    except ValueError:
                         pass
 
                 final_schedule, slots, warnings = await anyio.to_thread.run_sync(

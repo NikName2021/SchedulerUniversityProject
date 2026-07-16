@@ -49,12 +49,12 @@ def parse_streams_content(file_bytes: bytes):
             try:
                 hours = float(hours_raw)
                 lessons = max(1, int(hours // 2))
-            except:
+            except (TypeError, ValueError):
                 lessons = 1
         else:
             try:
                 lessons = int(float(lessons_raw))
-            except:
+            except (TypeError, ValueError):
                 lessons = 1
 
         lessons = max(1, lessons)

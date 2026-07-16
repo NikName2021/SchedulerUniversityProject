@@ -1,0 +1,9 @@
+Database migrations for the scheduler backend.
+
+Create a migration from the `src` directory:
+
+    alembic revision --autogenerate -m "description"
+
+Apply migrations:
+
+    alembic upgrade head

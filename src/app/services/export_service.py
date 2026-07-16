@@ -65,8 +65,8 @@ async def generate_excel_report(session, task_id: int | None = None):
     slots_tuples = []
     for d_str in all_dates:
         d_obj = datetime.datetime.strptime(d_str, "%Y-%m-%d")
-        for l in all_lessons:
-            slots_tuples.append((d_str, WEEK[d_obj.weekday()], l))
+        for lesson_number in all_lessons:
+            slots_tuples.append((d_str, WEEK[d_obj.weekday()], lesson_number))
 
     all_slots_idx = pd.MultiIndex.from_tuples(
         slots_tuples, names=["date", "weekday", "lesson"]

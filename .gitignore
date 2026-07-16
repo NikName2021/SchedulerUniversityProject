@@ -1,4 +1,10 @@
 /.env
+/logs/
+*.db
+**/__pycache__/
+*.py[cod]
+/.pytest_cache/
+/.ruff_cache/
 /src/app/.env
 /docker/config/nginx/nginx.conf
 .idea

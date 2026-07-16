@@ -3,11 +3,10 @@ import json
 import logging
 import os
 import uuid
-
-import pandas as pd
 from datetime import datetime
 from typing import Annotated, Any
 
+import pandas as pd
 from core.config import async_get_db
 from database.all_models import (
     FileType,
@@ -20,7 +19,6 @@ from database.all_models import (
 )
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Depends,
     File,
     HTTPException,
@@ -38,6 +36,7 @@ from sqlalchemy import distinct, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
+from worker import generate_schedule_task
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/scheduler", tags=["Scheduler"])
@@ -99,7 +98,9 @@ async def import_streams(
     try:
         parsed_data = parse_streams_content(content)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error parsing file: {str(e)}")
+        raise HTTPException(
+            status_code=400, detail=f"Error parsing file: {str(e)}"
+        ) from e
 
     if not parsed_data:
         raise HTTPException(status_code=400, detail="No streams found in the document")
@@ -390,7 +391,6 @@ async def import_teacher_availability(
 @router.post("/generate")
 async def generate_schedule(
     task: GenerationTaskModel,
-    background_tasks: BackgroundTasks,
     db: Annotated[AsyncSession, Depends(async_get_db)] = None,
 ) -> JSONResponse:
     # 1. Parse dates
@@ -400,28 +400,38 @@ async def generate_schedule(
     end_dt = datetime.strptime(task.end_date, "%Y-%m-%d") if task.end_date else None
 
     # 2. Create a task record
+    settings = task.settings or {}
     new_task = GenerationTask(
         groups_json=json.dumps(task.groups),
         holidays_json=json.dumps(task.holidays),
-        settings_json=json.dumps(task.settings or {}),
+        settings_json=json.dumps(settings),
         start_date=start_dt,
         end_date=end_dt,
-        status="pending",
+        status="queued",
     )
     db.add(new_task)
     await db.commit()
     await db.refresh(new_task)
 
-    # 3. Trigger background generation
-    background_tasks.add_task(
-        GenerationService.run_generation,
-        new_task.id,
-        task.groups,
-        task.holidays,
-        task.settings.get("enabled_types", []),
-        task.start_date,
-        task.end_date,
-    )
+    # 3. Enqueue durable background generation
+    try:
+        generate_schedule_task.delay(
+            new_task.id,
+            task.groups,
+            task.holidays,
+            settings.get("enabled_types", []),
+            task.start_date,
+            task.end_date,
+        )
+    except Exception as exc:
+        new_task.status = "failed"
+        new_task.error_message = "Generation queue is unavailable"
+        await db.commit()
+        logger.exception("Failed to enqueue generation task %s", new_task.id)
+        raise HTTPException(
+            status_code=503,
+            detail="Generation queue is unavailable",
+        ) from exc
 
     return {
         "status": "ok",

@@ -1,39 +1,21 @@
-# syntax=docker/dockerfile:1.4
+FROM node:22-alpine AS build
 
-# 1. For build React app
-FROM node:lts AS development
-
-# Set working directory
 WORKDIR /app
 
-# 
-COPY package.json /app/package.json
-COPY package-lock.json /app/package-lock.json
+COPY package.json package-lock.json ./
+RUN npm ci \
+    --fetch-retries=5 \
+    --fetch-retry-factor=2 \
+    --fetch-retry-mintimeout=20000 \
+    --fetch-retry-maxtimeout=120000
 
-# Same as npm install
-RUN npm ci
-
-COPY . /app
-
-ENV CI=true
-ENV PORT=3000
-
-CMD [ "npm", "start" ]
-
-FROM development AS build
-
+COPY . .
 RUN npm run build
 
-# 2. For Nginx setup
-FROM nginx:alpine
+FROM nginx:1.27-alpine
 
-WORKDIR /usr/share/nginx/html
-COPY --from=build /app/nginx/local_nginx.conf /etc/nginx/conf.d/default.conf
+COPY nginx/local_nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/build /usr/share/nginx/html
 
-# Remove default nginx static assets
-RUN rm -rf ./*
-
-# Copy static assets from builder stage
-COPY --from=build /app/build .
-
-ENTRYPOINT ["nginx", "-g", "daemon off;"]
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]

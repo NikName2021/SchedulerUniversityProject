@@ -1,19 +1,17 @@
 import json
 import logging
-from datetime import datetime
 from typing import Any, Dict, List
 
 import pandas as pd
+from database.all_models import (
+    ScheduleEntry,
+    Stream,
+    StreamGroup,
+    Teacher,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-
-from database.all_models import (
-    ScheduleEntry,
-    Teacher,
-    Stream,
-    StreamGroup,
-)
 
 logger = logging.getLogger(__name__)
 

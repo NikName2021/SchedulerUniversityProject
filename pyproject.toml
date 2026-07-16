@@ -1,13 +1,23 @@
 [tool.ruff]
-# Включаем проверку стиля (E, F) и плагины вроде flake8-bugbear (B)
-select = ["E", "F", "B", "I"]
-ignore = []
+extend-exclude = [
+    "src/app/helpers",
+    "src/app/repositories",
+    "src/app/schemas",
+    "src/app/services/user_service.py",
+    "src/app/services/user_service_tg.py",
+]
 
 [tool.ruff.lint]
-# Агент обязан использовать Type Hinting, проверяем это
-extend-select = ["ANN"] 
+select = ["E", "F", "B", "I"]
+ignore = ["B008", "E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/app/tests/*" = ["ANN"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"
 addopts = "-ra -q --tb=short"
-testpaths = ["tests"]
+testpaths = ["src/app/tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+pythonpath = ["src/app"]

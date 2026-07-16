@@ -10,11 +10,10 @@ import math
 from collections import defaultdict
 from typing import Any
 
+from database.all_models import ScheduleEntry
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
-
-from database.all_models import ScheduleEntry
 
 logger = logging.getLogger(__name__)
 

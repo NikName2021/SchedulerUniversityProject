@@ -1,72 +1,124 @@
-services:
+name: smart-scheduler
 
-  postgres_pr:
-    container_name: hackathon_mes_postgres
-    image: postgres:17.6
-    restart: always
+services:
+  postgres:
+    image: postgres:17.6-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DATABASE}
-      TZ: "Europe/Moscow"
+      TZ: Europe/Moscow
     volumes:
-      - hackathon_MES_vol:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5446:5432"
+      - "${POSTGRES_PORT:-5446}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DATABASE}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     networks:
-      - hackathon_MES_net
+      - scheduler
+
+  redis:
+    image: redis:8.0-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - scheduler
 
   backend:
-    container_name: hackathon_mes_backend
+    image: smart-scheduler-backend
     build:
       context: src
+    restart: unless-stopped
     environment:
-      PYTHONUNBUFFERED: 1
-      PYTHONDONTWRITEBYTECODE: 1
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DATABASE}
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      RUN_MIGRATIONS: "true"
+      TZ: Europe/Moscow
     volumes:
-      - ${PROJECT_VOLUME_SRC}:/app:cached
-    command: python3 main.py
+      - uploads:/app/app/uploads
+      - backend_logs:/app/logs
+    ports:
+      - "8000:8000"
     depends_on:
-      - postgres_pr
-    expose:
-      - 8000
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     networks:
-      - hackathon_MES_net
+      - scheduler
 
-#  worker:
-#    container_name: statistics_worker
-#    build:
-#      context: src
-#    environment:
-#      PYTHONUNBUFFERED: 1
-#      PYTHONDONTWRITEBYTECODE: 1
-#    volumes:
-#      - ${PROJECT_VOLUME_SRC}:/app:cached
-#    command: python3 startup_worker.py
-#    depends_on:
-#      - postgres_pr
-#      - backend
-#    networks:
-#      - statistics_network
+  worker:
+    image: smart-scheduler-backend
+    restart: unless-stopped
+    command:
+      [
+        "celery",
+        "--app=worker.celery_app",
+        "worker",
+        "--loglevel=INFO",
+        "--concurrency=1",
+      ]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DATABASE}
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY}
+      RUN_MIGRATIONS: "false"
+      TZ: Europe/Moscow
+    volumes:
+      - uploads:/app/app/uploads
+      - backend_logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    networks:
+      - scheduler
 
   frontend:
     build:
       context: spa
-    container_name: frontend_app
-#    volumes:
-#      - ./docker/config/nginx/${NGINX_FILE}:/etc/nginx/conf.d/default.conf
-#      - /home/deploy/.ssl/:/home/deploy/.ssl/
+    restart: unless-stopped
     ports:
-      - "443:443"
       - "80:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     networks:
-      - hackathon_MES_net
+      - scheduler
 
 volumes:
-  hackathon_MES_vol:
-    driver: local
+  postgres_data:
+  redis_data:
+  uploads:
+  backend_logs:
+
 networks:
-  hackathon_MES_net:
+  scheduler:
     driver: bridge

@@ -51,17 +51,42 @@
 
 ---
 
-## 📦 Установка и запуск
+## 📦 Запуск production-контура локально
+
+Контур включает PostgreSQL, Redis, FastAPI, отдельный Celery worker и Nginx с
+собранным React-приложением.
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+После запуска доступны:
+
+- интерфейс: `http://localhost`;
+- OpenAPI: `http://localhost:8000/docs`;
+- liveness: `http://localhost:8000/health/live`;
+- readiness с проверкой PostgreSQL: `http://localhost:8000/health/ready`.
+
+При старте backend автоматически применяет Alembic-миграции. Генерация
+расписания отправляется через Redis отдельному Celery worker.
+
+Для production необходимо заменить `SECRET_KEY`, пароль PostgreSQL и список
+`CORS_ORIGINS`, а TLS завершать на внешнем reverse proxy или ingress.
+
+## Локальная разработка без Docker
 
 ### Бэкенд
 1. Установите зависимости:
    ```bash
-   pip install -r requirements.txt
+   pip install -r src/requirements-dev.txt
    ```
 2. Создайте файл `.env` на основе примера и настройте подключение к БД.
 3. Запустите сервер:
    ```bash
-   python src/main.py
+   cd src
+   alembic upgrade head
+   uvicorn main:app --app-dir app --reload
    ```
 
 ### Фронтенд
@@ -77,6 +102,22 @@
    ```bash
    npm run dev
    ```
+
+Для обработки задач генерации локально нужны Redis и Celery worker:
+
+```bash
+cd src/app
+celery --app=worker.celery_app worker --loglevel=INFO --concurrency=1
+```
+
+## Проверки
+
+```bash
+python -m ruff check src/app
+python -m pytest
+cd spa && npm run build
+docker compose --env-file .env.example config --quiet
+```
 
 ---
 

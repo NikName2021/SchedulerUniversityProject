@@ -14,17 +14,18 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         request_id = str(uuid.uuid4())
         request.state.request_id = request_id
 
+        client = request.client
         logging_dict = {
             "method": request.method,
             "path": request.url.path,
             "query_params": str(request.query_params),
-            "client_host": request.client.host,
-            "client_port": request.client.port,
+            "client_host": client.host if client else None,
+            "client_port": client.port if client else None,
         }
 
         start_time = time.time()
 
-        response = None
+        response: Response | None = None
         try:
             response = await call_next(request)
             logging_dict["status_code"] = response.status_code
@@ -39,7 +40,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
                 },
                 exc_info=e,
             )
-            raise e
+            raise
         finally:
             process_time = (time.time() - start_time) * 1000
             logging_dict["process_time_ms"] = round(process_time)
@@ -53,7 +54,8 @@ class LoggingMiddleware(BaseHTTPMiddleware):
                 },
             )
 
-            if response:
-                response.headers["X-Request-ID"] = request_id
+        if response is None:
+            raise RuntimeError("Request completed without a response")
 
-            return response
+        response.headers["X-Request-ID"] = request_id
+        return response
