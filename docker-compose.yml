@@ -80,7 +80,7 @@ services:
         "--app=worker.celery_app",
         "worker",
         "--loglevel=INFO",
-        "--concurrency=1",
+        "--concurrency=${CELERY_WORKER_CONCURRENCY:-4}",
       ]
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DATABASE}

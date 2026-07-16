@@ -24,7 +24,13 @@ interface GenerationTask {
   settings: Record<string, unknown>;
   result_count: number;
   error_message: string | null;
+  total_components: number;
+  completed_components: number;
+  progress_percent: number;
 }
+
+const hasScheduleResult = (status: string) =>
+  status === "success" || status === "partial";
 
 const HistoryPage: React.FC = () => {
   const [tasks, setTasks] = useState<GenerationTask[]>([]);
@@ -45,6 +51,8 @@ const HistoryPage: React.FC = () => {
 
   useEffect(() => {
     fetchTasks();
+    const intervalId = window.setInterval(fetchTasks, 3000);
+    return () => window.clearInterval(intervalId);
   }, [fetchTasks]);
 
   const handleDownload = (taskId: number) => {
@@ -184,21 +192,19 @@ const HistoryPage: React.FC = () => {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                backgroundColor:
-                  task.status === "success"
-                    ? "rgba(16, 185, 129, 0.1)"
-                    : task.status === "failed"
-                      ? "rgba(239, 68, 68, 0.1)"
-                      : "rgba(245, 158, 11, 0.1)",
-                color:
-                  task.status === "success"
-                    ? "#10b981"
-                    : task.status === "failed"
-                      ? "#ef4444"
-                      : "#f59e0b",
+                backgroundColor: hasScheduleResult(task.status)
+                  ? "rgba(16, 185, 129, 0.1)"
+                  : task.status === "failed"
+                    ? "rgba(239, 68, 68, 0.1)"
+                    : "rgba(245, 158, 11, 0.1)",
+                color: hasScheduleResult(task.status)
+                  ? "#10b981"
+                  : task.status === "failed"
+                    ? "#ef4444"
+                    : "#f59e0b",
               }}
             >
-              {task.status === "success" ? (
+              {hasScheduleResult(task.status) ? (
                 <CheckCircle2 size={24} />
               ) : task.status === "failed" ? (
                 <XCircle size={24} />
@@ -232,18 +238,21 @@ const HistoryPage: React.FC = () => {
                     textTransform: "uppercase",
                     padding: "2px 8px",
                     borderRadius: "20px",
-                    backgroundColor:
-                      task.status === "success"
-                        ? "rgba(16, 185, 129, 0.1)"
-                        : "rgba(245, 158, 11, 0.1)",
-                    color: task.status === "success" ? "#10b981" : "#f59e0b",
+                    backgroundColor: hasScheduleResult(task.status)
+                      ? "rgba(16, 185, 129, 0.1)"
+                      : "rgba(245, 158, 11, 0.1)",
+                    color: hasScheduleResult(task.status)
+                      ? "#10b981"
+                      : "#f59e0b",
                   }}
                 >
                   {task.status === "success"
                     ? "Готово"
-                    : task.status === "failed"
-                      ? "Ошибка"
-                      : "В процессе"}
+                    : task.status === "partial"
+                      ? "Частично"
+                      : task.status === "failed"
+                        ? "Ошибка"
+                        : "В процессе"}
                 </span>
               </div>
               <div
@@ -275,7 +284,7 @@ const HistoryPage: React.FC = () => {
                   <UsersIcon size={14} /> {task.groups ? task.groups.length : 0}{" "}
                   групп
                 </div>
-                {task.status === "success" && (
+                {hasScheduleResult(task.status) && (
                   <div
                     style={{
                       display: "flex",
@@ -287,22 +296,31 @@ const HistoryPage: React.FC = () => {
                     <CheckCircle2 size={14} /> {task.result_count} пар
                   </div>
                 )}
+                {!hasScheduleResult(task.status) &&
+                  task.status !== "failed" && (
+                    <div style={{ color: "#f59e0b" }}>
+                      {task.progress_percent || 0}% ·{" "}
+                      {task.completed_components || 0}/
+                      {task.total_components || 0} компонент
+                    </div>
+                  )}
               </div>
             </div>
 
             {/* Error message if failed */}
-            {task.status === "failed" && (
-              <div
-                style={{
-                  fontSize: "0.75rem",
-                  color: "#ef4444",
-                  fontWeight: 600,
-                  maxWidth: "300px",
-                }}
-              >
-                {task.error_message}
-              </div>
-            )}
+            {(task.status === "failed" || task.status === "partial") &&
+              task.error_message && (
+                <div
+                  style={{
+                    fontSize: "0.75rem",
+                    color: task.status === "failed" ? "#ef4444" : "#f59e0b",
+                    fontWeight: 600,
+                    maxWidth: "300px",
+                  }}
+                >
+                  {task.error_message}
+                </div>
+              )}
 
             {/* Actions */}
             <div style={{ display: "flex", gap: "0.75rem" }}>
@@ -324,7 +342,7 @@ const HistoryPage: React.FC = () => {
               >
                 <RefreshCcw size={16} /> Наследовать
               </button>
-              {task.status === "success" && (
+              {hasScheduleResult(task.status) && (
                 <button
                   onClick={() => handleDownload(task.id)}
                   style={{
@@ -346,7 +364,7 @@ const HistoryPage: React.FC = () => {
                   <Download size={16} /> Скачать Excel
                 </button>
               )}
-              {task.status === "success" && (
+              {hasScheduleResult(task.status) && (
                 <button
                   onClick={() => navigate(`/schedule/${task.id}`)}
                   style={{

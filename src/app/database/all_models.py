@@ -8,6 +8,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -189,8 +190,39 @@ class GenerationTask(DeclBase):
     settings_json = Column(String)  # Dict of other settings
     result_count = Column(Integer, default=0)
     error_message = Column(String, nullable=True)
+    total_components = Column(Integer, nullable=False, default=0)
+    completed_components = Column(Integer, nullable=False, default=0)
+    progress_percent = Column(Integer, nullable=False, default=0)
+    metrics_json = Column(String, nullable=True)
+    celery_workflow_id = Column(String, nullable=True)
 
     planning_week = relationship("PlanningWeek", back_populates="generation_tasks")
+    components = relationship(
+        "GenerationComponent", cascade="all,delete-orphan", back_populates="task"
+    )
+
+
+class GenerationComponent(DeclBase):
+    __tablename__ = "generation_component"
+    __table_args__ = (
+        UniqueConstraint("task_id", "component_key"),
+        Index("ix_generation_component_task_status", "task_id", "status"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(
+        Integer, ForeignKey("generation_task.id", ondelete="CASCADE"), nullable=False
+    )
+    component_key = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="queued")
+    event_count = Column(Integer, nullable=False, default=0)
+    variable_count = Column(Integer, nullable=False, default=0)
+    constraint_count = Column(Integer, nullable=False, default=0)
+    solve_seconds = Column(Float, nullable=True)
+    objective = Column(Float, nullable=True)
+    error_message = Column(String, nullable=True)
+
+    task = relationship("GenerationTask", back_populates="components")
 
 
 class ScheduleEntry(DeclBase):

@@ -107,7 +107,7 @@ docker compose up --build
 
 ```bash
 cd src/app
-celery --app=worker.celery_app worker --loglevel=INFO --concurrency=1
+celery --app=worker.celery_app worker --loglevel=INFO --concurrency=4
 ```
 
 ## Проверки
@@ -131,6 +131,10 @@ docker compose --env-file .env.example config --quiet
 
 Описание недельного API и решения для масштабирования находится в
 [`docs/STAGE_1_WEEKLY_PLANNING.md`](docs/STAGE_1_WEEKLY_PLANNING.md).
+
+Архитектура событийного solver, Celery-компонент и инкрементального пересчета
+описана в
+[`docs/STAGE_2_SCALABLE_GENERATION.md`](docs/STAGE_2_SCALABLE_GENERATION.md).
 
 ## 📝 Дальнейшее развитие (Roadmap)
 - Реализация генетического алгоритма для автоматического расчета.

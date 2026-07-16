@@ -1,0 +1,137 @@
+import datetime
+
+from services.scalable_scheduler import (
+    assign_rooms_matching,
+    build_conflict_components,
+    solve_event_component,
+)
+
+
+def _context() -> dict:
+    return {
+        "start_date": "2026-09-07",
+        "end_date": "2026-09-07",
+        "immutable_before": "2026-09-07",
+        "holidays": [],
+        "study_days": [0],
+        "lessons": [1, 2],
+        "rooms": {
+            "101": {"capacity": 30, "type": "sem"},
+            "201": {"capacity": 120, "type": "lec"},
+        },
+        "unavailable": {"teacher": {}, "group": {}, "room": {}},
+        "group_sizes": {},
+        "max_time_seconds": 5,
+        "num_workers": 1,
+        "room_assignment_max_seconds": 2,
+    }
+
+
+def _event(
+    event_id: str,
+    groups: list[str],
+    teacher_id: int | None,
+    event_type: str = "sem",
+) -> dict:
+    return {
+        "id": event_id,
+        "stream_id": int(event_id.split("-")[-1]),
+        "subject": event_id,
+        "stream_type": "Лекция" if event_type == "lec" else "Семинар",
+        "type": event_type,
+        "teacher": f"Teacher {teacher_id}" if teacher_id else None,
+        "teacher_id": teacher_id,
+        "groups": groups,
+        "lessons_count": 1,
+        "priority": 5,
+        "time_preference": "day",
+    }
+
+
+def test_conflict_graph_splits_independent_resources() -> None:
+    events = [
+        _event("event-1", ["A"], 1),
+        _event("event-2", ["B"], 2),
+        _event("event-3", ["C"], 1),
+    ]
+
+    components = build_conflict_components(events)
+
+    assert sorted(len(component) for component in components) == [1, 2]
+    assert {event["id"] for event in components[0]} == {"event-1", "event-3"}
+
+
+def test_stream_lecture_uses_one_slot_variable_for_all_groups() -> None:
+    event = _event(
+        "event-1",
+        [f"GROUP-{index}" for index in range(10)],
+        1,
+        event_type="lec",
+    )
+
+    result = solve_event_component([event], _context())
+
+    assert result["status"] == "success"
+    assert result["metrics"]["decision_variables"] == 2
+    assert len(result["assignments"]) == 1
+    assert len(result["assignments"][0]["groups"]) == 10
+
+
+def test_shared_teacher_events_never_overlap() -> None:
+    events = [
+        _event("event-1", ["A"], 7),
+        _event("event-2", ["B"], 7),
+    ]
+
+    result = solve_event_component(events, _context())
+
+    assert result["status"] == "success"
+    assert len(result["assignments"]) == 2
+    assert len({tuple(item["slot"]) for item in result["assignments"]}) == 2
+
+
+def test_room_matching_is_global_across_components() -> None:
+    context = _context()
+    context["rooms"] = {"101": {"capacity": 30, "type": "sem"}}
+    context["group_sizes"] = {"A": 20, "B": 20}
+    slot = [datetime.date(2026, 9, 7).isoformat(), 1]
+    assignments = [
+        {**_event("event-1", ["A"], 1), "slot": slot},
+        {**_event("event-2", ["B"], 2), "slot": slot},
+    ]
+
+    completed, warnings, _metrics = assign_rooms_matching(assignments, context)
+
+    assert sorted(item["room"] for item in completed) == ["101", "НЕТ АУДИТОРИИ"]
+    assert len(warnings) == 1
+
+
+def test_lunch_break_prevents_third_and_fourth_pair_together() -> None:
+    context = _context()
+    context["lessons"] = [3, 4]
+    events = [
+        _event("event-1", ["A"], 1),
+        _event("event-2", ["A"], 2),
+    ]
+
+    result = solve_event_component(events, context)
+
+    assert result["status"] == "success"
+    assert len(result["assignments"]) == 1
+    assert sum(item["missing_count"] for item in result["unassigned"]) == 1
+
+
+def test_lecture_is_scheduled_before_practical() -> None:
+    context = _context()
+    lecture = _event("event-1", ["A"], 1, event_type="lec")
+    lecture["subject"] = "Математика"
+    practical = _event("event-2", ["A"], 2)
+    practical["subject"] = "Математика"
+
+    result = solve_event_component([lecture, practical], context)
+
+    slots_by_type = {
+        assignment["type"]: assignment["slot"][1]
+        for assignment in result["assignments"]
+    }
+    assert slots_by_type["lec"] < slots_by_type["sem"]

@@ -10,6 +10,7 @@ import pandas as pd
 from core.config import async_get_db
 from database.all_models import (
     FileType,
+    GenerationComponent,
     GenerationTask,
     ImportBatch,
     PlanningWeek,
@@ -497,8 +498,43 @@ async def get_generation_tasks(
             "settings": json.loads(t.settings_json) if t.settings_json else {},
             "result_count": t.result_count,
             "error_message": t.error_message,
+            "planning_week_id": t.planning_week_id,
+            "total_components": t.total_components,
+            "completed_components": t.completed_components,
+            "progress_percent": t.progress_percent,
+            "metrics": json.loads(t.metrics_json) if t.metrics_json else {},
+            "celery_workflow_id": t.celery_workflow_id,
         }
         for t in tasks
+    ]
+
+
+@router.get("/tasks/{task_id}/components")
+async def get_generation_components(
+    task_id: int,
+    db: Annotated[AsyncSession, Depends(async_get_db)] = None,
+) -> list[dict[str, Any]]:
+    task = await db.get(GenerationTask, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Generation task not found")
+    result = await db.execute(
+        select(GenerationComponent)
+        .where(GenerationComponent.task_id == task_id)
+        .order_by(GenerationComponent.component_key)
+    )
+    return [
+        {
+            "id": component.id,
+            "component_key": component.component_key,
+            "status": component.status,
+            "event_count": component.event_count,
+            "variable_count": component.variable_count,
+            "constraint_count": component.constraint_count,
+            "solve_seconds": component.solve_seconds,
+            "objective": component.objective,
+            "error_message": component.error_message,
+        }
+        for component in result.scalars()
     ]
 
 
