@@ -33,6 +33,7 @@ from services.export_service import generate_excel_report
 from services.generation_service import GenerationService
 from services.parser_service import parse_streams_content
 from services.quality_service import ScheduleQualityService
+from services.schedule_service import ScheduleService
 from sqlalchemy import distinct, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -121,53 +122,14 @@ async def import_streams(
     db.add(batch)
     await db.flush()
 
-    added_streams_count = 0
-    added_groups_count = 0
-
-    for s_data in parsed_data:
-        teacher_clean = s_data["teacher"]
-        teacher_id = None
-
-        if teacher_clean:
-            stmt = select(Teacher).where(Teacher.name == teacher_clean)
-            result = await db.execute(stmt)
-            existing_teacher = result.scalar_one_or_none()
-
-            if not existing_teacher:
-                new_teacher = Teacher(name=teacher_clean)
-                db.add(new_teacher)
-                await db.flush()
-                teacher_id = new_teacher.id
-            else:
-                teacher_id = existing_teacher.id
-
-        new_stream = Stream(
-            import_batch_id=batch.id,
-            teacher_id=teacher_id,
-            event_name=s_data["event"],
-            stream_type=s_data["type"],
-            lessons_count=s_data.get("lessons_count", 1),
-        )
-        db.add(new_stream)
-        await db.flush()
-        added_streams_count += 1
-
-        for group in s_data["groups"]:
-            new_group = StreamGroup(
-                stream_id=new_stream.id,
-                group_name=group["name"],
-                group_size=group["size"],
-            )
-            db.add(new_group)
-            added_groups_count += 1
-
+    res = await ScheduleService.import_streams(parsed_data, batch.id, db)
     await db.commit()
 
     return {
         "detail": "Success",
         "batch_id": batch.id,
-        "streams_added": added_streams_count,
-        "groups_added": added_groups_count,
+        "streams_added": res["streams_added"],
+        "groups_added": res["groups_added"],
     }
 
 
@@ -420,43 +382,7 @@ async def import_teacher_availability(
     content = await file.read()
     df = pd.read_excel(io.BytesIO(content))
 
-    updated_count = 0
-    for _, row in df.iterrows():
-        name = str(row["ФИО преподавателя"]).strip()
-        mode = str(row["Режим"]).strip()
-        recurring = str(row.get("Регулярные окна (День_Пара)", "")).strip()
-        specific = str(row.get("Конкретные даты (ГГГГ-ММ-ДД_Пара)", "")).strip()
-
-        if not name or name == "nan":
-            continue
-
-        # Parse strings to lists
-        rec_list = (
-            [i.strip() for i in recurring.split(",") if i.strip()]
-            if recurring and recurring != "nan"
-            else []
-        )
-        spec_list = (
-            [i.strip() for i in specific.split(",") if i.strip()]
-            if specific and specific != "nan"
-            else []
-        )
-
-        restr = {
-            "mode": mode if mode in ["blacklist", "whitelist"] else "blacklist",
-            "recurring": rec_list,
-            "specific": spec_list,
-        }
-
-        # Update in DB
-        stmt = select(Teacher).filter(Teacher.name == name)
-        res = await db.execute(stmt)
-        teacher = res.scalar_one_or_none()
-
-        if teacher:
-            teacher.restrictions_json = json.dumps(restr)
-            updated_count += 1
-
+    updated_count = await ScheduleService.import_teacher_availability(df, db)
     await db.commit()
     return {"status": "ok", "updated_teachers": updated_count}
 
@@ -595,177 +521,6 @@ async def get_schedule(
     ]
 
 
-async def refresh_task_warnings(task_id: int, db: AsyncSession) -> None:
-    stmt = (
-        select(ScheduleEntry)
-        .options(selectinload(ScheduleEntry.teacher))
-        .where(ScheduleEntry.task_id == task_id)
-    )
-    res = await db.execute(stmt)
-    all_entries = res.scalars().all()
-
-    by_slot: dict[tuple[str, int], list] = {}
-    for e in all_entries:
-        if e.date and e.lesson_number:
-            date_key = (
-                e.date.strftime("%Y-%m-%d")
-                if hasattr(e.date, "strftime")
-                else str(e.date)
-            )
-            key = (date_key, e.lesson_number)
-            if key not in by_slot:
-                by_slot[key] = []
-            by_slot[key].append(e)
-        else:
-            e.warning = None
-
-    for (_d, _l), slot_entries in by_slot.items():
-        for e1 in slot_entries:
-            slot_warnings: list[str] = []
-
-            # 1. Overlap checks
-            for e2 in slot_entries:
-                if e1.id == e2.id:
-                    continue
-
-                # Same teacher = conflict (unless same event+group = stream lecture)
-                if (
-                    e1.teacher_id
-                    and e1.teacher_id == e2.teacher_id
-                    and not (
-                        e1.event_name == e2.event_name
-                        and e1.stream_type == e2.stream_type
-                        and e1.stream_type in ("Лекция", "lecture")
-                    )
-                ):
-                    slot_warnings.append(
-                        f"Преподаватель занят: {e2.event_name} ({e2.group_name})"
-                    )
-
-                # Same group = real conflict
-                if e1.group_name == e2.group_name:
-                    slot_warnings.append(
-                        f"У группы {e1.group_name} уже есть пара ({e2.event_name})"
-                    )
-
-            # 2. Personal Teacher Availability
-            if e1.teacher and e1.teacher.restrictions_json:
-                try:
-                    restrs = json.loads(e1.teacher.restrictions_json)
-                    if not isinstance(restrs, dict):
-                        restrs = {
-                            "mode": "blacklist",
-                            "recurring": restrs,
-                            "specific": [],
-                        }
-
-                    mode = restrs.get("mode", "blacklist")
-                    recurring = restrs.get("recurring", [])
-                    specific = restrs.get("specific", [])
-
-                    # Frontend uses JS Date.getDay(): 0=Sun, 1=Mon, ..., 6=Sat
-                    # Python weekday(): 0=Mon, ..., 6=Sun
-                    # Convert Python weekday to JS getDay: (weekday + 1) % 7
-                    # Mon: (0+1)%7=1, Tue: (1+1)%7=2, ...
-                    # Sat: (5+1)%7=6, Sun: (6+1)%7=0
-                    py_wd = e1.date.weekday() if hasattr(e1.date, "weekday") else -1
-                    js_weekday = (py_wd + 1) % 7 if py_wd >= 0 else -1
-                    lesson = e1.lesson_number
-                    date_str = (
-                        e1.date.strftime("%Y-%m-%d")
-                        if hasattr(e1.date, "strftime")
-                        else str(e1.date)
-                    )
-
-                    # Check recurring: format is "WEEKDAY-LESSON" e.g. "1-3"
-                    is_in_recurring = False
-                    for item in recurring:
-                        item_str = str(item)
-                        for sep in ["-", "_", ":"]:
-                            if sep in item_str:
-                                try:
-                                    d_s, l_s = item_str.split(sep, 1)
-                                    if int(d_s) == js_weekday and int(l_s) == lesson:
-                                        is_in_recurring = True
-                                        break
-                                except Exception:
-                                    continue
-                        if is_in_recurring:
-                            break
-
-                    # Check specific: format is "YYYY-MM-DD-LESSON" e.g. "2026-05-16-3"
-                    is_in_specific = False
-                    for item in specific:
-                        item_str = str(item)
-                        if len(item_str) > 10:
-                            # Use rsplit to split off the last segment (lesson number)
-                            # "2026-05-16-3" → ("2026-05-16", "3")
-                            for sep in ["-", "_", ":"]:
-                                try:
-                                    parts = item_str.rsplit(sep, 1)
-                                    if (
-                                        len(parts) == 2
-                                        and parts[0] == date_str
-                                        and int(parts[1]) == lesson
-                                    ):
-                                        is_in_specific = True
-                                        break
-                                except Exception:
-                                    continue
-                        if is_in_specific:
-                            break
-
-                    is_blocked = False
-                    if mode == "whitelist":
-                        # In whitelist mode, only listed slots are ALLOWED
-                        if not is_in_recurring and not is_in_specific:
-                            is_blocked = True
-                    else:  # blacklist
-                        # In blacklist mode, listed slots are FORBIDDEN
-                        if is_in_recurring or is_in_specific:
-                            is_blocked = True
-
-                    if is_blocked:
-                        slot_warnings.append(
-                            "Преподаватель недоступен по личному расписанию"
-                        )
-                except Exception as ex:
-                    logger.error(
-                        f"Error parsing restrictions for teacher "
-                        f"{e1.teacher.name}: {ex}"
-                    )
-
-            e1.warning = "; ".join(slot_warnings) if slot_warnings else None
-
-
-async def get_task_entries_json(
-    task_id: int, db: AsyncSession
-) -> list[dict[str, Any]]:
-    stmt = (
-        select(ScheduleEntry)
-        .options(selectinload(ScheduleEntry.teacher))
-        .where(ScheduleEntry.task_id == task_id)
-    )
-    result = await db.execute(stmt)
-    entries = result.scalars().all()
-    return [
-        {
-            "id": e.id,
-            "task_id": e.task_id,
-            "group_name": e.group_name,
-            "event_name": e.event_name,
-            "stream_type": e.stream_type,
-            "teacher": e.teacher.name if e.teacher else None,
-            "teacher_id": e.teacher_id,
-            "room_id": e.room_id,
-            "date": e.date.strftime("%Y-%m-%d") if e.date else None,
-            "lesson_number": e.lesson_number,
-            "warning": e.warning,
-        }
-        for e in entries
-    ]
-
-
 @router.patch("/schedule/{entry_id}")
 async def update_schedule_entry(
     entry_id: int,
@@ -834,12 +589,12 @@ async def update_schedule_entry(
             e.room_id = None
 
     # --- Conflict Detection & Warning Refresh ---
-    await refresh_task_warnings(entry.task_id, db)
+    await ScheduleService.refresh_task_warnings(entry.task_id, db)
     await db.commit()
 
     return {
         "detail": "Entry updated successfully",
-        "entries": await get_task_entries_json(entry.task_id, db),
+        "entries": await ScheduleService.get_task_entries_json(entry.task_id, db),
     }
 
 
@@ -860,8 +615,8 @@ async def delete_schedule_entry(
 
     entries = []
     if task_id:
-        await refresh_task_warnings(task_id, db)
+        await ScheduleService.refresh_task_warnings(task_id, db)
         await db.commit()
-        entries = await get_task_entries_json(task_id, db)
+        entries = await ScheduleService.get_task_entries_json(task_id, db)
 
     return {"detail": "Entry deleted successfully", "entries": entries}
