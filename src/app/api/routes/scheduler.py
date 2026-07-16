@@ -12,6 +12,7 @@ from database.all_models import (
     FileType,
     GenerationTask,
     ImportBatch,
+    PlanningWeek,
     ScheduleEntry,
     Stream,
     StreamGroup,
@@ -73,6 +74,7 @@ class TeacherRestrictionsModel(BaseModel):
 class GenerationTaskModel(BaseModel):
     groups: list[str]
     holidays: list[str]
+    planning_week_id: int | None = None
     start_date: str | None = None
     end_date: str | None = None
     settings: dict | None = None
@@ -190,7 +192,6 @@ async def get_subjects_summary(
     selected_groups = groups.split(",")
     enabled_types = types.split(",")
     try:
-
         summary = await GenerationService.get_subjects_summary(
             selected_groups, enabled_types
         )
@@ -337,7 +338,6 @@ async def export_teacher_availability(
 
     data = []
     for t in teachers:
-
         try:
             res = (
                 json.loads(t.restrictions_json)
@@ -355,7 +355,6 @@ async def export_teacher_availability(
                 "Конкретные даты (ГГГГ-ММ-ДД_Пара)": ",".join(res.get("specific", [])),
             }
         )
-
 
     df = pd.DataFrame(data)
     output = io.BytesIO()
@@ -379,7 +378,6 @@ async def import_teacher_availability(
     file: Annotated[UploadFile, File(...)],
     db: Annotated[AsyncSession, Depends(async_get_db)] = None,
 ) -> JSONResponse:
-
     content = await file.read()
     df = pd.read_excel(io.BytesIO(content))
 
@@ -393,11 +391,29 @@ async def generate_schedule(
     task: GenerationTaskModel,
     db: Annotated[AsyncSession, Depends(async_get_db)] = None,
 ) -> JSONResponse:
-    # 1. Parse dates
-    start_dt = (
-        datetime.strptime(task.start_date, "%Y-%m-%d") if task.start_date else None
-    )
-    end_dt = datetime.strptime(task.end_date, "%Y-%m-%d") if task.end_date else None
+    if not task.groups:
+        raise HTTPException(status_code=422, detail="At least one group is required")
+
+    start_date = task.start_date
+    end_date = task.end_date
+    if task.planning_week_id is not None:
+        planning_week = await db.get(PlanningWeek, task.planning_week_id)
+        if planning_week is None:
+            raise HTTPException(status_code=404, detail="Planning week not found")
+        start_date = planning_week.starts_on.isoformat()
+        end_date = planning_week.ends_on.isoformat()
+
+    try:
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d") if start_date else None
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d") if end_date else None
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422, detail="Dates must use YYYY-MM-DD"
+        ) from exc
+    if start_dt and end_dt and end_dt < start_dt:
+        raise HTTPException(
+            status_code=422, detail="end_date must not precede start_date"
+        )
 
     # 2. Create a task record
     settings = task.settings or {}
@@ -405,6 +421,7 @@ async def generate_schedule(
         groups_json=json.dumps(task.groups),
         holidays_json=json.dumps(task.holidays),
         settings_json=json.dumps(settings),
+        planning_week_id=task.planning_week_id,
         start_date=start_dt,
         end_date=end_dt,
         status="queued",
@@ -420,8 +437,9 @@ async def generate_schedule(
             task.groups,
             task.holidays,
             settings.get("enabled_types", []),
-            task.start_date,
-            task.end_date,
+            start_date,
+            end_date,
+            task.planning_week_id,
         )
     except Exception as exc:
         new_task.status = "failed"
@@ -545,15 +563,27 @@ async def update_schedule_entry(
         raise HTTPException(status_code=404, detail="Schedule entry not found")
 
     entries_to_update = [entry]
-    
+
     is_lecture = entry.stream_type and "лекция" in entry.stream_type.lower()
     is_extracur = entry.stream_type and "внеучебное" in entry.stream_type.lower()
-    
+
     if is_lecture or (is_extracur and payload.apply_to_stream):
-        date_cond = ScheduleEntry.date == entry.date if entry.date is not None else ScheduleEntry.date.is_(None)
-        lesson_cond = ScheduleEntry.lesson_number == entry.lesson_number if entry.lesson_number is not None else ScheduleEntry.lesson_number.is_(None)
-        teacher_cond = ScheduleEntry.teacher_id == entry.teacher_id if entry.teacher_id is not None else ScheduleEntry.teacher_id.is_(None)
-        
+        date_cond = (
+            ScheduleEntry.date == entry.date
+            if entry.date is not None
+            else ScheduleEntry.date.is_(None)
+        )
+        lesson_cond = (
+            ScheduleEntry.lesson_number == entry.lesson_number
+            if entry.lesson_number is not None
+            else ScheduleEntry.lesson_number.is_(None)
+        )
+        teacher_cond = (
+            ScheduleEntry.teacher_id == entry.teacher_id
+            if entry.teacher_id is not None
+            else ScheduleEntry.teacher_id.is_(None)
+        )
+
         stmt_related = select(ScheduleEntry).where(
             ScheduleEntry.task_id == entry.task_id,
             ScheduleEntry.event_name == entry.event_name,
@@ -561,11 +591,11 @@ async def update_schedule_entry(
             teacher_cond,
             date_cond,
             lesson_cond,
-            ScheduleEntry.id != entry.id
+            ScheduleEntry.id != entry.id,
         )
         res_related = await db.execute(stmt_related)
         related_all = res_related.scalars().all()
-        
+
         seen_groups = {entry.group_name}
         for r in related_all:
             if r.group_name not in seen_groups:

@@ -7,6 +7,7 @@ from database.all_models import (
     ScheduleEntry,
     Stream,
     StreamGroup,
+    StudentGroup,
     Teacher,
 )
 from sqlalchemy import select
@@ -106,7 +107,10 @@ class ScheduleService:
                                 if sep in item_str:
                                     try:
                                         d_s, l_s = item_str.split(sep, 1)
-                                        if int(d_s) == js_weekday and int(l_s) == lesson:
+                                        if (
+                                            int(d_s) == js_weekday
+                                            and int(l_s) == lesson
+                                        ):
                                             is_in_recurring = True
                                             break
                                     except Exception:
@@ -155,7 +159,9 @@ class ScheduleService:
                 e1.warning = "; ".join(slot_warnings) if slot_warnings else None
 
     @classmethod
-    async def get_task_entries_json(cls, task_id: int, db: AsyncSession) -> List[Dict[str, Any]]:
+    async def get_task_entries_json(
+        cls, task_id: int, db: AsyncSession
+    ) -> List[Dict[str, Any]]:
         stmt = (
             select(ScheduleEntry)
             .options(selectinload(ScheduleEntry.teacher))
@@ -181,10 +187,14 @@ class ScheduleService:
         ]
 
     @classmethod
-    async def import_streams(cls, parsed_data: List[Dict[str, Any]], batch_id: int, db: AsyncSession) -> Dict[str, int]:
+    async def import_streams(
+        cls, parsed_data: List[Dict[str, Any]], batch_id: int, db: AsyncSession
+    ) -> Dict[str, int]:
         # Preload unique teacher names to avoid N+1 queries
-        teacher_names = {s_data["teacher"] for s_data in parsed_data if s_data["teacher"]}
-        
+        teacher_names = {
+            s_data["teacher"] for s_data in parsed_data if s_data["teacher"]
+        }
+
         existing_teachers = {}
         if teacher_names:
             stmt = select(Teacher).where(Teacher.name.in_(list(teacher_names)))
@@ -204,6 +214,29 @@ class ScheduleService:
             await db.flush()
             for t in new_teachers:
                 existing_teachers[t.name] = t.id
+
+        group_sizes = {}
+        for stream_data in parsed_data:
+            for group in stream_data["groups"]:
+                group_sizes[group["name"]] = max(
+                    group_sizes.get(group["name"], 0), group["size"]
+                )
+        existing_groups = {}
+        if group_sizes:
+            result = await db.execute(
+                select(StudentGroup).where(StudentGroup.name.in_(group_sizes))
+            )
+            existing_groups = {group.name: group for group in result.scalars()}
+
+        for name, size in group_sizes.items():
+            student_group = existing_groups.get(name)
+            if student_group is None:
+                student_group = StudentGroup(name=name, student_count=size)
+                db.add(student_group)
+                existing_groups[name] = student_group
+            else:
+                student_group.student_count = max(student_group.student_count, size)
+        await db.flush()
 
         # Prepare and insert streams in bulk
         new_streams = []
@@ -230,6 +263,7 @@ class ScheduleService:
             for group in s_data["groups"]:
                 new_group = StreamGroup(
                     stream_id=stream.id,
+                    student_group_id=existing_groups[group["name"]].id,
                     group_name=group["name"],
                     group_size=group["size"],
                 )
@@ -245,7 +279,9 @@ class ScheduleService:
         }
 
     @classmethod
-    async def import_teacher_availability(cls, df: pd.DataFrame, db: AsyncSession) -> int:
+    async def import_teacher_availability(
+        cls, df: pd.DataFrame, db: AsyncSession
+    ) -> int:
         teacher_names = []
         rows_to_process = []
 

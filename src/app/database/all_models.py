@@ -3,12 +3,16 @@ import enum
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Column,
+    Date,
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     String,
+    UniqueConstraint,
 )
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.orm import declarative_base, relationship
@@ -66,19 +70,116 @@ class Stream(DeclBase):
 
 class StreamGroup(DeclBase):
     __tablename__ = "stream_group"
+    __table_args__ = (Index("ix_stream_group_group_name", "group_name"),)
     id = Column(Integer, primary_key=True, autoincrement=True)
     stream_id = Column(
         Integer, ForeignKey("stream.id", ondelete="CASCADE"), nullable=False
+    )
+    student_group_id = Column(
+        Integer, ForeignKey("student_group.id", ondelete="SET NULL"), nullable=True
     )
     group_name = Column(String, nullable=False)
     group_size = Column(Integer, nullable=False)
 
     stream = relationship("Stream", back_populates="groups")
+    student_group = relationship("StudentGroup", back_populates="stream_links")
+
+
+class StudentGroup(DeclBase):
+    __tablename__ = "student_group"
+    __table_args__ = (
+        CheckConstraint("student_count >= 0", name="ck_student_group_size"),
+    )
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String, nullable=False, unique=True)
+    specialty = Column(String, nullable=True)
+    course = Column(Integer, nullable=True)
+    education_form = Column(String, nullable=True)
+    student_count = Column(Integer, nullable=False, default=0)
+    min_weekly_lessons = Column(Integer, nullable=True)
+    max_weekly_lessons = Column(Integer, nullable=True)
+
+    stream_links = relationship("StreamGroup", back_populates="student_group")
+
+
+class AcademicPeriod(DeclBase):
+    __tablename__ = "academic_period"
+    __table_args__ = (
+        CheckConstraint("ends_on >= starts_on", name="ck_academic_period_dates"),
+    )
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String, nullable=False)
+    period_type = Column(String, nullable=False, default="semester")
+    education_level = Column(String, nullable=True)
+    starts_on = Column(Date, nullable=False)
+    ends_on = Column(Date, nullable=False)
+    status = Column(String, nullable=False, default="draft")
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+    weeks = relationship(
+        "PlanningWeek",
+        cascade="all,delete-orphan",
+        back_populates="period",
+        order_by="PlanningWeek.sequence_number",
+    )
+
+
+class PlanningWeek(DeclBase):
+    __tablename__ = "planning_week"
+    __table_args__ = (
+        UniqueConstraint("period_id", "sequence_number"),
+        UniqueConstraint("period_id", "starts_on"),
+        CheckConstraint("ends_on >= starts_on", name="ck_planning_week_dates"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    period_id = Column(
+        Integer, ForeignKey("academic_period.id", ondelete="CASCADE"), nullable=False
+    )
+    sequence_number = Column(Integer, nullable=False)
+    starts_on = Column(Date, nullable=False)
+    ends_on = Column(Date, nullable=False)
+    status = Column(String, nullable=False, default="draft")
+
+    period = relationship("AcademicPeriod", back_populates="weeks")
+    demands = relationship(
+        "WeeklyLessonDemand", cascade="all,delete-orphan", back_populates="week"
+    )
+    generation_tasks = relationship("GenerationTask", back_populates="planning_week")
+
+
+class WeeklyLessonDemand(DeclBase):
+    __tablename__ = "weekly_lesson_demand"
+    __table_args__ = (
+        UniqueConstraint("week_id", "stream_id"),
+        CheckConstraint("lessons_count >= 0", name="ck_weekly_lesson_demand_count"),
+        CheckConstraint(
+            "priority >= 1 AND priority <= 10",
+            name="ck_weekly_lesson_demand_priority",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    week_id = Column(
+        Integer, ForeignKey("planning_week.id", ondelete="CASCADE"), nullable=False
+    )
+    stream_id = Column(
+        Integer, ForeignKey("stream.id", ondelete="CASCADE"), nullable=False
+    )
+    lessons_count = Column(Integer, nullable=False)
+    priority = Column(Integer, nullable=False, default=5)
+
+    week = relationship("PlanningWeek", back_populates="demands")
+    stream = relationship("Stream")
 
 
 class GenerationTask(DeclBase):
     __tablename__ = "generation_task"
+    __table_args__ = (Index("ix_generation_task_planning_week_id", "planning_week_id"),)
     id = Column(Integer, primary_key=True, index=True)
+    planning_week_id = Column(
+        Integer, ForeignKey("planning_week.id", ondelete="SET NULL"), nullable=True
+    )
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     status = Column(String, default="pending")  # pending, success, failed
     start_date = Column(DateTime, nullable=True)
@@ -89,11 +190,34 @@ class GenerationTask(DeclBase):
     result_count = Column(Integer, default=0)
     error_message = Column(String, nullable=True)
 
+    planning_week = relationship("PlanningWeek", back_populates="generation_tasks")
+
 
 class ScheduleEntry(DeclBase):
     __tablename__ = "schedule_entry"
+    __table_args__ = (
+        Index(
+            "ix_schedule_entry_teacher_slot",
+            "teacher_id",
+            "date",
+            "lesson_number",
+        ),
+        Index("ix_schedule_entry_room_slot", "room_id", "date", "lesson_number"),
+        Index(
+            "ix_schedule_entry_group_slot",
+            "group_name",
+            "date",
+            "lesson_number",
+        ),
+    )
     id = Column(Integer, primary_key=True, index=True)
     task_id = Column(Integer, ForeignKey("generation_task.id"), nullable=True)
+    planning_week_id = Column(
+        Integer, ForeignKey("planning_week.id", ondelete="SET NULL"), nullable=True
+    )
+    source_stream_id = Column(
+        Integer, ForeignKey("stream.id", ondelete="SET NULL"), nullable=True
+    )
     group_name = Column(String, nullable=False)
     event_name = Column(String, nullable=False)
     stream_type = Column(String, nullable=False)
@@ -102,6 +226,7 @@ class ScheduleEntry(DeclBase):
     date = Column(DateTime, nullable=True)
     lesson_number = Column(Integer, nullable=True)
     warning = Column(String, nullable=True)
+    is_locked = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=datetime.datetime.now)
 
     teacher = relationship("Teacher")

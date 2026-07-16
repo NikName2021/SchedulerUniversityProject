@@ -30,6 +30,7 @@ def generate_schedule_task(
     enabled_types: list[str],
     start_date: str | None,
     end_date: str | None,
+    planning_week_id: int | None = None,
 ) -> bool | None:
     """Run the CPU-bound scheduler outside the API process."""
     result: Any = asyncio.run(
@@ -40,6 +41,7 @@ def generate_schedule_task(
             enabled_types,
             start_date,
             end_date,
+            planning_week_id,
         )
     )
     return result

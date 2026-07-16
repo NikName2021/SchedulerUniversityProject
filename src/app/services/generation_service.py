@@ -14,7 +14,13 @@ from core.constants import (
     STUDY_DAYS,
 )
 from core.constants import ROOMS as DEFAULT_ROOMS
-from database.all_models import GenerationTask, ScheduleEntry, Stream, StreamGroup
+from database.all_models import (
+    GenerationTask,
+    ScheduleEntry,
+    Stream,
+    StreamGroup,
+    WeeklyLessonDemand,
+)
 from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
 
@@ -65,6 +71,7 @@ class GenerationService:
         enabled_types: List[str],
         start_date_str: str | None = None,
         end_date_str: str | None = None,
+        planning_week_id: int | None = None,
     ) -> Optional[bool]:
         logger.info(
             f"Starting generation for task {task_id}, groups: {selected_groups}"
@@ -96,6 +103,26 @@ class GenerationService:
                 )
                 priorities = settings.get("priorities", {})
 
+                weekly_counts: dict[int, int] = {}
+                if planning_week_id is not None:
+                    demand_result = await session.execute(
+                        select(WeeklyLessonDemand).where(
+                            WeeklyLessonDemand.week_id == planning_week_id
+                        )
+                    )
+                    weekly_demands = list(demand_result.scalars().all())
+                    if not weekly_demands:
+                        task.status = "failed"
+                        task.error_message = (
+                            "Weekly lesson demand is not configured for this week"
+                        )
+                        await session.commit()
+                        return False
+                    weekly_counts = {
+                        demand.stream_id: demand.lessons_count
+                        for demand in weekly_demands
+                    }
+
                 # 2. Fetch all relevant streams from DB
                 stmt = (
                     select(Stream)
@@ -105,6 +132,13 @@ class GenerationService:
                     .filter(Stream.stream_type.in_(enabled_types))
                     .options(selectinload(Stream.groups), selectinload(Stream.teacher))
                 )
+                if planning_week_id is not None:
+                    active_stream_ids = [
+                        stream_id
+                        for stream_id, count in weekly_counts.items()
+                        if count > 0
+                    ]
+                    stmt = stmt.filter(Stream.id.in_(active_stream_ids))
                 result = await session.execute(stmt)
                 streams = result.unique().scalars().all()
 
@@ -176,9 +210,23 @@ class GenerationService:
                         "display_name": event_name,
                         "teacher": main_t,
                         "teacher_id": main_t_id,
-                        "lectures": lecs[0].lessons_count if lecs else 0,
-                        "seminars": sems[0].lessons_count if sems else 0,
-                        "labs": labs[0].lessons_count if labs else 0,
+                        "lectures": max(
+                            (weekly_counts.get(s.id, s.lessons_count) for s in lecs),
+                            default=0,
+                        ),
+                        "seminars": max(
+                            (weekly_counts.get(s.id, s.lessons_count) for s in sems),
+                            default=0,
+                        ),
+                        "labs": max(
+                            (weekly_counts.get(s.id, s.lessons_count) for s in labs),
+                            default=0,
+                        ),
+                        "stream_ids": {
+                            "lec": lecs[0].id if lecs else None,
+                            "sem": sems[0].id if sems else None,
+                            "lab": labs[0].id if labs else None,
+                        },
                     }
                     streams_map_engine[event_name] = sorted(
                         list(set(lec_groups + sem_groups + lab_groups))
@@ -244,7 +292,9 @@ class GenerationService:
                                         for d_idx in [0, 1, 2, 3, 4, 5]:
                                             for l_idx in [1, 2, 3, 4, 5, 6, 7]:
                                                 if (d_idx, l_idx) not in selected_slots:
-                                                    unavailable_list.append((d_idx, l_idx))
+                                                    unavailable_list.append(
+                                                        (d_idx, l_idx)
+                                                    )
                                     else:
                                         unavailable_list.extend(selected_slots)
                                         unavailable_list.extend(specific_slots)
@@ -304,6 +354,10 @@ class GenerationService:
                         new_entries.append(
                             ScheduleEntry(
                                 task_id=task_id,
+                                planning_week_id=planning_week_id,
+                                source_stream_id=subj_info.get("stream_ids", {}).get(
+                                    entry["type"]
+                                ),
                                 group_name=entry["group"],
                                 event_name=display_name,
                                 stream_type="Лекция"
@@ -341,6 +395,10 @@ class GenerationService:
                             unassigned_entries.append(
                                 ScheduleEntry(
                                     task_id=task_id,
+                                    planning_week_id=planning_week_id,
+                                    source_stream_id=subj_info.get(
+                                        "stream_ids", {}
+                                    ).get(warn["type"]),
                                     group_name=warn["group"],
                                     event_name=display_name,
                                     stream_type="Лекция"

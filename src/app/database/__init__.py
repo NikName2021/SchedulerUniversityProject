@@ -1,23 +1,31 @@
 from .all_models import (
+    AcademicPeriod,
     DeclBase,
     FileType,
     GenerationTask,
     ImportBatch,
+    PlanningWeek,
     ScheduleEntry,
     Stream,
     StreamGroup,
+    StudentGroup,
     Teacher,
+    WeeklyLessonDemand,
     create_tables,
 )
 
 __all__ = [
     "DeclBase",
+    "AcademicPeriod",
     "FileType",
     "GenerationTask",
     "ImportBatch",
+    "PlanningWeek",
     "ScheduleEntry",
     "Stream",
     "StreamGroup",
+    "StudentGroup",
     "Teacher",
+    "WeeklyLessonDemand",
     "create_tables",
 ]

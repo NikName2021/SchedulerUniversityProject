@@ -474,9 +474,9 @@ def assign_rooms(
             continue
 
         events = []
-        # Seminars
+        # Group-specific activities
         for ev in day_events:
-            if ev["type"] == "sem":
+            if ev["type"] in {"sem", "lab"}:
                 size = group_sizes.get(ev["group"], 20)
                 events.append(
                     {
