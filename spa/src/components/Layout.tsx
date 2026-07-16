@@ -9,6 +9,7 @@ import {
   Layout as LayoutIcon,
   ChevronLeft,
   ChevronRight,
+  Database,
 } from "lucide-react";
 
 import ErrorBoundary from "./ErrorBoundary";
@@ -23,6 +24,7 @@ export const Layout: React.FC = () => {
     { to: "/generation", icon: Zap, label: "Генерация" },
     { to: "/history", icon: History, label: "История" },
     { to: "/schedule", icon: LayoutIcon, label: "Редактор" },
+    { to: "/reference", icon: Database, label: "Базовые данные" },
   ];
 
   return (

@@ -31,6 +31,13 @@ interface StreamPreview {
   teacher: string;
 }
 
+interface RuleProfileOption {
+  id: number;
+  name: string;
+  description: string | null;
+  is_default: boolean;
+}
+
 const ALL_TYPES = [
   "Лекция",
   "Семинар",
@@ -71,6 +78,8 @@ export const GenerationPage: React.FC = () => {
   const [, setStats] = useState<Stats | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [ruleProfiles, setRuleProfiles] = useState<RuleProfileOption[]>([]);
+  const [ruleProfileId, setRuleProfileId] = useState<number | null>(null);
   const [status, setStatus] = useState<{
     type: "success" | "error";
     msg: string;
@@ -127,13 +136,15 @@ export const GenerationPage: React.FC = () => {
   const fetchInitialData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [groupsRes, statsRes] = await Promise.all([
+      const [groupsRes, statsRes, profilesRes] = await Promise.all([
         fetch(`${API_BASE_URL}/api/v1/scheduler/groups`),
         fetch(`${API_BASE_URL}/api/v1/scheduler/stats`),
+        fetch(`${API_BASE_URL}/api/v1/reference/rule-profiles`),
       ]);
 
       const groupsData = await groupsRes.json();
       const statsData = await statsRes.json();
+      const profilesData = profilesRes.ok ? await profilesRes.json() : [];
 
       setGroups(groupsData.groups || []);
       // If no inherited groups, don't auto-select all
@@ -141,6 +152,12 @@ export const GenerationPage: React.FC = () => {
         setSelectedGroups([]);
       }
       setStats(statsData);
+      setRuleProfiles(profilesData);
+      setRuleProfileId(
+        profilesData.find((item: RuleProfileOption) => item.is_default)?.id ||
+          profilesData[0]?.id ||
+          null,
+      );
     } catch {
       console.error("Failed to fetch generation data");
     } finally {
@@ -217,6 +234,7 @@ export const GenerationPage: React.FC = () => {
           settings: {
             enabled_types: enabledTypes,
             priorities: subjectPriorities,
+            rule_profile_id: ruleProfileId,
             created_at: new Date().toISOString(),
           },
         }),
@@ -392,6 +410,29 @@ export const GenerationPage: React.FC = () => {
           </button>
         </div>
       </header>
+
+      <section className="flex items-center justify-between rounded-2xl border border-border-light bg-white px-5 py-4 shadow-sm">
+        <div>
+          <h2 className="text-sm font-extrabold text-text-primary">
+            Профиль правил
+          </h2>
+          <p className="mt-1 text-xs text-text-secondary">
+            Определяет жесткие ограничения и веса критериев качества.
+          </p>
+        </div>
+        <select
+          value={ruleProfileId ?? ""}
+          onChange={(event) => setRuleProfileId(Number(event.target.value))}
+          className="min-w-64 rounded-xl border border-border-light bg-white px-4 py-2.5 text-sm font-bold text-text-primary outline-none focus:border-brand"
+        >
+          {ruleProfiles.map((profile) => (
+            <option key={profile.id} value={profile.id}>
+              {profile.name}
+              {profile.is_default ? " (по умолчанию)" : ""}
+            </option>
+          ))}
+        </select>
+      </section>
 
       <div
         style={{

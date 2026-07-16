@@ -7,6 +7,7 @@ import { CalendarPage } from "./pages/CalendarPage";
 import { GenerationPage } from "./pages/GenerationPage";
 import HistoryPage from "./pages/HistoryPage";
 import { SchedulePage } from "./pages/SchedulePage";
+import { ReferenceDataPage } from "./pages/ReferenceDataPage";
 import { useAppStore } from "./store/useAppStore";
 
 function App() {
@@ -26,6 +27,7 @@ function App() {
           <Route path="generation" element={<GenerationPage />} />
           <Route path="history" element={<HistoryPage />} />
           <Route path="schedule/:taskId?" element={<SchedulePage />} />
+          <Route path="reference" element={<ReferenceDataPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

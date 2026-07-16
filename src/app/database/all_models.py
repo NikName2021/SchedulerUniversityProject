@@ -21,6 +21,118 @@ from sqlalchemy.orm import declarative_base, relationship
 DeclBase = declarative_base()
 
 
+class Department(DeclBase):
+    __tablename__ = "department"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String, nullable=True, unique=True)
+    name = Column(String, nullable=False, unique=True)
+
+
+class ActivityType(DeclBase):
+    __tablename__ = "activity_type"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String, nullable=False, unique=True)
+    name = Column(String, nullable=False, unique=True)
+    room_type = Column(String, nullable=True)
+    is_shared_for_groups = Column(Boolean, nullable=False, default=False)
+    color = Column(String, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+
+
+class Discipline(DeclBase):
+    __tablename__ = "discipline"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    full_name = Column(String, nullable=False, unique=True)
+    short_name = Column(String, nullable=True)
+    external_id = Column(String, nullable=True, unique=True)
+
+
+class Building(DeclBase):
+    __tablename__ = "building"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String, nullable=True, unique=True)
+    name = Column(String, nullable=False, unique=True)
+    address = Column(String, nullable=True)
+
+
+class Room(DeclBase):
+    __tablename__ = "room"
+    __table_args__ = (
+        UniqueConstraint("building_id", "code"),
+        CheckConstraint("capacity >= 0", name="ck_room_capacity"),
+    )
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    building_id = Column(
+        Integer, ForeignKey("building.id", ondelete="SET NULL"), nullable=True
+    )
+    owner_department_id = Column(
+        Integer, ForeignKey("department.id", ondelete="SET NULL"), nullable=True
+    )
+    code = Column(String, nullable=False)
+    name = Column(String, nullable=True)
+    floor = Column(Integer, nullable=True)
+    capacity = Column(Integer, nullable=False)
+    room_type = Column(String, nullable=False, default="mixed")
+    is_active = Column(Boolean, nullable=False, default=True)
+
+    building = relationship("Building")
+    owner_department = relationship("Department")
+    feature_links = relationship(
+        "RoomFeatureLink", cascade="all,delete-orphan", back_populates="room"
+    )
+
+
+class RoomFeature(DeclBase):
+    __tablename__ = "room_feature"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String, nullable=False, unique=True)
+    name = Column(String, nullable=False, unique=True)
+
+
+class RoomFeatureLink(DeclBase):
+    __tablename__ = "room_feature_link"
+    __table_args__ = (UniqueConstraint("room_id", "feature_id"),)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    room_id = Column(Integer, ForeignKey("room.id", ondelete="CASCADE"), nullable=False)
+    feature_id = Column(
+        Integer, ForeignKey("room_feature.id", ondelete="CASCADE"), nullable=False
+    )
+
+    room = relationship("Room", back_populates="feature_links")
+    feature = relationship("RoomFeature")
+
+
+class RuleProfile(DeclBase):
+    __tablename__ = "rule_profile"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String, nullable=False, unique=True)
+    description = Column(String, nullable=True)
+    education_level = Column(String, nullable=True)
+    is_default = Column(Boolean, nullable=False, default=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    settings = relationship(
+        "RuleSetting", cascade="all,delete-orphan", back_populates="profile"
+    )
+
+
+class RuleSetting(DeclBase):
+    __tablename__ = "rule_setting"
+    __table_args__ = (
+        UniqueConstraint("profile_id", "rule_code"),
+        CheckConstraint("weight >= 1 AND weight <= 10", name="ck_rule_weight"),
+    )
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    profile_id = Column(
+        Integer, ForeignKey("rule_profile.id", ondelete="CASCADE"), nullable=False
+    )
+    rule_code = Column(String, nullable=False)
+    enabled = Column(Boolean, nullable=False, default=True)
+    is_hard = Column(Boolean, nullable=False, default=False)
+    weight = Column(Integer, nullable=False, default=5)
+
+    profile = relationship("RuleProfile", back_populates="settings")
+
+
 class FileType(enum.Enum):
     STREAMS = "streams"
     TEACHERS_LOAD = "teachers_load"
@@ -45,10 +157,15 @@ class ImportBatch(DeclBase):
 class Teacher(DeclBase):
     __tablename__ = "teacher"
     id = Column(Integer, primary_key=True, autoincrement=True)
+    department_id = Column(
+        Integer, ForeignKey("department.id", ondelete="SET NULL"), nullable=True
+    )
     name = Column(String, nullable=False, unique=True)
+    position = Column(String, nullable=True)
     restrictions_json = Column(String, nullable=True)  # JSON string representation
 
     streams = relationship("Stream", back_populates="teacher")
+    department = relationship("Department")
 
 
 class Stream(DeclBase):
@@ -58,15 +175,50 @@ class Stream(DeclBase):
         Integer, ForeignKey("import_batch.id", ondelete="CASCADE"), nullable=False
     )
     teacher_id = Column(Integer, ForeignKey("teacher.id"), nullable=True)
+    discipline_id = Column(
+        Integer, ForeignKey("discipline.id", ondelete="SET NULL"), nullable=True
+    )
+    activity_type_id = Column(
+        Integer, ForeignKey("activity_type.id", ondelete="SET NULL"), nullable=True
+    )
+    required_room_id = Column(
+        Integer, ForeignKey("room.id", ondelete="SET NULL"), nullable=True
+    )
 
     event_name = Column(String, nullable=False)
     stream_type = Column(String, nullable=True)
     lessons_count = Column(Integer, default=1)
     is_ignored = Column(Boolean, default=False)
+    starts_on = Column(Date, nullable=True)
+    ends_on = Column(Date, nullable=True)
 
     import_batch = relationship("ImportBatch", back_populates="streams")
     teacher = relationship("Teacher", back_populates="streams")
+    discipline = relationship("Discipline")
+    activity_type = relationship("ActivityType")
+    required_room = relationship("Room")
     groups = relationship("StreamGroup", cascade="all,delete", back_populates="stream")
+    feature_requirements = relationship(
+        "StreamFeatureRequirement",
+        cascade="all,delete-orphan",
+        back_populates="stream",
+    )
+
+
+class StreamFeatureRequirement(DeclBase):
+    __tablename__ = "stream_feature_requirement"
+    __table_args__ = (UniqueConstraint("stream_id", "feature_id"),)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    stream_id = Column(
+        Integer, ForeignKey("stream.id", ondelete="CASCADE"), nullable=False
+    )
+    feature_id = Column(
+        Integer, ForeignKey("room_feature.id", ondelete="CASCADE"), nullable=False
+    )
+    is_hard = Column(Boolean, nullable=False, default=True)
+
+    stream = relationship("Stream", back_populates="feature_requirements")
+    feature = relationship("RoomFeature")
 
 
 class StreamGroup(DeclBase):
@@ -101,6 +253,48 @@ class StudentGroup(DeclBase):
     max_weekly_lessons = Column(Integer, nullable=True)
 
     stream_links = relationship("StreamGroup", back_populates="student_group")
+
+
+class AvailabilityRule(DeclBase):
+    __tablename__ = "availability_rule"
+    __table_args__ = (
+        CheckConstraint(
+            "teacher_id IS NOT NULL OR student_group_id IS NOT NULL OR room_id IS NOT NULL OR is_global = true",
+            name="ck_availability_has_scope",
+        ),
+        CheckConstraint(
+            "lesson_start >= 1 AND lesson_end >= lesson_start",
+            name="ck_availability_lesson_range",
+        ),
+        CheckConstraint("weight >= 1 AND weight <= 10", name="ck_availability_weight"),
+        Index("ix_availability_teacher", "teacher_id"),
+        Index("ix_availability_group", "student_group_id"),
+        Index("ix_availability_room", "room_id"),
+    )
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    teacher_id = Column(
+        Integer, ForeignKey("teacher.id", ondelete="CASCADE"), nullable=True
+    )
+    student_group_id = Column(
+        Integer, ForeignKey("student_group.id", ondelete="CASCADE"), nullable=True
+    )
+    room_id = Column(Integer, ForeignKey("room.id", ondelete="CASCADE"), nullable=True)
+    is_global = Column(Boolean, nullable=False, default=False)
+    rule_kind = Column(String, nullable=False)  # unavailable, available, preferred
+    recurrence = Column(String, nullable=False)  # weekly, specific, date_range
+    weekday = Column(Integer, nullable=True)  # 0=Mon
+    specific_date = Column(Date, nullable=True)
+    starts_on = Column(Date, nullable=True)
+    ends_on = Column(Date, nullable=True)
+    lesson_start = Column(Integer, nullable=False)
+    lesson_end = Column(Integer, nullable=False)
+    is_hard = Column(Boolean, nullable=False, default=True)
+    weight = Column(Integer, nullable=False, default=5)
+    description = Column(String, nullable=True)
+
+    teacher = relationship("Teacher")
+    student_group = relationship("StudentGroup")
+    room = relationship("Room")
 
 
 class AcademicPeriod(DeclBase):
@@ -255,6 +449,9 @@ class ScheduleEntry(DeclBase):
     stream_type = Column(String, nullable=False)
     teacher_id = Column(Integer, ForeignKey("teacher.id"), nullable=True)
     room_id = Column(String, nullable=True)
+    room_ref_id = Column(
+        Integer, ForeignKey("room.id", ondelete="SET NULL"), nullable=True
+    )
     date = Column(DateTime, nullable=True)
     lesson_number = Column(Integer, nullable=True)
     warning = Column(String, nullable=True)
@@ -262,6 +459,7 @@ class ScheduleEntry(DeclBase):
     created_at = Column(DateTime, default=datetime.datetime.now)
 
     teacher = relationship("Teacher")
+    room = relationship("Room")
 
 
 async def create_tables(engine: AsyncEngine) -> None:

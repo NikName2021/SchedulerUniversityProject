@@ -9,6 +9,7 @@ from typing import Annotated, Any
 import pandas as pd
 from core.config import async_get_db
 from database.all_models import (
+    AvailabilityRule,
     FileType,
     GenerationComponent,
     GenerationTask,
@@ -34,7 +35,7 @@ from services.generation_service import GenerationService
 from services.parser_service import parse_streams_content
 from services.quality_service import ScheduleQualityService
 from services.schedule_service import ScheduleService
-from sqlalchemy import distinct, func
+from sqlalchemy import delete, distinct, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -293,6 +294,48 @@ async def update_teacher_restrictions(
         raise HTTPException(status_code=404, detail="Teacher not found")
 
     teacher.restrictions_json = json.dumps(payload.restrictions.model_dump())
+    await db.execute(
+        delete(AvailabilityRule).where(AvailabilityRule.teacher_id == teacher_id)
+    )
+    rule_kind = (
+        "available" if payload.restrictions.mode == "whitelist" else "unavailable"
+    )
+    structured_rules: list[AvailabilityRule] = []
+    for raw_value in payload.restrictions.recurring:
+        try:
+            js_day, lesson = raw_value.split("-", 1)
+            structured_rules.append(
+                AvailabilityRule(
+                    teacher_id=teacher_id,
+                    rule_kind=rule_kind,
+                    recurrence="weekly",
+                    weekday=(int(js_day) - 1) % 7,
+                    lesson_start=int(lesson),
+                    lesson_end=int(lesson),
+                    is_hard=True,
+                )
+            )
+        except ValueError:
+            continue
+    for raw_value in payload.restrictions.specific:
+        try:
+            date_string, lesson = raw_value.rsplit("-", 1)
+            structured_rules.append(
+                AvailabilityRule(
+                    teacher_id=teacher_id,
+                    rule_kind=rule_kind,
+                    recurrence="specific",
+                    specific_date=datetime.strptime(
+                        date_string, "%Y-%m-%d"
+                    ).date(),
+                    lesson_start=int(lesson),
+                    lesson_end=int(lesson),
+                    is_hard=True,
+                )
+            )
+        except ValueError:
+            continue
+    db.add_all(structured_rules)
     await db.commit()
     return {"detail": "Restrictions updated"}
 

@@ -19,14 +19,19 @@ from core.constants import ROOMS as DEFAULT_ROOMS
 from database import (
     GenerationComponent,
     GenerationTask,
+    Room,
+    RoomFeatureLink,
+    RuleProfile,
     ScheduleEntry,
     Stream,
+    StreamFeatureRequirement,
     StreamGroup,
     WeeklyLessonDemand,
 )
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import selectinload
 
+from services.availability_service import build_availability_context
 from services.scalable_scheduler import assign_rooms_matching, build_conflict_components
 
 logger = logging.getLogger(__name__)
@@ -50,6 +55,17 @@ def _type_code(stream_type: str | None) -> str | None:
     if "лаборатор" in normalized:
         return "lab"
     return TYPE_CODES.get(normalized, "sem" if normalized else None)
+
+
+def _activity_code(stream: Stream) -> str | None:
+    if stream.activity_type:
+        code = stream.activity_type.code.strip().lower()
+        if code in {"lecture", "lec"}:
+            return "lec"
+        if code in {"laboratory", "lab"}:
+            return "lab"
+        return "sem"
+    return _type_code(stream.stream_type)
 
 
 def _teacher_unavailable(
@@ -167,7 +183,26 @@ class ScalableGenerationService:
                 .join(Stream.groups)
                 .where(StreamGroup.group_name.in_(selected_groups))
                 .where(Stream.is_ignored.is_(False))
-                .options(selectinload(Stream.groups), selectinload(Stream.teacher))
+                .where(
+                    or_(
+                        Stream.starts_on.is_(None),
+                        Stream.starts_on <= date.fromisoformat(end_date),
+                    ),
+                    or_(
+                        Stream.ends_on.is_(None),
+                        Stream.ends_on >= date.fromisoformat(start_date),
+                    ),
+                )
+                .options(
+                    selectinload(Stream.groups),
+                    selectinload(Stream.teacher),
+                    selectinload(Stream.activity_type),
+                    selectinload(Stream.discipline),
+                    selectinload(Stream.required_room),
+                    selectinload(Stream.feature_requirements).selectinload(
+                        StreamFeatureRequirement.feature
+                    ),
+                )
             )
             affected_stream_ids = {
                 int(stream_id) for stream_id in settings.get("affected_stream_ids", [])
@@ -196,6 +231,57 @@ class ScalableGenerationService:
                 task.error_message = "No active streams found for selected groups"
                 await session.commit()
                 return None
+
+            room_result = await session.execute(
+                select(Room)
+                .where(Room.is_active.is_(True))
+                .options(
+                    selectinload(Room.feature_links).selectinload(
+                        RoomFeatureLink.feature
+                    )
+                )
+                .order_by(Room.code)
+            )
+            db_rooms = list(room_result.scalars().unique())
+            rooms = {
+                room.code: {
+                    "id": room.id,
+                    "capacity": room.capacity,
+                    "type": room.room_type,
+                    "features": [link.feature.code for link in room.feature_links],
+                }
+                for room in db_rooms
+            }
+            if not rooms:
+                rooms = {
+                    code: {**details, "id": None, "features": []}
+                    for code, details in DEFAULT_ROOMS.items()
+                }
+
+            availability = await build_availability_context(
+                session, start_date, end_date
+            )
+            profile_id = settings.get("rule_profile_id")
+            profile_query = select(RuleProfile).options(
+                selectinload(RuleProfile.settings)
+            )
+            if profile_id is not None:
+                profile_query = profile_query.where(
+                    RuleProfile.id == int(profile_id), RuleProfile.is_active.is_(True)
+                )
+            else:
+                profile_query = profile_query.where(
+                    RuleProfile.is_default.is_(True), RuleProfile.is_active.is_(True)
+                )
+            profile = (await session.execute(profile_query)).scalar_one_or_none()
+            rule_settings = {
+                item.rule_code: {
+                    "enabled": item.enabled,
+                    "is_hard": item.is_hard,
+                    "weight": item.weight,
+                }
+                for item in (profile.settings if profile else [])
+            }
 
             selected_stream_ids = {stream.id for stream in streams}
             fixed_by_stream_group: dict[tuple[int, str], list[Any]] = {}
@@ -248,6 +334,7 @@ class ScalableGenerationService:
                             "stream_type": entry.stream_type,
                             "teacher_id": entry.teacher_id,
                             "room_id": entry.room_id,
+                            "room_ref_id": entry.room_ref_id,
                             "date": entry.date.date().isoformat(),
                             "lesson_number": entry.lesson_number,
                             "warning": entry.warning,
@@ -257,19 +344,22 @@ class ScalableGenerationService:
                     occupied_groups[entry.group_name].append(slot)
                     if entry.teacher:
                         occupied_teachers[entry.teacher.name].append(slot)
-                    if entry.room_id and entry.room_id in DEFAULT_ROOMS:
+                    if entry.room_id and entry.room_id in rooms:
                         occupied_rooms[entry.room_id].append(slot)
 
             priorities = settings.get("priorities", {})
             events: list[dict[str, Any]] = []
             group_sizes: dict[str, int] = {}
-            unavailable: dict[str, dict[str, list[list[Any]]]] = {
-                "teacher": dict(occupied_teachers),
-                "group": dict(occupied_groups),
-                "room": dict(occupied_rooms),
-            }
+            unavailable = availability["unavailable"]
+            for category, occupied in (
+                ("teacher", occupied_teachers),
+                ("group", occupied_groups),
+                ("room", occupied_rooms),
+            ):
+                for resource, slots in occupied.items():
+                    unavailable[category].setdefault(resource, []).extend(slots)
             for stream in streams:
-                type_code = _type_code(stream.stream_type)
+                type_code = _activity_code(stream)
                 if type_code is None:
                     continue
                 groups = sorted(
@@ -291,23 +381,45 @@ class ScalableGenerationService:
                 if count <= 0:
                     continue
                 teacher_name = stream.teacher.name if stream.teacher else None
-                if teacher_name:
+                if (
+                    teacher_name
+                    and teacher_name not in availability["structured_teacher_names"]
+                ):
                     unavailable["teacher"].setdefault(teacher_name, []).extend(
                         _teacher_unavailable(stream, start_date, end_date)
                     )
 
                 base_event = {
                     "stream_id": stream.id,
-                    "subject": stream.event_name,
-                    "stream_type": stream.stream_type or "Занятие",
+                    "subject": (
+                        stream.discipline.full_name
+                        if stream.discipline
+                        else stream.event_name
+                    ),
+                    "stream_type": (
+                        stream.activity_type.name
+                        if stream.activity_type
+                        else stream.stream_type or "Занятие"
+                    ),
                     "type": type_code,
                     "teacher": teacher_name,
                     "teacher_id": stream.teacher_id,
                     "lessons_count": count,
                     "priority": weekly_priorities.get(stream.id, 5),
                     "time_preference": priorities.get(stream.event_name, "day"),
+                    "required_room": (
+                        stream.required_room.code if stream.required_room else None
+                    ),
+                    "required_features": [
+                        requirement.feature.code
+                        for requirement in stream.feature_requirements
+                        if requirement.is_hard
+                    ],
                 }
-                if type_code == "lec":
+                is_shared = type_code == "lec" or bool(
+                    stream.activity_type and stream.activity_type.is_shared_for_groups
+                )
+                if is_shared:
                     event = {
                         **base_event,
                         "id": f"stream:{stream.id}",
@@ -361,8 +473,11 @@ class ScalableGenerationService:
                 "holidays": holidays,
                 "study_days": STUDY_DAYS,
                 "lessons": LESSONS,
-                "rooms": DEFAULT_ROOMS,
+                "rooms": rooms,
                 "unavailable": unavailable,
+                "preferred": availability["preferred"],
+                "discouraged": availability["discouraged"],
+                "rule_settings": rule_settings,
                 "group_sizes": group_sizes,
                 "max_time_seconds": max_component_seconds,
                 "num_workers": int(
@@ -503,6 +618,7 @@ class ScalableGenerationService:
                         stream_type=carried["stream_type"],
                         teacher_id=carried.get("teacher_id"),
                         room_id=carried.get("room_id"),
+                        room_ref_id=carried.get("room_ref_id"),
                         date=datetime.fromisoformat(carried["date"]),
                         lesson_number=carried["lesson_number"],
                         warning=carried.get("warning"),
@@ -522,6 +638,7 @@ class ScalableGenerationService:
                             stream_type=assignment["stream_type"],
                             teacher_id=assignment.get("teacher_id"),
                             room_id=assignment["room"],
+                            room_ref_id=assignment.get("room_ref_id"),
                             date=slot_date,
                             lesson_number=int(assignment["slot"][1]),
                             warning=assignment.get("warning"),

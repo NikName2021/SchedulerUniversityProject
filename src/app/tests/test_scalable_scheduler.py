@@ -16,8 +16,8 @@ def _context() -> dict:
         "study_days": [0],
         "lessons": [1, 2],
         "rooms": {
-            "101": {"capacity": 30, "type": "sem"},
-            "201": {"capacity": 120, "type": "lec"},
+            "101": {"id": 1, "capacity": 30, "type": "sem", "features": []},
+            "201": {"id": 2, "capacity": 120, "type": "lec", "features": []},
         },
         "unavailable": {"teacher": {}, "group": {}, "room": {}},
         "group_sizes": {},
@@ -135,3 +135,39 @@ def test_lecture_is_scheduled_before_practical() -> None:
         for assignment in result["assignments"]
     }
     assert slots_by_type["lec"] < slots_by_type["sem"]
+
+
+def test_room_matching_honors_required_room_and_features() -> None:
+    context = _context()
+    context["rooms"] = {
+        "101": {"id": 10, "capacity": 30, "type": "lab", "features": []},
+        "LAB-1": {
+            "id": 11,
+            "capacity": 30,
+            "type": "lab",
+            "features": ["computers"],
+        },
+    }
+    context["rule_settings"] = {
+        "room_features": {"enabled": True, "is_hard": True, "weight": 10}
+    }
+    context["group_sizes"] = {"A": 20}
+    event = _event("event-1", ["A"], 1, event_type="lab")
+    event.update({"required_room": "LAB-1", "required_features": ["computers"]})
+
+    completed, warnings, _metrics = assign_rooms_matching(
+        [{**event, "slot": ["2026-09-07", 1]}], context
+    )
+
+    assert completed[0]["room"] == "LAB-1"
+    assert completed[0]["room_ref_id"] == 11
+    assert warnings == []
+
+
+def test_global_unavailability_blocks_slot() -> None:
+    context = _context()
+    context["unavailable"]["global"] = {"*": [["2026-09-07", 1]]}
+
+    result = solve_event_component([_event("event-1", ["A"], 1)], context)
+
+    assert result["assignments"][0]["slot"] == ["2026-09-07", 2]

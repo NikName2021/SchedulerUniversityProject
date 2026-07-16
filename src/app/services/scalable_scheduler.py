@@ -18,6 +18,22 @@ from ortools.sat.python import cp_model
 Slot = tuple[datetime.date, int]
 
 
+def _rule(
+    context: dict[str, Any],
+    code: str,
+    *,
+    enabled: bool = True,
+    is_hard: bool = False,
+    weight: int = 5,
+) -> dict[str, Any]:
+    configured = context.get("rule_settings", {}).get(code, {})
+    return {
+        "enabled": bool(configured.get("enabled", enabled)),
+        "is_hard": bool(configured.get("is_hard", is_hard)),
+        "weight": int(configured.get("weight", weight)),
+    }
+
+
 def build_conflict_components(
     events: list[dict[str, Any]],
 ) -> list[list[dict[str, Any]]]:
@@ -111,6 +127,10 @@ def _event_slot_is_blocked(
     recurring = (date.weekday(), lesson)
     specific = (date, lesson)
 
+    global_slots = unavailable.get("global", {}).get("*", set())
+    if recurring in global_slots or specific in global_slots:
+        return True
+
     teacher_key = str(event.get("teacher") or "")
     teacher_slots = unavailable.get("teacher", {}).get(teacher_key, set())
     if recurring in teacher_slots or specific in teacher_slots:
@@ -121,6 +141,27 @@ def _event_slot_is_blocked(
         if recurring in group_slots or specific in group_slots:
             return True
     return False
+
+
+def _preference_penalty(
+    event: dict[str, Any],
+    slot: Slot,
+    rules: dict[str, dict[str, list[dict[str, Any]]]],
+    *,
+    preferred: bool,
+) -> int:
+    date_slot = [slot[0].isoformat(), slot[1]]
+    recurring_slot = [slot[0].weekday(), slot[1]]
+    resources = [("teacher", event.get("teacher"))]
+    resources.extend(("group", group) for group in event["groups"])
+    score = 0
+    for category, resource in resources:
+        if not resource:
+            continue
+        for rule in rules.get(category, {}).get(str(resource), []):
+            if date_slot in rule["slots"] or recurring_slot in rule["slots"]:
+                score += int(rule.get("weight", 5))
+    return -score if preferred else score
 
 
 def solve_event_component(
@@ -153,6 +194,8 @@ def solve_event_component(
     )
     penalties: list[Any] = []
     deficits: dict[str, tuple[cp_model.IntVar, int]] = {}
+    late_rule = _rule(context, "late_lessons", weight=5)
+    preference_rule = _rule(context, "teacher_preferences", weight=5)
 
     for event in events:
         event_id = event["id"]
@@ -172,14 +215,29 @@ def solve_event_component(
                 by_teacher_slot[(teacher_key, slot)].append(variable)
 
             participant_weight = max(1, len(event["groups"]))
-            penalties.append(
-                variable * slot[1] * PENALTY_LATE_LESSON * participant_weight
-            )
+            if late_rule["enabled"]:
+                penalties.append(
+                    variable
+                    * slot[1]
+                    * PENALTY_LATE_LESSON
+                    * participant_weight
+                    * late_rule["weight"]
+                )
             preference = event.get("time_preference", "day")
             if preference == "morning" and slot[1] > 2:
                 penalties.append(variable * (slot[1] - 2) * PENALTY_MORNING_PRIORITY)
             elif preference == "evening" and slot[1] < 5:
                 penalties.append(variable * (5 - slot[1]) * PENALTY_MORNING_PRIORITY)
+            if preference_rule["enabled"]:
+                preference_cost = _preference_penalty(
+                    event, slot, context.get("discouraged", {}), preferred=False
+                ) + _preference_penalty(
+                    event, slot, context.get("preferred", {}), preferred=True
+                )
+                if preference_cost:
+                    penalties.append(
+                        variable * preference_cost * preference_rule["weight"]
+                    )
 
         target = int(event["lessons_count"])
         deficit = model.NewIntVar(0, target, f"deficit_{event_id}")
@@ -226,10 +284,15 @@ def solve_event_component(
         if len(resource_variables) > 1:
             model.AddAtMostOne(resource_variables)
 
+    progression_rule = _rule(context, "lecture_before_practice", weight=5)
     # Keep practical and laboratory progress behind lectures for the same group
     # and subject. These events already share a group and therefore always belong
     # to the same conflict component.
-    for group in sorted({group for event in events for group in event["groups"]}):
+    for group in (
+        sorted({group for event in events for group in event["groups"]})
+        if progression_rule["enabled"]
+        else []
+    ):
         subjects = {event["subject"] for event in events if group in event["groups"]}
         for subject in subjects:
             lecture_events = [
@@ -284,11 +347,17 @@ def solve_event_component(
                         f"progress_positive_{group}_{subject}_{day.isoformat()}_{slot[1]}",
                     )
                     model.AddMaxEquality(positive_violation, [0, violation])
-                    penalties.append(positive_violation * PENALTY_PROGRESS_VIOLATION)
+                    penalties.append(
+                        positive_violation
+                        * PENALTY_PROGRESS_VIOLATION
+                        * progression_rule["weight"]
+                    )
 
     # Penalize one-slot windows. Every event touching a group is in this component,
     # so this objective remains correct after graph decomposition.
     component_groups = sorted({group for event in events for group in event["groups"]})
+    windows_rule = _rule(context, "minimize_windows", weight=5)
+    lunch_rule = _rule(context, "lunch_break", is_hard=True, weight=5)
     for group in component_groups:
         for day, day_slots in by_day.items():
             ordered_slots = sorted(day_slots, key=lambda slot: slot[1])
@@ -315,13 +384,36 @@ def solve_event_component(
                     window
                     >= occupied[index - 1] + occupied[index + 1] - occupied[index] - 1
                 )
-                penalties.append(window * PENALTY_WINDOW)
+                if windows_rule["enabled"]:
+                    penalties.append(window * PENALTY_WINDOW * windows_rule["weight"])
 
             occupancy_by_lesson = {
                 slot[1]: occupancy for slot, occupancy in zip(ordered_slots, occupied)
             }
-            if 3 in occupancy_by_lesson and 4 in occupancy_by_lesson:
+            if (
+                lunch_rule["enabled"]
+                and lunch_rule["is_hard"]
+                and 3 in occupancy_by_lesson
+                and 4 in occupancy_by_lesson
+            ):
                 model.Add(occupancy_by_lesson[3] + occupancy_by_lesson[4] <= 1)
+            elif (
+                lunch_rule["enabled"]
+                and 3 in occupancy_by_lesson
+                and 4 in occupancy_by_lesson
+            ):
+                lunch_violation = model.NewBoolVar(f"lunch_{group}_{day.isoformat()}")
+                model.Add(
+                    lunch_violation
+                    == occupancy_by_lesson[3] + occupancy_by_lesson[4] - 1
+                ).OnlyEnforceIf([occupancy_by_lesson[3], occupancy_by_lesson[4]])
+                model.Add(lunch_violation == 0).OnlyEnforceIf(
+                    occupancy_by_lesson[3].Not()
+                )
+                model.Add(lunch_violation == 0).OnlyEnforceIf(
+                    occupancy_by_lesson[4].Not()
+                )
+                penalties.append(lunch_violation * 100 * lunch_rule["weight"])
 
     model.Minimize(sum(penalties))
     solver = cp_model.CpSolver()
@@ -394,6 +486,9 @@ def assign_rooms_matching(
     completed: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
     matching_variables = 0
+    capacity_rule = _rule(context, "room_capacity", weight=5)
+    type_rule = _rule(context, "room_type", weight=5)
+    feature_rule = _rule(context, "room_features", weight=7)
     for (date_string, lesson), slot_events in by_slot.items():
         date = datetime.date.fromisoformat(date_string)
         available_rooms = []
@@ -415,16 +510,40 @@ def assign_rooms_matching(
                 int(context["group_sizes"].get(group, 20)) for group in event["groups"]
             )
             for room_name in available_rooms:
+                room = rooms[room_name]
+                capacity_shortfall = max(0, size - int(room["capacity"]))
+                room_type = room.get("type")
+                type_mismatch = room_type not in {None, "mixed", event["type"]}
+                missing_features = set(event.get("required_features", [])) - set(
+                    room.get("features", [])
+                )
+                if event.get("required_room") not in {None, room_name}:
+                    continue
+                if (
+                    capacity_rule["enabled"]
+                    and capacity_rule["is_hard"]
+                    and capacity_shortfall
+                ):
+                    continue
+                if type_rule["enabled"] and type_rule["is_hard"] and type_mismatch:
+                    continue
+                if (
+                    feature_rule["enabled"]
+                    and feature_rule["is_hard"]
+                    and missing_features
+                ):
+                    continue
                 variable = model.NewBoolVar(f"room_{event_id}_{room_name}")
                 room_variables[(event_id, room_name)] = variable
                 event_room_variables.append(variable)
-                room = rooms[room_name]
-                capacity_shortfall = max(0, size - int(room["capacity"]))
                 capacity_excess = max(0, int(room["capacity"]) - size)
-                type_mismatch = room.get("type") != event["type"]
-                cost = capacity_shortfall * 100 + capacity_excess
-                if type_mismatch:
-                    cost += 1000
+                cost = capacity_excess
+                if capacity_rule["enabled"]:
+                    cost += capacity_shortfall * 100 * capacity_rule["weight"]
+                if type_rule["enabled"] and type_mismatch:
+                    cost += 200 * type_rule["weight"]
+                if feature_rule["enabled"] and missing_features:
+                    cost += len(missing_features) * 300 * feature_rule["weight"]
                 penalties.append(variable * cost)
 
             no_room = model.NewBoolVar(f"room_unassigned_{event_id}")
@@ -459,7 +578,8 @@ def assign_rooms_matching(
                     (
                         room_name
                         for room_name in available_rooms
-                        if solver.Value(room_variables[(event_id, room_name)])
+                        if (event_id, room_name) in room_variables
+                        and solver.Value(room_variables[(event_id, room_name)])
                     ),
                     None,
                 )
@@ -467,6 +587,9 @@ def assign_rooms_matching(
                 else None
             )
             result["room"] = selected_room or "НЕТ АУДИТОРИИ"
+            result["room_ref_id"] = (
+                rooms[selected_room].get("id") if selected_room else None
+            )
 
             warning = None
             if selected_room is None:
@@ -479,8 +602,16 @@ def assign_rooms_matching(
                 )
                 if int(room["capacity"]) < size:
                     warning = f"Вместимость: {room['capacity']} на {size} чел."
-                elif room.get("type") != event["type"]:
+                elif room.get("type") not in {None, "mixed", event["type"]}:
                     warning = f"Тип: {room.get('type')} вместо {event['type']}"
+                else:
+                    missing_features = set(event.get("required_features", [])) - set(
+                        room.get("features", [])
+                    )
+                    if missing_features:
+                        warning = "Нет оснащения: " + ", ".join(
+                            sorted(missing_features)
+                        )
             result["warning"] = warning
             completed.append(result)
             if warning:
