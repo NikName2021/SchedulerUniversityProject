@@ -2,7 +2,7 @@ import datetime
 import io
 
 import pandas as pd
-from database.all_models import ScheduleEntry
+from database.all_models import GenerationTask, ScheduleEntry
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -30,6 +30,10 @@ async def generate_excel_report(session, task_id: int | None = None):
     stmt = select(ScheduleEntry).options(selectinload(ScheduleEntry.teacher))
     if task_id:
         stmt = stmt.filter(ScheduleEntry.task_id == task_id)
+    else:
+        stmt = stmt.join(
+            GenerationTask, GenerationTask.id == ScheduleEntry.task_id
+        ).where(GenerationTask.publication_status == "published")
 
     stmt = stmt.order_by(ScheduleEntry.date, ScheduleEntry.lesson_number)
     result = await session.execute(stmt)

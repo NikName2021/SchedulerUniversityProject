@@ -14,7 +14,7 @@ celery_app.conf.update(
     result_expires=3600,
     result_serializer="json",
     task_acks_late=True,
-    task_reject_on_worker_lost=True,
+    task_reject_on_worker_lost=False,
     task_serializer="json",
     task_soft_time_limit=840,
     task_time_limit=900,
@@ -63,9 +63,35 @@ def finalize_schedule_task(
     task_id: int,
     context: dict[str, Any],
 ) -> bool:
-    return _run_async(
-        ScalableGenerationService.finalize(task_id, component_results, context)
+    try:
+        return _run_async(
+            ScalableGenerationService.finalize(task_id, component_results, context)
+        )
+    except Exception as exc:
+        _run_async(
+            ScalableGenerationService.fail(
+                task_id, f"Failed to finalize schedule: {exc}"
+            )
+        )
+        raise
+
+
+@celery_app.task(name="scheduler.handle_workflow_error")
+def handle_workflow_error_task(task_id: int) -> None:
+    _run_async(
+        _mark_workflow_failed(
+            task_id,
+            "Solver worker was lost or a Celery component terminated unexpectedly",
+        )
     )
+
+
+async def _mark_workflow_failed(task_id: int, message: str) -> None:
+    from core.config import sessionmaker
+    from services.generation_lifecycle_service import GenerationLifecycleService
+
+    async with sessionmaker() as session:
+        await GenerationLifecycleService.fail_active_task(task_id, message, session)
 
 
 @celery_app.task(name="scheduler.generate_schedule")
@@ -103,7 +129,10 @@ def generate_schedule_task(
         for component in payload["components"]
     ]
     try:
-        workflow = chord(signatures)(finalize_schedule_task.s(task_id, context))
+        callback = finalize_schedule_task.s(task_id, context).on_error(
+            handle_workflow_error_task.si(task_id)
+        )
+        workflow = chord(signatures)(callback)
     except Exception as exc:
         _run_async(
             ScalableGenerationService.fail(
@@ -111,7 +140,12 @@ def generate_schedule_task(
             )
         )
         raise
-    _run_async(ScalableGenerationService.save_workflow_id(task_id, workflow.id))
+    component_ids = [
+        result.id for result in (workflow.parent.results if workflow.parent else [])
+    ]
+    _run_async(
+        ScalableGenerationService.save_workflow_id(task_id, workflow.id, component_ids)
+    )
     return {
         "dispatched": len(signatures),
         "task_id": task_id,

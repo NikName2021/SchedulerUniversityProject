@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 
 import pandas as pd
 from database.all_models import (
+    Room,
     ScheduleEntry,
     Stream,
     StreamGroup,
@@ -14,10 +15,89 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from services.availability_service import build_availability_context
+
 logger = logging.getLogger(__name__)
 
 
 class ScheduleService:
+    @classmethod
+    async def validate_manual_changes(
+        cls,
+        task_id: int,
+        changed_ids: set[int],
+        db: AsyncSession,
+    ) -> list[str]:
+        stmt = (
+            select(ScheduleEntry)
+            .options(selectinload(ScheduleEntry.teacher))
+            .where(ScheduleEntry.task_id == task_id)
+            .execution_options(populate_existing=True)
+        )
+        entries = list((await db.execute(stmt)).scalars())
+        changed = [entry for entry in entries if entry.id in changed_ids]
+        errors: set[str] = set()
+        for entry in changed:
+            if entry.date is None or entry.lesson_number is None:
+                continue
+            for other in entries:
+                if other.id == entry.id or other.date != entry.date:
+                    continue
+                if other.lesson_number != entry.lesson_number:
+                    continue
+                same_stream = bool(
+                    entry.source_stream_id
+                    and entry.source_stream_id == other.source_stream_id
+                )
+                if entry.group_name == other.group_name and not same_stream:
+                    errors.add(
+                        f"Группа {entry.group_name} уже занята: {other.event_name}"
+                    )
+                if (
+                    entry.teacher_id
+                    and entry.teacher_id == other.teacher_id
+                    and not same_stream
+                ):
+                    errors.add(
+                        f"Преподаватель уже занят: {other.event_name} "
+                        f"({other.group_name})"
+                    )
+                if entry.room_id and entry.room_id == other.room_id and not same_stream:
+                    errors.add(
+                        f"Аудитория {entry.room_id} уже занята: {other.event_name}"
+                    )
+
+            date_string = entry.date.date().isoformat()
+            availability = await build_availability_context(
+                db, date_string, date_string
+            )
+            slot = [date_string, entry.lesson_number]
+            unavailable = availability["unavailable"]
+            if slot in unavailable.get("global", {}).get("*", []):
+                errors.add("Выбранный слот недоступен для университета")
+            if entry.teacher and slot in unavailable.get("teacher", {}).get(
+                entry.teacher.name, []
+            ):
+                errors.add(f"Преподаватель {entry.teacher.name} недоступен")
+            if slot in unavailable.get("group", {}).get(entry.group_name, []):
+                errors.add(f"Группа {entry.group_name} недоступна")
+            if entry.room_id and slot in unavailable.get("room", {}).get(
+                entry.room_id, []
+            ):
+                errors.add(f"Аудитория {entry.room_id} недоступна")
+        return sorted(errors)
+
+    @staticmethod
+    async def resolve_room(room_code: str | None, db: AsyncSession) -> Room | None:
+        if room_code is None:
+            return None
+        room = await db.scalar(
+            select(Room).where(Room.code == room_code, Room.is_active.is_(True))
+        )
+        if room is None:
+            raise LookupError(f"Активная аудитория {room_code} не найдена")
+        return room
+
     @classmethod
     async def refresh_task_warnings(cls, task_id: int, db: AsyncSession) -> None:
         stmt = (
@@ -182,6 +262,7 @@ class ScheduleService:
                 "date": e.date.strftime("%Y-%m-%d") if e.date else None,
                 "lesson_number": e.lesson_number,
                 "warning": e.warning,
+                "is_locked": e.is_locked,
             }
             for e in entries
         ]

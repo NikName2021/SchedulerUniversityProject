@@ -16,6 +16,8 @@ import {
   UserCheck,
   BarChart3,
   ChevronDown,
+  Lock,
+  Unlock,
 } from "lucide-react";
 import {
   DndContext,
@@ -44,6 +46,7 @@ interface ScheduleEntry {
   date: string;
   lesson_number: number;
   warning: string | null;
+  is_locked: boolean;
 }
 
 const DAYS = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"];
@@ -90,6 +93,7 @@ const DraggableCard: React.FC<{
     useDraggable({
       id: `card-${entry.id}`,
       data: { ...entry, dayIdx, pairNum },
+      disabled: entry.is_locked,
     });
 
   const style = {
@@ -132,6 +136,21 @@ const DraggableCard: React.FC<{
           </span>
         </div>
         <div className="flex gap-1 opacity-0 group-hover/card:opacity-100 transition-opacity">
+          <button
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              (
+                window as unknown as {
+                  toggleEntryLock: (id: number, locked: boolean) => void;
+                }
+              ).toggleEntryLock(entry.id, !entry.is_locked);
+            }}
+            className="p-1 hover:bg-black/5 rounded text-text-tertiary hover:text-brand pointer-events-auto"
+            title={entry.is_locked ? "Разблокировать" : "Зафиксировать"}
+          >
+            {entry.is_locked ? <Unlock size={12} /> : <Lock size={12} />}
+          </button>
           {entry.date ? (
             <button
               onPointerDown={(e) => e.stopPropagation()}
@@ -163,6 +182,11 @@ const DraggableCard: React.FC<{
           )}
         </div>
       </div>
+      {entry.is_locked && (
+        <div className="absolute right-2 bottom-2 rounded-full bg-white/90 p-1 text-brand shadow-sm">
+          <Lock size={10} />
+        </div>
+      )}
       <div className="text-[11px] font-bold text-text-primary leading-tight mb-2 line-clamp-2">
         {entry.event_name}
       </div>
@@ -515,6 +539,7 @@ export const SchedulePage: React.FC = () => {
 
       const dateStr = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, "0")}-${String(targetDate.getDate()).padStart(2, "0")}`;
 
+      const previousEntries = entries;
       // Optimistic update
       setEntries((prev) =>
         prev.map((e) =>
@@ -538,38 +563,60 @@ export const SchedulePage: React.FC = () => {
           },
         );
         const result = await res.json();
+        if (!res.ok) {
+          setEntries(previousEntries);
+          const detail = result.detail;
+          alert(
+            typeof detail === "string"
+              ? detail
+              : detail?.conflicts?.join("\n") || "Перенос создает конфликт",
+          );
+          return;
+        }
         if (result.entries) {
           setEntries(result.entries);
         }
       } catch (error) {
+        setEntries(previousEntries);
         console.error("Update failed:", error);
       }
     }
   };
 
-  const deleteEntry = useCallback(async (id: number) => {
-    if (!confirm("Вы уверены, что хотите удалить эту пару навсегда?")) return;
+  const deleteEntry = useCallback(
+    async (id: number) => {
+      if (!confirm("Вы уверены, что хотите удалить эту пару навсегда?")) return;
 
-    setEntries((prev) => prev.filter((e) => e.id !== id));
+      const previousEntries = entries;
+      setEntries((prev) => prev.filter((e) => e.id !== id));
 
-    try {
-      const res = await fetch(
-        `${API_BASE_URL}/api/v1/scheduler/schedule/${id}`,
-        {
-          method: "DELETE",
-        },
-      );
-      const result = await res.json();
-      if (result.entries) {
-        setEntries(result.entries);
+      try {
+        const res = await fetch(
+          `${API_BASE_URL}/api/v1/scheduler/schedule/${id}`,
+          {
+            method: "DELETE",
+          },
+        );
+        const result = await res.json();
+        if (!res.ok) {
+          setEntries(previousEntries);
+          alert(result.detail || "Не удалось удалить занятие");
+          return;
+        }
+        if (result.entries) {
+          setEntries(result.entries);
+        }
+      } catch (e) {
+        setEntries(previousEntries);
+        console.error("Delete failed:", e);
       }
-    } catch (e) {
-      console.error("Delete failed:", e);
-    }
-  }, []);
+    },
+    [entries],
+  );
 
   const unassignEntry = useCallback(
     async (id: number, skipOptimistic = false) => {
+      const previousEntries = entries;
       if (!skipOptimistic) {
         setEntries((prev) =>
           prev.map((e) =>
@@ -591,29 +638,55 @@ export const SchedulePage: React.FC = () => {
           },
         );
         const result = await res.json();
+        if (!res.ok) {
+          setEntries(previousEntries);
+          alert(result.detail || "Не удалось снять занятие со слота");
+          return;
+        }
         if (result.entries) {
           setEntries(result.entries);
         }
       } catch (e) {
+        setEntries(previousEntries);
         console.error("Unassign failed:", e);
       }
     },
-    [],
+    [entries],
   );
+
+  const toggleEntryLock = useCallback(async (id: number, locked: boolean) => {
+    const response = await fetch(
+      `${API_BASE_URL}/api/v1/scheduler/schedule/${id}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_locked: locked }),
+      },
+    );
+    const result = await response.json();
+    if (!response.ok) {
+      alert(result.detail || "Не удалось изменить блокировку");
+      return;
+    }
+    if (result.entries) setEntries(result.entries);
+  }, []);
 
   // Expose to cards
   useEffect(() => {
     const win = window as unknown as {
       deleteEntry: typeof deleteEntry | null;
       unassignEntry: typeof unassignEntry | null;
+      toggleEntryLock: typeof toggleEntryLock | null;
     };
     win.deleteEntry = deleteEntry;
     win.unassignEntry = unassignEntry;
+    win.toggleEntryLock = toggleEntryLock;
     return () => {
       win.deleteEntry = null;
       win.unassignEntry = null;
+      win.toggleEntryLock = null;
     };
-  }, [deleteEntry, unassignEntry]);
+  }, [deleteEntry, unassignEntry, toggleEntryLock]);
 
   const assignedEntries = entries.filter((e) => e.date);
   const unassignedEntries = entries.filter((e) => !e.date);

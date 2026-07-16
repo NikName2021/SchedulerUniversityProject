@@ -8,6 +8,7 @@ from typing import Annotated, Any
 
 import pandas as pd
 from core.config import async_get_db
+from core.constants import MAX_GENERATION_HORIZON_DAYS
 from database.all_models import (
     AvailabilityRule,
     FileType,
@@ -31,15 +32,20 @@ from fastapi import (
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from services.export_service import generate_excel_report
+from services.generation_lifecycle_service import (
+    ACTIVE_STATUSES,
+    GenerationLifecycleService,
+)
 from services.generation_service import GenerationService
 from services.parser_service import parse_streams_content
 from services.quality_service import ScheduleQualityService
 from services.schedule_service import ScheduleService
 from sqlalchemy import delete, distinct, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
-from worker import generate_schedule_task
+from worker import celery_app, generate_schedule_task
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/scheduler", tags=["Scheduler"])
@@ -88,6 +94,7 @@ class ScheduleUpdateModel(BaseModel):
     teacher_id: int | None = None
     room_id: str | None = None  # room_id is string in model
     apply_to_stream: bool | None = None
+    is_locked: bool | None = None
 
 
 @router.post("/import/streams")
@@ -325,9 +332,7 @@ async def update_teacher_restrictions(
                     teacher_id=teacher_id,
                     rule_kind=rule_kind,
                     recurrence="specific",
-                    specific_date=datetime.strptime(
-                        date_string, "%Y-%m-%d"
-                    ).date(),
+                    specific_date=datetime.strptime(date_string, "%Y-%m-%d").date(),
                     lesson_start=int(lesson),
                     lesson_end=int(lesson),
                     is_hard=True,
@@ -458,25 +463,39 @@ async def generate_schedule(
         raise HTTPException(
             status_code=422, detail="end_date must not precede start_date"
         )
+    if (
+        task.planning_week_id is None
+        and start_dt
+        and end_dt
+        and (end_dt - start_dt).days + 1 > MAX_GENERATION_HORIZON_DAYS
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Период генерации не должен превышать "
+                f"{MAX_GENERATION_HORIZON_DAYS} дней. Для разных недель "
+                "создавайте отдельные недельные расчеты."
+            ),
+        )
 
-    # 2. Create a task record
     settings = task.settings or {}
-    new_task = GenerationTask(
-        groups_json=json.dumps(task.groups),
-        holidays_json=json.dumps(task.holidays),
-        settings_json=json.dumps(settings),
-        planning_week_id=task.planning_week_id,
-        start_date=start_dt,
-        end_date=end_dt,
-        status="queued",
-    )
-    db.add(new_task)
-    await db.commit()
-    await db.refresh(new_task)
+    try:
+        new_task = await GenerationLifecycleService.reserve_task(
+            db,
+            groups=task.groups,
+            holidays=task.holidays,
+            settings=settings,
+            planning_week_id=task.planning_week_id,
+            start_date=start_dt,
+            end_date=end_dt,
+        )
+    except (RuntimeError, IntegrityError) as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     # 3. Enqueue durable background generation
     try:
-        generate_schedule_task.delay(
+        async_result = generate_schedule_task.delay(
             new_task.id,
             task.groups,
             task.holidays,
@@ -485,9 +504,12 @@ async def generate_schedule(
             end_date,
             task.planning_week_id,
         )
+        new_task.celery_root_task_id = async_result.id
+        await db.commit()
     except Exception as exc:
         new_task.status = "failed"
         new_task.error_message = "Generation queue is unavailable"
+        await GenerationLifecycleService.release_locks(new_task.id, db)
         await db.commit()
         logger.exception("Failed to enqueue generation task %s", new_task.id)
         raise HTTPException(
@@ -547,9 +569,140 @@ async def get_generation_tasks(
             "progress_percent": t.progress_percent,
             "metrics": json.loads(t.metrics_json) if t.metrics_json else {},
             "celery_workflow_id": t.celery_workflow_id,
+            "celery_root_task_id": t.celery_root_task_id,
+            "celery_component_ids": (
+                json.loads(t.celery_component_ids_json)
+                if t.celery_component_ids_json
+                else []
+            ),
+            "parent_task_id": t.parent_task_id,
+            "version_number": t.version_number,
+            "publication_status": t.publication_status,
+            "published_at": t.published_at.isoformat() if t.published_at else None,
+            "canceled_at": t.canceled_at.isoformat() if t.canceled_at else None,
+            "edit_revision": t.edit_revision,
         }
         for t in tasks
     ]
+
+
+@router.post("/tasks/{task_id}/cancel")
+async def cancel_generation_task(
+    task_id: int,
+    db: Annotated[AsyncSession, Depends(async_get_db)] = None,
+) -> dict[str, Any]:
+    task = await db.get(GenerationTask, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Generation task not found")
+    if task.status not in ACTIVE_STATUSES:
+        raise HTTPException(status_code=409, detail="Generation task is not active")
+    component_ids = json.loads(task.celery_component_ids_json or "[]")
+    for celery_id in (
+        task.celery_root_task_id,
+        task.celery_workflow_id,
+        *component_ids,
+    ):
+        if celery_id:
+            try:
+                celery_app.control.revoke(celery_id, terminate=True, signal="SIGTERM")
+            except Exception:
+                logger.exception("Failed to revoke Celery task %s", celery_id)
+    task.status = "canceled"
+    task.canceled_at = datetime.utcnow()
+    task.error_message = "Generation canceled by operator"
+    task.progress_percent = 100
+    await GenerationLifecycleService.release_locks(task.id, db)
+    await db.commit()
+    return {"status": task.status, "task_id": task.id}
+
+
+@router.post("/tasks/{task_id}/retry", status_code=202)
+async def retry_generation_task(
+    task_id: int,
+    db: Annotated[AsyncSession, Depends(async_get_db)] = None,
+) -> dict[str, Any]:
+    source = await db.get(GenerationTask, task_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="Generation task not found")
+    if source.status in ACTIVE_STATUSES:
+        raise HTTPException(status_code=409, detail="Generation task is still active")
+    groups = json.loads(source.groups_json or "[]")
+    holidays = json.loads(source.holidays_json or "[]")
+    settings = json.loads(source.settings_json or "{}")
+    try:
+        retry_task = await GenerationLifecycleService.reserve_task(
+            db,
+            groups=groups,
+            holidays=holidays,
+            settings=settings,
+            planning_week_id=source.planning_week_id,
+            start_date=source.start_date,
+            end_date=source.end_date,
+            parent_task_id=source.id,
+        )
+        async_result = generate_schedule_task.delay(
+            retry_task.id,
+            groups,
+            holidays,
+            settings.get("enabled_types", []),
+            retry_task.start_date.date().isoformat() if retry_task.start_date else None,
+            retry_task.end_date.date().isoformat() if retry_task.end_date else None,
+            retry_task.planning_week_id,
+        )
+        retry_task.celery_root_task_id = async_result.id
+        await db.commit()
+    except (RuntimeError, IntegrityError) as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        retry_task.status = "failed"
+        retry_task.error_message = "Generation queue is unavailable"
+        await GenerationLifecycleService.release_locks(retry_task.id, db)
+        await db.commit()
+        raise HTTPException(
+            status_code=503, detail="Generation queue is unavailable"
+        ) from exc
+    return {"status": "queued", "task_id": retry_task.id}
+
+
+@router.post("/tasks/{task_id}/publish")
+async def publish_schedule_version(
+    task_id: int,
+    db: Annotated[AsyncSession, Depends(async_get_db)] = None,
+) -> dict[str, Any]:
+    task = await db.get(GenerationTask, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Generation task not found")
+    try:
+        await GenerationLifecycleService.publish(task, db)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"task_id": task.id, "publication_status": task.publication_status}
+
+
+@router.post("/tasks/{task_id}/archive")
+async def archive_schedule_version(
+    task_id: int,
+    db: Annotated[AsyncSession, Depends(async_get_db)] = None,
+) -> dict[str, Any]:
+    task = await db.get(GenerationTask, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Generation task not found")
+    try:
+        await GenerationLifecycleService.archive(task, db)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"task_id": task.id, "publication_status": task.publication_status}
+
+
+@router.get("/tasks/{task_id}/diagnostics")
+async def get_generation_diagnostics(
+    task_id: int,
+    db: Annotated[AsyncSession, Depends(async_get_db)] = None,
+) -> dict[str, Any]:
+    if await db.get(GenerationTask, task_id) is None:
+        raise HTTPException(status_code=404, detail="Generation task not found")
+    return await GenerationLifecycleService.diagnostics(task_id, db)
 
 
 @router.get("/tasks/{task_id}/components")
@@ -623,6 +776,7 @@ async def get_schedule(
             "date": e.date.strftime("%Y-%m-%d") if e.date else None,
             "lesson_number": e.lesson_number,
             "warning": e.warning,
+            "is_locked": e.is_locked,
         }
         for e in entries
     ]
@@ -640,6 +794,9 @@ async def update_schedule_entry(
 
     if not entry:
         raise HTTPException(status_code=404, detail="Schedule entry not found")
+    task = await db.get(GenerationTask, entry.task_id)
+    if task and task.publication_status == "published":
+        raise HTTPException(status_code=409, detail="Published schedules are read-only")
 
     entries_to_update = [entry]
 
@@ -698,17 +855,51 @@ async def update_schedule_entry(
             e.date = None
 
         if payload.teacher_id is not None:
+            if await db.get(Teacher, payload.teacher_id) is None:
+                raise HTTPException(status_code=404, detail="Teacher not found")
             e.teacher_id = payload.teacher_id
         elif "teacher_id" in payload.model_fields_set:
             e.teacher_id = None
 
         if payload.room_id is not None:
+            try:
+                room = await ScheduleService.resolve_room(payload.room_id, db)
+            except LookupError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
             e.room_id = payload.room_id
+            e.room_ref_id = room.id if room else None
         elif "room_id" in payload.model_fields_set:
             e.room_id = None
+            e.room_ref_id = None
+
+        if payload.is_locked is not None:
+            e.is_locked = payload.is_locked
+
+        if task and e.date:
+            if task.start_date and e.date < task.start_date:
+                raise HTTPException(
+                    status_code=422, detail="Entry date precedes schedule period"
+                )
+            if task.end_date and e.date > task.end_date:
+                raise HTTPException(
+                    status_code=422, detail="Entry date exceeds schedule period"
+                )
+
+    await db.flush()
+    conflicts = await ScheduleService.validate_manual_changes(
+        entry.task_id, {item.id for item in entries_to_update}, db
+    )
+    if conflicts:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "Изменение создает конфликт", "conflicts": conflicts},
+        )
 
     # --- Conflict Detection & Warning Refresh ---
     await ScheduleService.refresh_task_warnings(entry.task_id, db)
+    if task:
+        task.edit_revision += 1
     await db.commit()
 
     return {
@@ -727,9 +918,18 @@ async def delete_schedule_entry(
 
     if not entry:
         raise HTTPException(status_code=404, detail="Schedule entry not found")
+    task = await db.get(GenerationTask, entry.task_id)
+    if task and task.publication_status == "published":
+        raise HTTPException(status_code=409, detail="Published schedules are read-only")
+    if entry.is_locked:
+        raise HTTPException(
+            status_code=409, detail="Locked entries must be unlocked before deletion"
+        )
 
     task_id = entry.task_id
     await db.delete(entry)
+    if task:
+        task.edit_revision += 1
     await db.commit()
 
     entries = []

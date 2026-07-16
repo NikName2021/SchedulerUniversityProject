@@ -11,6 +11,11 @@ import {
   Calendar,
   Users as UsersIcon,
   Layout as LayoutIcon,
+  Ban,
+  RotateCcw,
+  Send,
+  Archive,
+  AlertTriangle,
 } from "lucide-react";
 
 interface GenerationTask {
@@ -27,6 +32,9 @@ interface GenerationTask {
   total_components: number;
   completed_components: number;
   progress_percent: number;
+  version_number: number;
+  publication_status: "draft" | "published" | "archived";
+  edit_revision: number;
 }
 
 const hasScheduleResult = (status: string) =>
@@ -60,6 +68,35 @@ const HistoryPage: React.FC = () => {
       `${API_BASE_URL}/api/v1/scheduler/export?task_id=${taskId}`,
       "_blank",
     );
+  };
+
+  const runTaskAction = async (
+    taskId: number,
+    action: "cancel" | "retry" | "publish" | "archive",
+  ) => {
+    const response = await fetch(
+      `${API_BASE_URL}/api/v1/scheduler/tasks/${taskId}/${action}`,
+      { method: "POST" },
+    );
+    if (!response.ok) {
+      const payload = (await response.json()) as { detail?: string };
+      alert(payload.detail || "Операция не выполнена");
+      return;
+    }
+    await fetchTasks();
+  };
+
+  const showDiagnostics = async (taskId: number) => {
+    const response = await fetch(
+      `${API_BASE_URL}/api/v1/scheduler/tasks/${taskId}/diagnostics`,
+    );
+    const payload = (await response.json()) as {
+      counts?: Record<string, number>;
+    };
+    const summary = Object.entries(payload.counts || {})
+      .map(([kind, count]) => `${kind}: ${count}`)
+      .join("\n");
+    alert(summary || "Проблем при генерации не обнаружено");
   };
 
   const handleInherit = (task: GenerationTask) => {
@@ -229,7 +266,7 @@ const HistoryPage: React.FC = () => {
                 }}
               >
                 <span style={{ fontWeight: 800, fontSize: "1.125rem" }}>
-                  Расчет #{task.id}
+                  Расчет #{task.id} · версия {task.version_number || 1}
                 </span>
                 <span
                   style={{
@@ -252,7 +289,9 @@ const HistoryPage: React.FC = () => {
                       ? "Частично"
                       : task.status === "failed"
                         ? "Ошибка"
-                        : "В процессе"}
+                        : task.status === "canceled"
+                          ? "Отменено"
+                          : "В процессе"}
                 </span>
               </div>
               <div
@@ -296,6 +335,13 @@ const HistoryPage: React.FC = () => {
                     <CheckCircle2 size={14} /> {task.result_count} пар
                   </div>
                 )}
+                <div style={{ color: "var(--brand)" }}>
+                  {task.publication_status === "published"
+                    ? "Опубликовано"
+                    : task.publication_status === "archived"
+                      ? "Архив"
+                      : `Черновик · редакция ${task.edit_revision || 0}`}
+                </div>
                 {!hasScheduleResult(task.status) &&
                   task.status !== "failed" && (
                     <div style={{ color: "#f59e0b" }}>
@@ -324,6 +370,52 @@ const HistoryPage: React.FC = () => {
 
             {/* Actions */}
             <div style={{ display: "flex", gap: "0.75rem" }}>
+              {(task.status === "queued" || task.status === "running") && (
+                <button
+                  onClick={() => void runTaskAction(task.id, "cancel")}
+                  title="Отменить расчет"
+                  className="rounded-xl border border-red-200 bg-red-50 p-3 text-red-600 hover:bg-red-100"
+                >
+                  <Ban size={16} />
+                </button>
+              )}
+              {(task.status === "failed" || task.status === "canceled") && (
+                <button
+                  onClick={() => void runTaskAction(task.id, "retry")}
+                  title="Повторить расчет"
+                  className="rounded-xl border border-border-light bg-white p-3 text-text-secondary hover:text-brand"
+                >
+                  <RotateCcw size={16} />
+                </button>
+              )}
+              {hasScheduleResult(task.status) &&
+                task.publication_status === "draft" && (
+                  <button
+                    onClick={() => void runTaskAction(task.id, "publish")}
+                    title="Опубликовать версию"
+                    className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-emerald-600 hover:bg-emerald-100"
+                  >
+                    <Send size={16} />
+                  </button>
+                )}
+              {task.publication_status === "published" && (
+                <button
+                  onClick={() => void runTaskAction(task.id, "archive")}
+                  title="Отправить в архив"
+                  className="rounded-xl border border-border-light bg-white p-3 text-text-secondary hover:text-brand"
+                >
+                  <Archive size={16} />
+                </button>
+              )}
+              {(task.status === "partial" || task.status === "failed") && (
+                <button
+                  onClick={() => void showDiagnostics(task.id)}
+                  title="Показать диагностику"
+                  className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-amber-600 hover:bg-amber-100"
+                >
+                  <AlertTriangle size={16} />
+                </button>
+              )}
               <button
                 onClick={() => handleInherit(task)}
                 style={{

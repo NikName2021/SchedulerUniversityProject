@@ -375,6 +375,14 @@ class GenerationTask(DeclBase):
     planning_week_id = Column(
         Integer, ForeignKey("planning_week.id", ondelete="SET NULL"), nullable=True
     )
+    parent_task_id = Column(
+        Integer, ForeignKey("generation_task.id", ondelete="SET NULL"), nullable=True
+    )
+    version_number = Column(Integer, nullable=False, default=1)
+    publication_status = Column(String, nullable=False, default="draft")
+    published_at = Column(DateTime, nullable=True)
+    canceled_at = Column(DateTime, nullable=True)
+    edit_revision = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     status = Column(String, default="pending")  # pending, success, failed
     start_date = Column(DateTime, nullable=True)
@@ -389,11 +397,50 @@ class GenerationTask(DeclBase):
     progress_percent = Column(Integer, nullable=False, default=0)
     metrics_json = Column(String, nullable=True)
     celery_workflow_id = Column(String, nullable=True)
+    celery_root_task_id = Column(String, nullable=True)
+    celery_component_ids_json = Column(String, nullable=True)
 
     planning_week = relationship("PlanningWeek", back_populates="generation_tasks")
     components = relationship(
         "GenerationComponent", cascade="all,delete-orphan", back_populates="task"
     )
+    locks = relationship(
+        "GenerationLock", cascade="all,delete-orphan", back_populates="task"
+    )
+    issues = relationship(
+        "GenerationIssue", cascade="all,delete-orphan", back_populates="task"
+    )
+
+
+class GenerationLock(DeclBase):
+    __tablename__ = "generation_lock"
+    scope_key = Column(String, primary_key=True)
+    task_id = Column(
+        Integer, ForeignKey("generation_task.id", ondelete="CASCADE"), nullable=False
+    )
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+    task = relationship("GenerationTask", back_populates="locks")
+
+
+class GenerationIssue(DeclBase):
+    __tablename__ = "generation_issue"
+    __table_args__ = (Index("ix_generation_issue_task_kind", "task_id", "kind"),)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(
+        Integer, ForeignKey("generation_task.id", ondelete="CASCADE"), nullable=False
+    )
+    kind = Column(String, nullable=False)
+    severity = Column(String, nullable=False, default="warning")
+    message = Column(String, nullable=False)
+    stream_id = Column(Integer, ForeignKey("stream.id", ondelete="SET NULL"))
+    group_name = Column(String, nullable=True)
+    date = Column(Date, nullable=True)
+    lesson_number = Column(Integer, nullable=True)
+    details_json = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+    task = relationship("GenerationTask", back_populates="issues")
 
 
 class GenerationComponent(DeclBase):

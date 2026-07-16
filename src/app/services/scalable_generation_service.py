@@ -11,13 +11,16 @@ from core.constants import (
     DEFAULT_END_DATE,
     DEFAULT_START_DATE,
     LESSONS,
+    MAX_ESTIMATED_DECISION_VARIABLES,
+    MAX_GENERATION_HORIZON_DAYS,
     MAX_TIME_SECONDS,
-    NUM_WORKERS,
     STUDY_DAYS,
 )
 from core.constants import ROOMS as DEFAULT_ROOMS
 from database import (
     GenerationComponent,
+    GenerationIssue,
+    GenerationLock,
     GenerationTask,
     Room,
     RoomFeatureLink,
@@ -139,7 +142,7 @@ class ScalableGenerationService:
             task = await session.get(GenerationTask, task_id)
             if task is None:
                 return None
-            if task.status == "success":
+            if task.status in {"success", "partial", "failed", "canceled"}:
                 return None
 
             task.status = "running"
@@ -155,6 +158,22 @@ class ScalableGenerationService:
             settings = json.loads(task.settings_json or "{}")
             start_date = start_date or DEFAULT_START_DATE.isoformat()
             end_date = end_date or DEFAULT_END_DATE.isoformat()
+            horizon_days = (
+                date.fromisoformat(end_date) - date.fromisoformat(start_date)
+            ).days + 1
+            if horizon_days > MAX_GENERATION_HORIZON_DAYS:
+                task.status = "failed"
+                task.progress_percent = 100
+                task.error_message = (
+                    f"Generation horizon is too large: {horizon_days} days. "
+                    f"Use a planning week or a range up to "
+                    f"{MAX_GENERATION_HORIZON_DAYS} days."
+                )
+                await session.execute(
+                    delete(GenerationLock).where(GenerationLock.task_id == task_id)
+                )
+                await session.commit()
+                return None
             weekly_counts: dict[int, int] = {}
             weekly_priorities: dict[int, int] = {}
             if planning_week_id is not None:
@@ -168,6 +187,9 @@ class ScalableGenerationService:
                     task.status = "failed"
                     task.error_message = (
                         "Weekly lesson demand is not configured for this week"
+                    )
+                    await session.execute(
+                        delete(GenerationLock).where(GenerationLock.task_id == task_id)
                     )
                     await session.commit()
                     return None
@@ -213,6 +235,9 @@ class ScalableGenerationService:
                 task.error_message = (
                     "base_task_id is required when affected_stream_ids are provided"
                 )
+                await session.execute(
+                    delete(GenerationLock).where(GenerationLock.task_id == task_id)
+                )
                 await session.commit()
                 return None
             if enabled_types:
@@ -229,6 +254,9 @@ class ScalableGenerationService:
             if not streams:
                 task.status = "failed"
                 task.error_message = "No active streams found for selected groups"
+                await session.execute(
+                    delete(GenerationLock).where(GenerationLock.task_id == task_id)
+                )
                 await session.commit()
                 return None
 
@@ -443,10 +471,38 @@ class ScalableGenerationService:
             if not events:
                 task.status = "failed"
                 task.error_message = "No schedulable events found"
+                await session.execute(
+                    delete(GenerationLock).where(GenerationLock.task_id == task_id)
+                )
                 await session.commit()
                 return None
 
             components = build_conflict_components(events)
+            planning_dates = sum(
+                1
+                for offset in range(horizon_days)
+                if (date.fromisoformat(start_date) + timedelta(days=offset)).weekday()
+                in STUDY_DAYS
+                and (
+                    date.fromisoformat(start_date) + timedelta(days=offset)
+                ).isoformat()
+                not in holidays
+            )
+            estimated_decision_variables = len(events) * planning_dates * len(LESSONS)
+            if estimated_decision_variables > MAX_ESTIMATED_DECISION_VARIABLES:
+                task.status = "failed"
+                task.progress_percent = 100
+                task.error_message = (
+                    "Generation model safety limit exceeded: "
+                    f"estimated_decision_variables={estimated_decision_variables}/"
+                    f"{MAX_ESTIMATED_DECISION_VARIABLES}. Split the calculation "
+                    "by week or group set."
+                )
+                await session.execute(
+                    delete(GenerationLock).where(GenerationLock.task_id == task_id)
+                )
+                await session.commit()
+                return None
             max_total_events = int(settings.get("max_total_events", 20_000))
             max_component_events = int(settings.get("max_component_events", 2_000))
             largest_component = max(map(len, components))
@@ -460,6 +516,9 @@ class ScalableGenerationService:
                     "Generation safety limit exceeded: "
                     f"events={len(events)}/{max_total_events}, "
                     f"largest_component={largest_component}/{max_component_events}"
+                )
+                await session.execute(
+                    delete(GenerationLock).where(GenerationLock.task_id == task_id)
                 )
                 await session.commit()
                 return None
@@ -480,9 +539,7 @@ class ScalableGenerationService:
                 "rule_settings": rule_settings,
                 "group_sizes": group_sizes,
                 "max_time_seconds": max_component_seconds,
-                "num_workers": int(
-                    settings.get("solver_workers", max(1, min(2, NUM_WORKERS)))
-                ),
+                "num_workers": int(settings.get("solver_workers", 1)),
                 "room_assignment_max_seconds": int(
                     settings.get("room_assignment_max_seconds", 5)
                 ),
@@ -523,6 +580,8 @@ class ScalableGenerationService:
                     "largest_component_events": largest_component,
                     "max_total_events": max_total_events,
                     "max_component_events": max_component_events,
+                    "horizon_days": horizon_days,
+                    "estimated_decision_variables": estimated_decision_variables,
                 }
             )
             await session.commit()
@@ -556,7 +615,7 @@ class ScalableGenerationService:
                 )
             )
             task = await session.get(GenerationTask, task_id)
-            if task is not None:
+            if task is not None and task.status != "canceled":
                 task.completed_components = int(completed or 0)
                 task.progress_percent = min(
                     95,
@@ -566,12 +625,20 @@ class ScalableGenerationService:
                 await session.commit()
 
     @staticmethod
-    async def save_workflow_id(task_id: int, workflow_id: str) -> None:
+    async def save_workflow_id(
+        task_id: int, workflow_id: str, component_ids: list[str]
+    ) -> None:
         async with sessionmaker() as session:
             await session.execute(
                 update(GenerationTask)
-                .where(GenerationTask.id == task_id)
-                .values(celery_workflow_id=workflow_id)
+                .where(
+                    GenerationTask.id == task_id,
+                    GenerationTask.status != "canceled",
+                )
+                .values(
+                    celery_workflow_id=workflow_id,
+                    celery_component_ids_json=json.dumps(component_ids),
+                )
             )
             await session.commit()
 
@@ -602,8 +669,17 @@ class ScalableGenerationService:
             task = await session.get(GenerationTask, task_id)
             if task is None:
                 return False
+            if task.status == "canceled":
+                await session.execute(
+                    delete(GenerationLock).where(GenerationLock.task_id == task_id)
+                )
+                await session.commit()
+                return False
             await session.execute(
                 delete(ScheduleEntry).where(ScheduleEntry.task_id == task_id)
+            )
+            await session.execute(
+                delete(GenerationIssue).where(GenerationIssue.task_id == task_id)
             )
 
             entries: list[ScheduleEntry] = []
@@ -671,6 +747,54 @@ class ScalableGenerationService:
                 for result in component_results
                 if result.get("status") != "success"
             ]
+            issues: list[GenerationIssue] = []
+            for item in unassigned:
+                for group in item["groups"]:
+                    issues.append(
+                        GenerationIssue(
+                            task_id=task_id,
+                            kind="unassigned",
+                            severity="error",
+                            message=(
+                                f"Не размещено {item['missing_count']} из "
+                                f"{item['target']} занятий"
+                            ),
+                            stream_id=item.get("stream_id"),
+                            group_name=group,
+                            details_json=json.dumps(
+                                {
+                                    "subject": item.get("subject"),
+                                    "teacher": item.get("teacher"),
+                                }
+                            ),
+                        )
+                    )
+            assignments_by_id = {item["id"]: item for item in assignments}
+            for warning in room_warnings:
+                assignment = assignments_by_id.get(warning["event_id"], {})
+                issues.append(
+                    GenerationIssue(
+                        task_id=task_id,
+                        kind="room",
+                        severity="warning",
+                        message=warning["message"],
+                        stream_id=assignment.get("stream_id"),
+                        group_name=", ".join(assignment.get("groups", [])) or None,
+                        date=date.fromisoformat(warning["date"]),
+                        lesson_number=warning["lesson"],
+                    )
+                )
+            for result in failed_results:
+                issues.append(
+                    GenerationIssue(
+                        task_id=task_id,
+                        kind="component",
+                        severity="error",
+                        message=result.get("error") or "Компонента не рассчитана",
+                        details_json=json.dumps(result.get("metrics", {})),
+                    )
+                )
+            session.add_all(issues)
             component_metrics = [
                 result.get("metrics", {}) for result in component_results
             ]
@@ -717,6 +841,9 @@ class ScalableGenerationService:
             else:
                 task.status = "success"
                 task.error_message = None
+            await session.execute(
+                delete(GenerationLock).where(GenerationLock.task_id == task_id)
+            )
             await session.commit()
             return task.status in {"success", "partial"}
 
@@ -727,5 +854,8 @@ class ScalableGenerationService:
                 update(GenerationTask)
                 .where(GenerationTask.id == task_id)
                 .values(status="failed", error_message=error, progress_percent=100)
+            )
+            await session.execute(
+                delete(GenerationLock).where(GenerationLock.task_id == task_id)
             )
             await session.commit()

@@ -220,6 +220,18 @@ export const GenerationPage: React.FC = () => {
   };
 
   const handleStartGeneration = async () => {
+    const horizonDays =
+      Math.floor(
+        (new Date(endDate).getTime() - new Date(startDate).getTime()) /
+          86_400_000,
+      ) + 1;
+    if (horizonDays > 14) {
+      setStatus({
+        type: "error",
+        msg: "Один расчет ограничен 14 днями. Создайте отдельный расчет для каждой учебной недели.",
+      });
+      return;
+    }
     setIsGenerating(true);
     setStatus(null);
     try {
@@ -246,7 +258,11 @@ export const GenerationPage: React.FC = () => {
           msg: "Задача на генерацию успешно отправлена!",
         });
       } else {
-        setStatus({ type: "error", msg: "Ошибка при отправке задачи." });
+        const payload = (await res.json()) as { detail?: string };
+        setStatus({
+          type: "error",
+          msg: payload.detail || "Ошибка при отправке задачи.",
+        });
       }
     } catch {
       setStatus({ type: "error", msg: "Не удалось связаться с сервером." });

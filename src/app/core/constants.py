@@ -3,6 +3,8 @@ from datetime import date
 # Generation Settings
 MAX_TIME_SECONDS = 700
 NUM_WORKERS = 8
+MAX_GENERATION_HORIZON_DAYS = 14
+MAX_ESTIMATED_DECISION_VARIABLES = 50_000
 LOGGING_ENABLED = True
 
 # Scheduling Defaults

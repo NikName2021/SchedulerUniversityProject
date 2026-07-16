@@ -149,6 +149,10 @@ docker compose --env-file .env.example config --quiet
 Справочники, доступность и профили правил этапа 3 описаны в
 [`docs/STAGE_3_REFERENCE_DATA.md`](docs/STAGE_3_REFERENCE_DATA.md).
 
+Версионирование, публикация, отмена задач, безопасное редактирование и
+диагностика этапа 4 описаны в
+[`docs/STAGE_4_PRODUCTION_LIFECYCLE.md`](docs/STAGE_4_PRODUCTION_LIFECYCLE.md).
+
 ## 📝 Дальнейшее развитие (Roadmap)
 - Реализация генетического алгоритма для автоматического расчета.
 - Личные кабинеты преподавателей.

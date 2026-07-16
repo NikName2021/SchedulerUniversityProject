@@ -8,6 +8,7 @@
 /src/app/.env
 /docker/config/nginx/nginx.conf
 .idea
+.DS_Store
 /spa/node_modules
 /spa/.env.production
 spa/package-lock.json
