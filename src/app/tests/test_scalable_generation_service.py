@@ -112,6 +112,13 @@ async def test_scalable_pipeline_saves_parallel_components(
     db_session.add(task)
     await db_session.commit()
 
+    class DateAfterPlanningPeriod(datetime.date):
+        @classmethod
+        def today(cls) -> "DateAfterPlanningPeriod":
+            return cls(2027, 1, 1)
+
+    monkeypatch.setattr(scalable_module, "date", DateAfterPlanningPeriod)
+
     payload = await ScalableGenerationService.prepare(
         task.id,
         ["A", "B", "C"],
@@ -123,6 +130,8 @@ async def test_scalable_pipeline_saves_parallel_components(
     )
 
     assert payload is not None
+    assert payload["context"]["immutable_before"] == "2026-09-07"
+    monkeypatch.setattr(scalable_module, "date", datetime.date)
     assert len(payload["components"]) == 2
     results = []
     for component in payload["components"]:

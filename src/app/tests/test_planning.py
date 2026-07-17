@@ -2,11 +2,15 @@ import datetime
 
 import pytest
 from database import (
+    AvailabilityRule,
     FileType,
+    GenerationTask,
     ImportBatch,
+    ScheduleEntry,
     Stream,
     StreamGroup,
     StudentGroup,
+    Teacher,
     WeeklyLessonDemand,
 )
 from schemas.planning import AcademicPeriodCreate, WeeklyDemandItem
@@ -72,6 +76,211 @@ async def test_weekly_demands_are_independent(db_session) -> None:
         select(WeeklyLessonDemand).order_by(WeeklyLessonDemand.week_id)
     )
     assert [demand.lessons_count for demand in result.scalars()] == [2, 0]
+
+
+@pytest.mark.asyncio
+async def test_semester_demand_is_distributed_once_across_weeks(db_session) -> None:
+    period = await PlanningService.create_period(
+        AcademicPeriodCreate(
+            name="Осенний семестр",
+            starts_on=datetime.date(2026, 9, 7),
+            ends_on=datetime.date(2026, 10, 4),
+        ),
+        db_session,
+    )
+    batch = ImportBatch(filename="streams.xlsx", file_type=FileType.STREAMS)
+    teacher = Teacher(name="Иванов И.И.")
+    db_session.add_all([batch, teacher])
+    await db_session.flush()
+    stream = Stream(
+        import_batch_id=batch.id,
+        teacher_id=teacher.id,
+        event_name="Математика",
+        stream_type="Лекция",
+        lessons_count=10,
+    )
+    db_session.add(stream)
+    await db_session.flush()
+    db_session.add(
+        StreamGroup(stream_id=stream.id, group_name="МАТ-101", group_size=25)
+    )
+    await db_session.commit()
+
+    summary = await PlanningService.distribute_semester_demands(
+        period.id, ["МАТ-101"], ["Лекция"], set(), db_session
+    )
+
+    assert summary.planned_lessons == 10
+    assert summary.distributed_lessons == 10
+    assert [week.lessons_count for week in summary.weeks] == [3, 3, 2, 2]
+    result = await db_session.execute(
+        select(WeeklyLessonDemand).order_by(WeeklyLessonDemand.week_id)
+    )
+    assert sum(demand.lessons_count for demand in result.scalars()) == 10
+
+    repeated = await PlanningService.distribute_semester_demands(
+        period.id, ["МАТ-101"], ["Лекция"], set(), db_session
+    )
+    repeated_rows = await db_session.execute(select(WeeklyLessonDemand))
+    assert repeated.distributed_lessons == 10
+    assert len(repeated_rows.scalars().all()) == len(period.weeks)
+
+
+@pytest.mark.asyncio
+async def test_visiting_teacher_load_uses_only_available_weeks(db_session) -> None:
+    period = await PlanningService.create_period(
+        AcademicPeriodCreate(
+            name="Осенний семестр",
+            starts_on=datetime.date(2026, 9, 7),
+            ends_on=datetime.date(2026, 10, 4),
+        ),
+        db_session,
+    )
+    batch = ImportBatch(filename="streams.xlsx", file_type=FileType.STREAMS)
+    teacher = Teacher(name="Выездной преподаватель")
+    db_session.add_all([batch, teacher])
+    await db_session.flush()
+    stream = Stream(
+        import_batch_id=batch.id,
+        teacher_id=teacher.id,
+        event_name="Интенсив",
+        stream_type="Семинар",
+        lessons_count=8,
+    )
+    db_session.add(stream)
+    await db_session.flush()
+    db_session.add_all(
+        [
+            StreamGroup(stream_id=stream.id, group_name="ИНТ-101", group_size=20),
+            AvailabilityRule(
+                teacher_id=teacher.id,
+                rule_kind="available",
+                recurrence="date_range",
+                starts_on=period.weeks[1].starts_on,
+                ends_on=period.weeks[2].ends_on,
+                lesson_start=1,
+                lesson_end=7,
+                is_hard=True,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    summary = await PlanningService.distribute_semester_demands(
+        period.id, ["ИНТ-101"], ["Семинар"], set(), db_session
+    )
+
+    assert [week.lessons_count for week in summary.weeks] == [0, 4, 4, 0]
+
+
+@pytest.mark.asyncio
+async def test_distribution_rejects_teacher_capacity_shortage(db_session) -> None:
+    period = await PlanningService.create_period(
+        AcademicPeriodCreate(
+            name="Короткий модуль",
+            starts_on=datetime.date(2026, 9, 7),
+            ends_on=datetime.date(2026, 9, 13),
+        ),
+        db_session,
+    )
+    batch = ImportBatch(filename="streams.xlsx", file_type=FileType.STREAMS)
+    teacher = Teacher(name="Занятый преподаватель")
+    db_session.add_all([batch, teacher])
+    await db_session.flush()
+    stream = Stream(
+        import_batch_id=batch.id,
+        teacher_id=teacher.id,
+        event_name="Дефицит",
+        stream_type="Лекция",
+        lessons_count=2,
+    )
+    db_session.add(stream)
+    await db_session.flush()
+    db_session.add_all(
+        [
+            StreamGroup(stream_id=stream.id, group_name="ДЕФ-101", group_size=20),
+            AvailabilityRule(
+                teacher_id=teacher.id,
+                rule_kind="available",
+                recurrence="specific",
+                specific_date=datetime.date(2026, 9, 7),
+                lesson_start=1,
+                lesson_end=1,
+                is_hard=True,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    with pytest.raises(ValueError, match="не помещается 1 пар"):
+        await PlanningService.distribute_semester_demands(
+            period.id, ["ДЕФ-101"], ["Лекция"], set(), db_session
+        )
+
+    result = await db_session.execute(select(WeeklyLessonDemand))
+    assert result.scalars().all() == []
+
+
+@pytest.mark.asyncio
+async def test_distribution_counts_published_shared_lesson_once(db_session) -> None:
+    period = await PlanningService.create_period(
+        AcademicPeriodCreate(
+            name="Две недели",
+            starts_on=datetime.date(2026, 9, 7),
+            ends_on=datetime.date(2026, 9, 20),
+        ),
+        db_session,
+    )
+    batch = ImportBatch(filename="streams.xlsx", file_type=FileType.STREAMS)
+    teacher = Teacher(name="Лектор")
+    db_session.add_all([batch, teacher])
+    await db_session.flush()
+    stream = Stream(
+        import_batch_id=batch.id,
+        teacher_id=teacher.id,
+        event_name="Общая лекция",
+        stream_type="Лекция",
+        lessons_count=4,
+    )
+    db_session.add(stream)
+    await db_session.flush()
+    db_session.add_all(
+        [
+            StreamGroup(stream_id=stream.id, group_name="ГР-1", group_size=20),
+            StreamGroup(stream_id=stream.id, group_name="ГР-2", group_size=20),
+        ]
+    )
+    task = GenerationTask(
+        planning_week_id=period.weeks[0].id,
+        publication_status="published",
+        status="success",
+    )
+    db_session.add(task)
+    await db_session.flush()
+    for lesson in (1, 2):
+        for group_name in ("ГР-1", "ГР-2"):
+            db_session.add(
+                ScheduleEntry(
+                    task_id=task.id,
+                    planning_week_id=period.weeks[0].id,
+                    source_stream_id=stream.id,
+                    group_name=group_name,
+                    event_name=stream.event_name,
+                    stream_type=stream.stream_type,
+                    teacher_id=teacher.id,
+                    date=datetime.datetime(2026, 9, 7, 8, 30),
+                    lesson_number=lesson,
+                )
+            )
+    await db_session.commit()
+
+    summary = await PlanningService.distribute_semester_demands(
+        period.id, ["ГР-1", "ГР-2"], ["Лекция"], set(), db_session
+    )
+
+    assert summary.published_lessons == 2
+    assert summary.distributed_lessons == 4
+    assert [week.lessons_count for week in summary.weeks] == [2, 2]
 
 
 @pytest.mark.asyncio

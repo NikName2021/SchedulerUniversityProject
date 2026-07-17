@@ -58,6 +58,9 @@ class WeeklyDemandRead(WeeklyDemandItem):
 
     id: int
     week_id: int
+    event_name: str | None = None
+    stream_type: str | None = None
+    teacher_name: str | None = None
 
 
 class WeeklyDemandList(BaseModel):
@@ -73,3 +76,25 @@ class WeeklyDemandCloneRequest(BaseModel):
 class WeeklyDemandUpdateResult(BaseModel):
     week_id: int
     updated: int
+
+
+class SemesterDemandDistributionRequest(BaseModel):
+    groups: list[str] = Field(min_length=1)
+    enabled_types: list[str] = Field(default_factory=list)
+    holidays: list[date] = Field(default_factory=list)
+
+
+class SemesterWeekDistribution(BaseModel):
+    week_id: int
+    sequence_number: int
+    lessons_count: int
+    streams_count: int
+
+
+class SemesterDemandDistributionResult(BaseModel):
+    period_id: int
+    streams_count: int
+    planned_lessons: int
+    published_lessons: int
+    distributed_lessons: int
+    weeks: list[SemesterWeekDistribution]

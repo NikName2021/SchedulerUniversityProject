@@ -1,12 +1,14 @@
 from typing import Annotated
 
 from core.config import async_get_db
-from database import PlanningWeek, WeeklyLessonDemand
+from database import PlanningWeek, Stream, WeeklyLessonDemand
 from fastapi import APIRouter, Depends, HTTPException, status
 from schemas.planning import (
     AcademicPeriodCreate,
     AcademicPeriodRead,
     PlanningWeekRead,
+    SemesterDemandDistributionRequest,
+    SemesterDemandDistributionResult,
     WeeklyDemandBulkUpdate,
     WeeklyDemandCloneRequest,
     WeeklyDemandList,
@@ -16,6 +18,7 @@ from schemas.planning import (
 from services.planning_service import PlanningService
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 router = APIRouter(prefix="/planning", tags=["Planning"])
 
@@ -52,6 +55,29 @@ async def list_period_weeks(
     return [PlanningWeekRead.model_validate(week) for week in period.weeks]
 
 
+@router.post(
+    "/periods/{period_id}/demands/distribute",
+    response_model=SemesterDemandDistributionResult,
+)
+async def distribute_semester_demands(
+    period_id: int,
+    payload: SemesterDemandDistributionRequest,
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+) -> SemesterDemandDistributionResult:
+    try:
+        return await PlanningService.distribute_semester_demands(
+            period_id,
+            payload.groups,
+            payload.enabled_types,
+            set(payload.holidays),
+            db,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 async def _require_week(week_id: int, db: AsyncSession) -> PlanningWeek:
     week = await db.get(PlanningWeek, week_id)
     if week is None:
@@ -68,9 +94,22 @@ async def list_weekly_demands(
     result = await db.execute(
         select(WeeklyLessonDemand)
         .where(WeeklyLessonDemand.week_id == week_id)
+        .options(selectinload(WeeklyLessonDemand.stream).selectinload(Stream.teacher))
         .order_by(WeeklyLessonDemand.stream_id)
     )
-    demands = [WeeklyDemandRead.model_validate(item) for item in result.scalars()]
+    demands = [
+        WeeklyDemandRead(
+            id=item.id,
+            week_id=item.week_id,
+            stream_id=item.stream_id,
+            lessons_count=item.lessons_count,
+            priority=item.priority,
+            event_name=item.stream.event_name,
+            stream_type=item.stream.stream_type,
+            teacher_name=item.stream.teacher.name if item.stream.teacher else None,
+        )
+        for item in result.scalars()
+    ]
     return WeeklyDemandList(week_id=week_id, demands=demands)
 
 

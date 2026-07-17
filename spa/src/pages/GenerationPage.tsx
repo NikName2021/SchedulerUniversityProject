@@ -13,6 +13,10 @@ import {
   Filter,
   Settings2,
   Download,
+  CalendarRange,
+  Layers3,
+  RefreshCcw,
+  RotateCcw,
 } from "lucide-react";
 import { API_BASE_URL } from "../api/apiConfig";
 
@@ -36,6 +40,64 @@ interface RuleProfileOption {
   name: string;
   description: string | null;
   is_default: boolean;
+}
+
+interface PlanningWeek {
+  id: number;
+  period_id: number;
+  sequence_number: number;
+  starts_on: string;
+  ends_on: string;
+  status: string;
+}
+
+interface AcademicPeriod {
+  id: number;
+  name: string;
+  starts_on: string;
+  ends_on: string;
+  status: string;
+  weeks: PlanningWeek[];
+}
+
+interface BatchWeekState {
+  week: PlanningWeek;
+  taskId: number | null;
+  status:
+    | "pending"
+    | "queued"
+    | "running"
+    | "success"
+    | "partial"
+    | "failed"
+    | "canceled";
+  progress: number;
+  error: string | null;
+}
+
+interface WeeklyDemand {
+  id: number;
+  week_id: number;
+  stream_id: number;
+  lessons_count: number;
+  priority: number;
+  event_name: string | null;
+  stream_type: string | null;
+  teacher_name: string | null;
+}
+
+interface SemesterDistributionResult {
+  period_id: number;
+  streams_count: number;
+  planned_lessons: number;
+  published_lessons: number;
+  distributed_lessons: number;
+  weeks: Array<{
+    week_id: number;
+    sequence_number: number;
+    lessons_count: number;
+    streams_count: number;
+  }>;
 }
 
 const ALL_TYPES = [
@@ -80,6 +142,26 @@ export const GenerationPage: React.FC = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [ruleProfiles, setRuleProfiles] = useState<RuleProfileOption[]>([]);
   const [ruleProfileId, setRuleProfileId] = useState<number | null>(null);
+  const [generationMode, setGenerationMode] = useState<"week" | "semester">(
+    "week",
+  );
+  const [periods, setPeriods] = useState<AcademicPeriod[]>([]);
+  const [selectedPeriodId, setSelectedPeriodId] = useState<number | null>(null);
+  const [selectedWeekIds, setSelectedWeekIds] = useState<number[]>([]);
+  const [demandCounts, setDemandCounts] = useState<Record<number, number>>({});
+  const [isPreparingDemands, setIsPreparingDemands] = useState(false);
+  const [distributionResult, setDistributionResult] =
+    useState<SemesterDistributionResult | null>(null);
+  const [batchWeeks, setBatchWeeks] = useState<BatchWeekState[]>([]);
+  const [editingWeek, setEditingWeek] = useState<PlanningWeek | null>(null);
+  const [weeklyDemands, setWeeklyDemands] = useState<WeeklyDemand[]>([]);
+  const [isSavingDemands, setIsSavingDemands] = useState(false);
+  const [demandSearch, setDemandSearch] = useState("");
+  const [newPeriod, setNewPeriod] = useState({
+    name: "",
+    starts_on: "",
+    ends_on: "",
+  });
   const [status, setStatus] = useState<{
     type: "success" | "error";
     msg: string;
@@ -136,15 +218,17 @@ export const GenerationPage: React.FC = () => {
   const fetchInitialData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [groupsRes, statsRes, profilesRes] = await Promise.all([
+      const [groupsRes, statsRes, profilesRes, periodsRes] = await Promise.all([
         fetch(`${API_BASE_URL}/api/v1/scheduler/groups`),
         fetch(`${API_BASE_URL}/api/v1/scheduler/stats`),
         fetch(`${API_BASE_URL}/api/v1/reference/rule-profiles`),
+        fetch(`${API_BASE_URL}/api/v1/planning/periods`),
       ]);
 
       const groupsData = await groupsRes.json();
       const statsData = await statsRes.json();
       const profilesData = profilesRes.ok ? await profilesRes.json() : [];
+      const periodsData = periodsRes.ok ? await periodsRes.json() : [];
 
       setGroups(groupsData.groups || []);
       // If no inherited groups, don't auto-select all
@@ -153,6 +237,16 @@ export const GenerationPage: React.FC = () => {
       }
       setStats(statsData);
       setRuleProfiles(profilesData);
+      setPeriods(periodsData);
+      if (periodsData.length > 0) {
+        const firstPeriod = periodsData[0] as AcademicPeriod;
+        setSelectedPeriodId((current) => current || firstPeriod.id);
+        setSelectedWeekIds((current) =>
+          current.length > 0
+            ? current
+            : firstPeriod.weeks.map((week) => week.id),
+        );
+      }
       setRuleProfileId(
         profilesData.find((item: RuleProfileOption) => item.is_default)?.id ||
           profilesData[0]?.id ||
@@ -176,6 +270,80 @@ export const GenerationPage: React.FC = () => {
       setSubjectSummary({});
     }
   }, [selectedGroups, enabledTypes, fetchSubjectSummary]);
+
+  const selectedPeriod = periods.find(
+    (period) => period.id === selectedPeriodId,
+  );
+  const hasDistributedDemand = Object.values(demandCounts).some(
+    (lessonsCount) => lessonsCount > 0,
+  );
+
+  const loadDemandCounts = useCallback(async (weeks: PlanningWeek[]) => {
+    if (weeks.length === 0) {
+      setDemandCounts({});
+      return;
+    }
+    const responses = await Promise.all(
+      weeks.map(async (week) => {
+        const response = await fetch(
+          `${API_BASE_URL}/api/v1/planning/weeks/${week.id}/demands`,
+        );
+        if (!response.ok) return [week.id, 0] as const;
+        const payload = (await response.json()) as {
+          demands: Array<{ lessons_count: number }>;
+        };
+        return [
+          week.id,
+          payload.demands.reduce(
+            (total, demand) => total + Math.max(0, demand.lessons_count),
+            0,
+          ),
+        ] as const;
+      }),
+    );
+    setDemandCounts(Object.fromEntries(responses));
+    setSelectedWeekIds(
+      responses
+        .filter(([, lessonsCount]) => lessonsCount > 0)
+        .map(([weekId]) => weekId),
+    );
+  }, []);
+
+  useEffect(() => {
+    if (selectedPeriod) void loadDemandCounts(selectedPeriod.weeks);
+  }, [selectedPeriod, loadDemandCounts]);
+
+  useEffect(() => {
+    const active = batchWeeks.some(
+      (item) => item.taskId && ["queued", "running"].includes(item.status),
+    );
+    if (!active) return;
+    const interval = window.setInterval(async () => {
+      const response = await fetch(`${API_BASE_URL}/api/v1/scheduler/tasks`);
+      if (!response.ok) return;
+      const tasks = (await response.json()) as Array<{
+        id: number;
+        status: BatchWeekState["status"];
+        progress_percent: number;
+        error_message: string | null;
+      }>;
+      const byId = new Map(tasks.map((task) => [task.id, task]));
+      setBatchWeeks((current) =>
+        current.map((item) => {
+          const task = item.taskId ? byId.get(item.taskId) : undefined;
+          return task
+            ? {
+                ...item,
+                status: task.status,
+                progress: task.progress_percent,
+                error: task.error_message,
+              }
+            : item;
+        }),
+      );
+    }, 3000);
+    return () => window.clearInterval(interval);
+  }, [batchWeeks]);
 
   const handleToggleGroup = (group: string) => {
     setSelectedGroups((prev) =>
@@ -219,7 +387,257 @@ export const GenerationPage: React.FC = () => {
     setHolidays(holidays.filter((item) => item !== h));
   };
 
+  const createAcademicPeriod = async () => {
+    if (!newPeriod.name || !newPeriod.starts_on || !newPeriod.ends_on) return;
+    const response = await fetch(`${API_BASE_URL}/api/v1/planning/periods`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...newPeriod,
+        period_type: "semester",
+        create_weeks: true,
+      }),
+    });
+    if (!response.ok) {
+      const payload = (await response.json()) as { detail?: string };
+      setStatus({
+        type: "error",
+        msg: payload.detail || "Не удалось создать период",
+      });
+      return;
+    }
+    const period = (await response.json()) as AcademicPeriod;
+    setPeriods((current) => [period, ...current]);
+    setSelectedPeriodId(period.id);
+    setSelectedWeekIds(period.weeks.map((week) => week.id));
+    setNewPeriod({ name: "", starts_on: "", ends_on: "" });
+  };
+
+  const distributeSemesterDemands = async () => {
+    if (!selectedPeriod || selectedGroups.length === 0) return;
+    setIsPreparingDemands(true);
+    setStatus(null);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/v1/planning/periods/${selectedPeriod.id}/demands/distribute`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            groups: selectedGroups,
+            enabled_types: enabledTypes,
+            holidays,
+          }),
+        },
+      );
+      const payload = (await response.json()) as
+        | SemesterDistributionResult
+        | { detail?: string };
+      if (!response.ok || !("weeks" in payload)) {
+        throw new Error(
+          "detail" in payload && payload.detail
+            ? payload.detail
+            : "Не удалось распределить семестровую нагрузку",
+        );
+      }
+      setDistributionResult(payload);
+      setDemandCounts(
+        Object.fromEntries(
+          payload.weeks.map((week) => [week.week_id, week.lessons_count]),
+        ),
+      );
+      setSelectedWeekIds(
+        payload.weeks
+          .filter((week) => week.lessons_count > 0)
+          .map((week) => week.week_id),
+      );
+      setStatus({
+        type: "success",
+        msg: `Распределено ${payload.distributed_lessons} пар по ${payload.weeks.filter((week) => week.lessons_count > 0).length} неделям`,
+      });
+    } catch (error) {
+      setStatus({
+        type: "error",
+        msg:
+          error instanceof Error
+            ? error.message
+            : "Ошибка распределения нагрузки",
+      });
+    } finally {
+      setIsPreparingDemands(false);
+    }
+  };
+
+  const handleSemesterStart = async () => {
+    if (!selectedPeriod) {
+      setStatus({ type: "error", msg: "Выберите учебный период" });
+      return;
+    }
+    const weeks = selectedPeriod.weeks.filter(
+      (week) => selectedWeekIds.includes(week.id) && demandCounts[week.id] > 0,
+    );
+    if (weeks.length === 0) {
+      setStatus({
+        type: "error",
+        msg: "Сначала распределите семестровую нагрузку",
+      });
+      return;
+    }
+    setIsGenerating(true);
+    setStatus(null);
+    setBatchWeeks(
+      weeks.map((week) => ({
+        week,
+        taskId: null,
+        status: "pending",
+        progress: 0,
+        error: null,
+      })),
+    );
+    const results = await Promise.all(
+      weeks.map(async (week): Promise<BatchWeekState> => {
+        try {
+          const response = await fetch(
+            `${API_BASE_URL}/api/v1/scheduler/generate`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                groups: selectedGroups,
+                holidays,
+                planning_week_id: week.id,
+                settings: {
+                  enabled_types: enabledTypes,
+                  priorities: subjectPriorities,
+                  rule_profile_id: ruleProfileId,
+                  semester_period_id: selectedPeriod.id,
+                  created_at: new Date().toISOString(),
+                },
+              }),
+            },
+          );
+          const payload = (await response.json()) as {
+            task_id?: number;
+            detail?: string;
+          };
+          if (!response.ok || !payload.task_id) {
+            return {
+              week,
+              taskId: null,
+              status: "failed",
+              progress: 100,
+              error: payload.detail || "Не удалось поставить неделю в очередь",
+            };
+          }
+          return {
+            week,
+            taskId: payload.task_id,
+            status: "queued",
+            progress: 0,
+            error: null,
+          };
+        } catch {
+          return {
+            week,
+            taskId: null,
+            status: "failed",
+            progress: 100,
+            error: "Нет связи с сервером",
+          };
+        }
+      }),
+    );
+    setBatchWeeks(results);
+    const queued = results.filter((item) => item.taskId).length;
+    setStatus({
+      type: queued > 0 ? "success" : "error",
+      msg: `В очередь поставлено ${queued} из ${weeks.length} недель`,
+    });
+    setIsGenerating(false);
+  };
+
+  const retryBatchWeek = async (item: BatchWeekState) => {
+    if (!item.taskId) return;
+    const response = await fetch(
+      `${API_BASE_URL}/api/v1/scheduler/tasks/${item.taskId}/retry`,
+      { method: "POST" },
+    );
+    const payload = (await response.json()) as {
+      task_id?: number;
+      detail?: string;
+    };
+    if (!response.ok || !payload.task_id) {
+      setStatus({ type: "error", msg: payload.detail || "Retry не выполнен" });
+      return;
+    }
+    setBatchWeeks((current) =>
+      current.map((week) =>
+        week.week.id === item.week.id
+          ? {
+              ...week,
+              taskId: payload.task_id!,
+              status: "queued",
+              progress: 0,
+              error: null,
+            }
+          : week,
+      ),
+    );
+  };
+
+  const openWeeklyDemandEditor = async (week: PlanningWeek) => {
+    const response = await fetch(
+      `${API_BASE_URL}/api/v1/planning/weeks/${week.id}/demands`,
+    );
+    if (!response.ok) {
+      setStatus({
+        type: "error",
+        msg: "Не удалось загрузить недельную нагрузку",
+      });
+      return;
+    }
+    const payload = (await response.json()) as { demands: WeeklyDemand[] };
+    setWeeklyDemands(payload.demands);
+    setDemandSearch("");
+    setEditingWeek(week);
+  };
+
+  const saveWeeklyDemands = async () => {
+    if (!editingWeek) return;
+    setIsSavingDemands(true);
+    const response = await fetch(
+      `${API_BASE_URL}/api/v1/planning/weeks/${editingWeek.id}/demands`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          demands: weeklyDemands.map((item) => ({
+            stream_id: item.stream_id,
+            lessons_count: item.lessons_count,
+            priority: item.priority,
+          })),
+        }),
+      },
+    );
+    setIsSavingDemands(false);
+    if (!response.ok) {
+      const payload = (await response.json()) as { detail?: string };
+      setStatus({
+        type: "error",
+        msg: payload.detail || "Нагрузка не сохранена",
+      });
+      return;
+    }
+    if (selectedPeriod) await loadDemandCounts(selectedPeriod.weeks);
+    setEditingWeek(null);
+    setStatus({ type: "success", msg: "Недельная нагрузка сохранена" });
+  };
+
   const handleStartGeneration = async () => {
+    if (generationMode === "semester") {
+      await handleSemesterStart();
+      return;
+    }
     const horizonDays =
       Math.floor(
         (new Date(endDate).getTime() - new Date(startDate).getTime()) /
@@ -426,6 +844,29 @@ export const GenerationPage: React.FC = () => {
           </button>
         </div>
       </header>
+
+      <section className="grid grid-cols-2 gap-2 rounded-2xl border border-border-light bg-white p-2 shadow-sm">
+        <button
+          onClick={() => setGenerationMode("week")}
+          className={`flex items-center justify-center gap-3 rounded-xl px-5 py-4 text-sm font-extrabold transition-all ${
+            generationMode === "week"
+              ? "bg-brand text-white shadow-md"
+              : "text-text-secondary hover:bg-bg-base hover:text-brand"
+          }`}
+        >
+          <CalendarRange size={19} /> Одна неделя
+        </button>
+        <button
+          onClick={() => setGenerationMode("semester")}
+          className={`flex items-center justify-center gap-3 rounded-xl px-5 py-4 text-sm font-extrabold transition-all ${
+            generationMode === "semester"
+              ? "bg-brand text-white shadow-md"
+              : "text-text-secondary hover:bg-bg-base hover:text-brand"
+          }`}
+        >
+          <Layers3 size={19} /> Весь семестр по неделям
+        </button>
+      </section>
 
       <section className="flex items-center justify-between rounded-2xl border border-border-light bg-white px-5 py-4 shadow-sm">
         <div>
@@ -1172,6 +1613,8 @@ export const GenerationPage: React.FC = () => {
                 border: "1px solid var(--border-light)",
                 boxShadow: "var(--shadow-md)",
                 padding: "1.5rem",
+                gridColumn:
+                  generationMode === "semester" ? "1 / -1" : undefined,
               }}
             >
               <div
@@ -1196,82 +1639,426 @@ export const GenerationPage: React.FC = () => {
                 >
                   <Clock size={20} />
                 </div>
-                <h3 style={{ fontWeight: 800 }}>Интервал семестра</h3>
+                <h3 style={{ fontWeight: 800 }}>
+                  {generationMode === "week"
+                    ? "Учебная неделя"
+                    : "Учебный период"}
+                </h3>
               </div>
 
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: "1rem",
-                }}
-              >
+              {generationMode === "week" ? (
                 <div
                   style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "0.5rem",
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: "1rem",
                   }}
                 >
-                  <label
+                  <div
                     style={{
-                      fontSize: "0.625rem",
-                      fontWeight: 800,
-                      color: "var(--text-tertiary)",
-                      textTransform: "uppercase",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "0.5rem",
                     }}
                   >
-                    Начало
-                  </label>
-                  <input
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
+                    <label
+                      style={{
+                        fontSize: "0.625rem",
+                        fontWeight: 800,
+                        color: "var(--text-tertiary)",
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      Начало
+                    </label>
+                    <input
+                      type="date"
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
+                      style={{
+                        backgroundColor: "#f9fafb",
+                        border: "1px solid var(--border-light)",
+                        borderRadius: "10px",
+                        padding: "0.625rem 0.75rem",
+                        fontSize: "0.875rem",
+                        outline: "none",
+                        fontWeight: 600,
+                      }}
+                    />
+                  </div>
+                  <div
                     style={{
-                      backgroundColor: "#f9fafb",
-                      border: "1px solid var(--border-light)",
-                      borderRadius: "10px",
-                      padding: "0.625rem 0.75rem",
-                      fontSize: "0.875rem",
-                      outline: "none",
-                      fontWeight: 600,
-                    }}
-                  />
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "0.5rem",
-                  }}
-                >
-                  <label
-                    style={{
-                      fontSize: "0.625rem",
-                      fontWeight: 800,
-                      color: "var(--text-tertiary)",
-                      textTransform: "uppercase",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "0.5rem",
                     }}
                   >
-                    Конец
-                  </label>
-                  <input
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    style={{
-                      backgroundColor: "#f9fafb",
-                      border: "1px solid var(--border-light)",
-                      borderRadius: "10px",
-                      padding: "0.625rem 0.75rem",
-                      fontSize: "0.875rem",
-                      outline: "none",
-                      fontWeight: 600,
-                    }}
-                  />
+                    <label
+                      style={{
+                        fontSize: "0.625rem",
+                        fontWeight: 800,
+                        color: "var(--text-tertiary)",
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      Конец
+                    </label>
+                    <input
+                      type="date"
+                      value={endDate}
+                      onChange={(e) => setEndDate(e.target.value)}
+                      style={{
+                        backgroundColor: "#f9fafb",
+                        border: "1px solid var(--border-light)",
+                        borderRadius: "10px",
+                        padding: "0.625rem 0.75rem",
+                        fontSize: "0.875rem",
+                        outline: "none",
+                        fontWeight: 600,
+                      }}
+                    />
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="space-y-4">
+                  {periods.length > 0 && (
+                    <select
+                      value={selectedPeriodId ?? ""}
+                      onChange={(event) => {
+                        const periodId = Number(event.target.value);
+                        const period = periods.find(
+                          (item) => item.id === periodId,
+                        );
+                        setSelectedPeriodId(periodId);
+                        setSelectedWeekIds(
+                          period?.weeks.map((week) => week.id) || [],
+                        );
+                        setBatchWeeks([]);
+                      }}
+                      className="w-full rounded-xl border border-border-light bg-white px-3 py-2.5 text-sm font-bold text-text-primary outline-none focus:border-brand"
+                    >
+                      {periods.map((period) => (
+                        <option key={period.id} value={period.id}>
+                          {period.name} · {period.starts_on} — {period.ends_on}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      value={newPeriod.name}
+                      onChange={(event) =>
+                        setNewPeriod({ ...newPeriod, name: event.target.value })
+                      }
+                      placeholder="Название нового семестра"
+                      className="col-span-2 rounded-xl border border-border-light px-3 py-2 text-sm outline-none focus:border-brand"
+                    />
+                    <input
+                      type="date"
+                      value={newPeriod.starts_on}
+                      onChange={(event) =>
+                        setNewPeriod({
+                          ...newPeriod,
+                          starts_on: event.target.value,
+                        })
+                      }
+                      className="rounded-xl border border-border-light px-3 py-2 text-sm outline-none focus:border-brand"
+                    />
+                    <input
+                      type="date"
+                      value={newPeriod.ends_on}
+                      onChange={(event) =>
+                        setNewPeriod({
+                          ...newPeriod,
+                          ends_on: event.target.value,
+                        })
+                      }
+                      className="rounded-xl border border-border-light px-3 py-2 text-sm outline-none focus:border-brand"
+                    />
+                  </div>
+                  <button
+                    onClick={() => void createAcademicPeriod()}
+                    disabled={
+                      !newPeriod.name ||
+                      !newPeriod.starts_on ||
+                      !newPeriod.ends_on
+                    }
+                    className="w-full rounded-xl border border-brand/20 bg-brand/5 px-3 py-2 text-xs font-extrabold text-brand disabled:opacity-40"
+                  >
+                    Создать период и недели
+                  </button>
+                </div>
+              )}
             </div>
+
+            {generationMode === "semester" && selectedPeriod && (
+              <div className="col-span-2 rounded-[20px] border border-border-light bg-white p-6 shadow-md">
+                <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="flex items-center gap-2 font-extrabold text-text-primary">
+                      <Layers3 size={19} className="text-brand" /> Недельные
+                      расчеты
+                    </h3>
+                    <p className="mt-1 text-xs font-semibold text-text-secondary">
+                      В очереди одновременно выполняются не более двух
+                      solver-задач.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mb-5 grid gap-3 md:grid-cols-3">
+                  <div
+                    className={`rounded-xl border p-4 ${
+                      selectedGroups.length > 0
+                        ? "border-emerald-200 bg-emerald-50"
+                        : "border-amber-200 bg-amber-50"
+                    }`}
+                  >
+                    <div className="text-[10px] font-black uppercase tracking-wider text-text-tertiary">
+                      Шаг 1 · Группы
+                    </div>
+                    <div className="mt-1 text-sm font-extrabold text-text-primary">
+                      {selectedGroups.length > 0
+                        ? `Выбрано: ${selectedGroups.length}`
+                        : "Группы не выбраны"}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-border-light bg-bg-base p-4">
+                    <div className="text-[10px] font-black uppercase tracking-wider text-text-tertiary">
+                      Шаг 2 · Нагрузка
+                    </div>
+                    <div className="mt-1 text-sm font-extrabold text-text-primary">
+                      {hasDistributedDemand
+                        ? "Распределена"
+                        : "Нужно распределить"}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-border-light bg-bg-base p-4">
+                    <div className="text-[10px] font-black uppercase tracking-wider text-text-tertiary">
+                      Шаг 3 · Запуск
+                    </div>
+                    <div className="mt-1 text-sm font-extrabold text-text-primary">
+                      {selectedWeekIds.length > 0
+                        ? `${selectedWeekIds.length} недель готово`
+                        : "Ожидает распределения"}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mb-5 rounded-2xl border-2 border-brand/20 bg-brand/5 p-5">
+                  {selectedGroups.length === 0 && (
+                    <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                      <div>
+                        <div className="text-sm font-extrabold text-amber-900">
+                          Сначала выберите учебные группы
+                        </div>
+                        <div className="mt-1 text-xs font-semibold text-amber-700">
+                          Можно выбрать нужные группы выше или сразу выбрать
+                          все.
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedGroups([...groups])}
+                        className="rounded-xl bg-amber-500 px-4 py-2.5 text-xs font-extrabold text-white shadow-sm hover:bg-amber-600"
+                      >
+                        Выбрать все группы
+                      </button>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void distributeSemesterDemands()}
+                    disabled={
+                      isPreparingDemands ||
+                      selectedGroups.length === 0 ||
+                      enabledTypes.length === 0
+                    }
+                    className="flex w-full items-center justify-center gap-3 rounded-xl bg-brand px-5 py-4 text-sm font-black text-white shadow-lg shadow-brand/20 transition-all hover:-translate-y-0.5 hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0"
+                  >
+                    <RefreshCcw
+                      size={18}
+                      className={isPreparingDemands ? "animate-spin" : ""}
+                    />
+                    {isPreparingDemands
+                      ? "Распределяем нагрузку..."
+                      : hasDistributedDemand
+                        ? "Перераспределить нагрузку по семестру"
+                        : "Распределить нагрузку по семестру"}
+                  </button>
+                  <p className="mt-3 text-center text-xs font-semibold text-text-secondary">
+                    Общая нагрузка будет разделена между неделями с учетом
+                    доступности преподавателей, сроков дисциплин и праздников.
+                  </p>
+                </div>
+
+                {distributionResult && (
+                  <div className="mb-5 grid gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-xs font-bold text-emerald-900 sm:grid-cols-3">
+                    <div>План: {distributionResult.planned_lessons} пар</div>
+                    <div>
+                      Уже опубликовано: {distributionResult.published_lessons}
+                    </div>
+                    <div>
+                      Распределено: {distributionResult.distributed_lessons}
+                    </div>
+                  </div>
+                )}
+
+                {batchWeeks.length > 0 && (
+                  <div className="mb-5 rounded-xl border border-brand/10 bg-brand/5 p-4">
+                    <div className="mb-2 flex justify-between text-xs font-extrabold text-brand">
+                      <span>Прогресс семестра</span>
+                      <span>
+                        {
+                          batchWeeks.filter((item) =>
+                            [
+                              "success",
+                              "partial",
+                              "failed",
+                              "canceled",
+                            ].includes(item.status),
+                          ).length
+                        }
+                        /{batchWeeks.length} недель
+                      </span>
+                    </div>
+                    <div className="h-2 overflow-hidden rounded-full bg-white">
+                      <div
+                        className="h-full rounded-full bg-brand transition-all"
+                        style={{
+                          width: `${batchWeeks.length ? batchWeeks.reduce((sum, item) => sum + item.progress, 0) / batchWeeks.length : 0}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {hasDistributedDemand ? (
+                  <>
+                    <div className="mb-3 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSelectedWeekIds(() => {
+                            const readyWeekIds = selectedPeriod.weeks
+                              .filter((week) => demandCounts[week.id] > 0)
+                              .map((week) => week.id);
+                            return selectedWeekIds.length ===
+                              readyWeekIds.length
+                              ? []
+                              : readyWeekIds;
+                          })
+                        }
+                        className="rounded-xl border border-border-light bg-white px-3 py-2 text-xs font-extrabold text-text-secondary hover:text-brand"
+                      >
+                        {selectedWeekIds.length ===
+                        selectedPeriod.weeks.filter(
+                          (week) => demandCounts[week.id] > 0,
+                        ).length
+                          ? "Снять выбор недель"
+                          : "Выбрать все недели"}
+                      </button>
+                    </div>
+                    <div className="grid max-h-80 gap-2 overflow-y-auto md:grid-cols-2">
+                      {selectedPeriod.weeks.map((week) => {
+                        const batch = batchWeeks.find(
+                          (item) => item.week.id === week.id,
+                        );
+                        const ready = Boolean(demandCounts[week.id]);
+                        return (
+                          <label
+                            key={week.id}
+                            className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition-all ${
+                              selectedWeekIds.includes(week.id)
+                                ? "border-brand/30 bg-brand/5"
+                                : "border-border-light bg-white opacity-60"
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              disabled={!ready}
+                              checked={selectedWeekIds.includes(week.id)}
+                              onChange={() =>
+                                setSelectedWeekIds((current) =>
+                                  current.includes(week.id)
+                                    ? current.filter((id) => id !== week.id)
+                                    : [...current, week.id],
+                                )
+                              }
+                              className="h-4 w-4 accent-brand disabled:opacity-30"
+                            />
+                            <div className="min-w-0 flex-1">
+                              <div className="text-xs font-extrabold text-text-primary">
+                                Неделя {week.sequence_number}
+                              </div>
+                              <div className="mt-0.5 text-[11px] text-text-secondary">
+                                {week.starts_on} — {week.ends_on}
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <div
+                                className={`text-[10px] font-extrabold ${
+                                  ready ? "text-emerald-600" : "text-amber-600"
+                                }`}
+                              >
+                                {ready
+                                  ? `${demandCounts[week.id]} пар`
+                                  : "0 пар после распределения"}
+                              </div>
+                              {ready && !batch && (
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.preventDefault();
+                                    void openWeeklyDemandEditor(week);
+                                  }}
+                                  className="mt-1 text-[10px] font-extrabold text-brand hover:underline"
+                                >
+                                  Настроить
+                                </button>
+                              )}
+                              {batch && (
+                                <div className="mt-1 flex items-center justify-end gap-1 text-[10px] font-bold text-text-secondary">
+                                  {batch.status} · {batch.progress}%
+                                  {batch.status === "failed" &&
+                                    batch.taskId && (
+                                      <button
+                                        type="button"
+                                        title={batch.error || "Повторить"}
+                                        onClick={(event) => {
+                                          event.preventDefault();
+                                          void retryBatchWeek(batch);
+                                        }}
+                                        className="ml-1 rounded p-1 text-red-500 hover:bg-red-50"
+                                      >
+                                        <RotateCcw size={11} />
+                                      </button>
+                                    )}
+                                </div>
+                              )}
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </>
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-border-light bg-bg-base px-6 py-10 text-center">
+                    <Layers3
+                      size={36}
+                      className="mx-auto mb-3 text-text-tertiary opacity-50"
+                    />
+                    <div className="font-extrabold text-text-primary">
+                      Недельный план появится после распределения
+                    </div>
+                    <div className="mt-1 text-xs font-semibold text-text-secondary">
+                      Не нужно настраивать {selectedPeriod.weeks.length} недель
+                      вручную.
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Holidays */}
             <div
@@ -1410,7 +2197,9 @@ export const GenerationPage: React.FC = () => {
                     marginBottom: "0.5rem",
                   }}
                 >
-                  Запуск
+                  {generationMode === "semester"
+                    ? "Запуск семестра"
+                    : "Запуск недели"}
                 </h3>
                 <p
                   style={{
@@ -1421,15 +2210,18 @@ export const GenerationPage: React.FC = () => {
                     lineHeight: 1.5,
                   }}
                 >
-                  Расчет {selectedGroups.length} групп с учетом выбранных типов
-                  пар.
+                  {generationMode === "semester"
+                    ? `${selectedWeekIds.length} недель для ${selectedGroups.length} групп будут рассчитаны отдельными безопасными задачами.`
+                    : `Расчет ${selectedGroups.length} групп с учетом выбранных типов пар.`}
                 </p>
 
                 <button
                   disabled={
                     selectedGroups.length === 0 ||
                     isGenerating ||
-                    enabledTypes.length === 0
+                    enabledTypes.length === 0 ||
+                    (generationMode === "semester" &&
+                      (!selectedPeriod || selectedWeekIds.length === 0))
                   }
                   onClick={handleStartGeneration}
                   style={{
@@ -1448,19 +2240,25 @@ export const GenerationPage: React.FC = () => {
                     cursor:
                       selectedGroups.length === 0 ||
                       isGenerating ||
-                      enabledTypes.length === 0
+                      enabledTypes.length === 0 ||
+                      (generationMode === "semester" &&
+                        (!selectedPeriod || selectedWeekIds.length === 0))
                         ? "not-allowed"
                         : "pointer",
                     backgroundColor:
                       selectedGroups.length === 0 ||
                       isGenerating ||
-                      enabledTypes.length === 0
+                      enabledTypes.length === 0 ||
+                      (generationMode === "semester" &&
+                        (!selectedPeriod || selectedWeekIds.length === 0))
                         ? "rgba(255,255,255,0.1)"
                         : "var(--brand)",
                     color:
                       selectedGroups.length === 0 ||
                       isGenerating ||
-                      enabledTypes.length === 0
+                      enabledTypes.length === 0 ||
+                      (generationMode === "semester" &&
+                        (!selectedPeriod || selectedWeekIds.length === 0))
                         ? "rgba(255,255,255,0.3)"
                         : "white",
                     boxShadow: isGenerating
@@ -1477,7 +2275,11 @@ export const GenerationPage: React.FC = () => {
                   ) : (
                     <Zap size={18} />
                   )}
-                  {isGenerating ? "Расчет..." : "Начать расчет"}
+                  {isGenerating
+                    ? "Постановка в очередь..."
+                    : generationMode === "semester"
+                      ? "Запустить выбранные недели"
+                      : "Начать расчет недели"}
                 </button>
 
                 {status && (
@@ -1521,6 +2323,165 @@ export const GenerationPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {editingWeek && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/50 p-6 backdrop-blur-sm">
+          <div className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-border-light px-6 py-5">
+              <div>
+                <h2 className="text-lg font-black text-text-primary">
+                  Нагрузка недели {editingWeek.sequence_number}
+                </h2>
+                <p className="mt-1 text-xs font-semibold text-text-secondary">
+                  {editingWeek.starts_on} — {editingWeek.ends_on} · нулевое
+                  значение исключает поток из этой недели
+                </p>
+              </div>
+              <button
+                onClick={() => setEditingWeek(null)}
+                className="rounded-xl p-2 text-text-secondary hover:bg-bg-base hover:text-text-primary"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="border-b border-border-light px-6 py-4">
+              <div className="relative">
+                <Search
+                  size={15}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary"
+                />
+                <input
+                  value={demandSearch}
+                  onChange={(event) => setDemandSearch(event.target.value)}
+                  placeholder="Поиск дисциплины или преподавателя"
+                  className="w-full rounded-xl border border-border-light py-2.5 pl-9 pr-3 text-sm outline-none focus:border-brand"
+                />
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto px-6 py-3">
+              <table className="w-full border-collapse text-left">
+                <thead className="sticky top-0 bg-white text-[10px] font-black uppercase text-text-tertiary">
+                  <tr>
+                    <th className="border-b border-border-light py-3 pr-4">
+                      Поток
+                    </th>
+                    <th className="border-b border-border-light px-3 py-3">
+                      Тип
+                    </th>
+                    <th className="w-32 border-b border-border-light px-3 py-3">
+                      Занятий
+                    </th>
+                    <th className="w-32 border-b border-border-light pl-3 py-3">
+                      Приоритет
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {weeklyDemands
+                    .filter((item) => {
+                      const query = demandSearch.toLowerCase();
+                      return (
+                        !query ||
+                        (item.event_name || "").toLowerCase().includes(query) ||
+                        (item.teacher_name || "").toLowerCase().includes(query)
+                      );
+                    })
+                    .map((item) => (
+                      <tr
+                        key={item.stream_id}
+                        className="border-b border-border-light/70"
+                      >
+                        <td className="py-3 pr-4">
+                          <div className="text-sm font-extrabold text-text-primary">
+                            {item.event_name || `Поток ${item.stream_id}`}
+                          </div>
+                          <div className="mt-0.5 text-[11px] text-text-secondary">
+                            {item.teacher_name || "Преподаватель не назначен"}
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 text-xs font-bold text-text-secondary">
+                          {item.stream_type || "—"}
+                        </td>
+                        <td className="px-3 py-3">
+                          <input
+                            type="number"
+                            min={0}
+                            max={14}
+                            value={item.lessons_count}
+                            onChange={(event) =>
+                              setWeeklyDemands((current) =>
+                                current.map((demand) =>
+                                  demand.stream_id === item.stream_id
+                                    ? {
+                                        ...demand,
+                                        lessons_count: Math.max(
+                                          0,
+                                          Number(event.target.value),
+                                        ),
+                                      }
+                                    : demand,
+                                ),
+                              )
+                            }
+                            className="w-20 rounded-lg border border-border-light px-2 py-1.5 text-sm font-bold outline-none focus:border-brand"
+                          />
+                        </td>
+                        <td className="pl-3 py-3">
+                          <input
+                            type="number"
+                            min={1}
+                            max={10}
+                            value={item.priority}
+                            onChange={(event) =>
+                              setWeeklyDemands((current) =>
+                                current.map((demand) =>
+                                  demand.stream_id === item.stream_id
+                                    ? {
+                                        ...demand,
+                                        priority: Math.min(
+                                          10,
+                                          Math.max(
+                                            1,
+                                            Number(event.target.value),
+                                          ),
+                                        ),
+                                      }
+                                    : demand,
+                                ),
+                              )
+                            }
+                            className="w-20 rounded-lg border border-border-light px-2 py-1.5 text-sm font-bold outline-none focus:border-brand"
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex items-center justify-between border-t border-border-light px-6 py-4">
+              <span className="text-xs font-semibold text-text-secondary">
+                Активно потоков:{" "}
+                {weeklyDemands.filter((item) => item.lessons_count > 0).length}
+              </span>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setEditingWeek(null)}
+                  className="rounded-xl border border-border-light px-4 py-2.5 text-sm font-extrabold text-text-secondary"
+                >
+                  Отмена
+                </button>
+                <button
+                  onClick={() => void saveWeeklyDemands()}
+                  disabled={isSavingDemands}
+                  className="rounded-xl bg-brand px-5 py-2.5 text-sm font-extrabold text-white disabled:opacity-50"
+                >
+                  {isSavingDemands ? "Сохранение…" : "Сохранить нагрузку"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <style
         dangerouslySetInnerHTML={{

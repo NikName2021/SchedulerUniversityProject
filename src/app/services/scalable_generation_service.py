@@ -548,6 +548,7 @@ class ScalableGenerationService:
                         date.today(), datetime.fromisoformat(start_date).date()
                     ).isoformat()
                     if planning_week_id is not None
+                    and (base_task_id or carry_over_entries)
                     else start_date
                 ),
                 "planning_week_id": planning_week_id,
