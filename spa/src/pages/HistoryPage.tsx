@@ -1,22 +1,22 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { API_BASE_URL } from "../api/apiConfig";
 import {
-  History as HistoryIcon,
-  Download,
-  RefreshCcw,
-  CheckCircle2,
-  XCircle,
-  Clock,
-  Calendar,
-  Users as UsersIcon,
-  Layout as LayoutIcon,
+  AlertTriangle,
+  Archive,
   Ban,
+  Calendar,
+  CheckCircle2,
+  Clock3,
+  Download,
+  History as HistoryIcon,
+  LayoutDashboard,
+  RefreshCcw,
   RotateCcw,
   Send,
-  Archive,
-  AlertTriangle,
+  Users,
+  XCircle,
 } from "lucide-react";
+import { API_BASE_URL } from "../api/apiConfig";
 
 interface GenerationTask {
   id: number;
@@ -40,6 +40,24 @@ interface GenerationTask {
 const hasScheduleResult = (status: string) =>
   status === "success" || status === "partial";
 
+const statusMeta = (status: string) => {
+  if (status === "success")
+    return { label: "Готово", tone: "success", Icon: CheckCircle2 };
+  if (status === "partial")
+    return { label: "Частично", tone: "warning", Icon: AlertTriangle };
+  if (status === "failed")
+    return { label: "Ошибка", tone: "danger", Icon: XCircle };
+  if (status === "canceled")
+    return { label: "Отменено", tone: "neutral", Icon: Ban };
+  return { label: "Выполняется", tone: "warning", Icon: Clock3 };
+};
+
+const publicationLabel = (task: GenerationTask) => {
+  if (task.publication_status === "published") return "Опубликовано";
+  if (task.publication_status === "archived") return "Архив";
+  return `Черновик · редакция ${task.edit_revision || 0}`;
+};
+
 const HistoryPage: React.FC = () => {
   const [tasks, setTasks] = useState<GenerationTask[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -47,28 +65,27 @@ const HistoryPage: React.FC = () => {
 
   const fetchTasks = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/scheduler/tasks`);
-      const data = await res.json();
-      setTasks(data);
-    } catch {
-      console.error("Failed to fetch tasks");
+      const response = await fetch(`${API_BASE_URL}/api/v1/scheduler/tasks`);
+      if (!response.ok) throw new Error("Не удалось загрузить задачи");
+      setTasks(await response.json());
+    } catch (error) {
+      console.error(error);
     } finally {
       setIsLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchTasks();
-    const intervalId = window.setInterval(fetchTasks, 3000);
+    void fetchTasks();
+    const intervalId = window.setInterval(() => void fetchTasks(), 3000);
     return () => window.clearInterval(intervalId);
   }, [fetchTasks]);
 
-  const handleDownload = (taskId: number) => {
+  const handleDownload = (taskId: number) =>
     window.open(
       `${API_BASE_URL}/api/v1/scheduler/export?task_id=${taskId}`,
       "_blank",
     );
-  };
 
   const runTaskAction = async (
     taskId: number,
@@ -100,410 +117,220 @@ const HistoryPage: React.FC = () => {
   };
 
   const handleInherit = (task: GenerationTask) => {
-    try {
-      // Navigate to generation page with loaded state
-      navigate("/generation", {
-        state: {
-          groups: task.groups || [],
-          holidays: task.holidays || [],
-          settings: task.settings || {},
-          start_date: task.start_date,
-          end_date: task.end_date,
-        },
-      });
-    } catch {
-      console.error("Inherit error");
-      alert("Не удалось загрузить параметры этой задачи.");
-    }
+    navigate("/generation", {
+      state: {
+        groups: task.groups || [],
+        holidays: task.holidays || [],
+        settings: task.settings || {},
+        start_date: task.start_date,
+        end_date: task.end_date,
+      },
+    });
   };
 
-  const formatDate = (dateStr: string) => {
-    try {
-      const d = new Date(dateStr);
-      if (isNaN(d.getTime())) return "Дата неизвестна";
-      return d.toLocaleString("ru-RU", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-    } catch {
-      return "Ошибка даты";
-    }
+  const formatDate = (date: string) => {
+    const parsed = new Date(date);
+    return Number.isNaN(parsed.getTime())
+      ? "Дата неизвестна"
+      : parsed.toLocaleString("ru-RU", {
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        });
   };
 
-  if (isLoading)
+  if (isLoading) {
     return (
-      <div style={{ padding: "5rem", textAlign: "center" }}>
-        <div
-          className="spinner-mini"
-          style={{
-            margin: "0 auto 1rem",
-            width: "30px",
-            height: "30px",
-            border: "3px solid #eee",
-            borderTopColor: "var(--brand)",
-            borderRadius: "50%",
-            animation: "spin 1s linear infinite",
-          }}
-        />
-        <div style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
-          Загрузка истории...
-        </div>
+      <div className="loading-state">
+        <span className="loading-state__spinner" /> Загрузка журнала операций…
       </div>
     );
+  }
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: "2rem",
-        paddingBottom: "5rem",
-      }}
-      className="animate-fade-in"
-    >
-      <header
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-end",
-        }}
-      >
+    <div className="enterprise-page animate-fade-in">
+      <section className="enterprise-page__header">
         <div>
-          <h1
-            style={{
-              fontSize: "2.5rem",
-              fontWeight: 900,
-              letterSpacing: "-0.02em",
-              marginBottom: "0.5rem",
-            }}
-          >
-            История
-          </h1>
-          <p style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
-            Просмотр и повторное использование прошлых расчетов
+          <h2 className="enterprise-page__heading">Реестр расчётов</h2>
+          <p className="enterprise-page__description">
+            Статус задач, версии сформированного расписания и доступные
+            действия.
           </p>
         </div>
         <button
-          onClick={fetchTasks}
-          style={{
-            backgroundColor: "white",
-            border: "1px solid var(--border-light)",
-            padding: "0.75rem 1.25rem",
-            borderRadius: "12px",
-            fontWeight: 700,
-            display: "flex",
-            alignItems: "center",
-            gap: "0.5rem",
-            cursor: "pointer",
-          }}
+          type="button"
+          className="btn-secondary"
+          onClick={() => void fetchTasks}
         >
-          <RefreshCcw size={18} /> Обновить
+          <RefreshCcw size={16} /> Обновить
         </button>
-      </header>
+      </section>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-        {tasks.map((task) => (
-          <div
-            key={task.id}
-            style={{
-              backgroundColor: "white",
-              borderRadius: "24px",
-              padding: "1.5rem",
-              border: "1px solid var(--border-light)",
-              boxShadow: "var(--shadow-sm)",
-              display: "grid",
-              gridTemplateColumns: "auto 1fr auto auto",
-              alignItems: "center",
-              gap: "2rem",
-            }}
-          >
-            {/* Status Icon */}
-            <div
-              style={{
-                width: "48px",
-                height: "48px",
-                borderRadius: "14px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                backgroundColor: hasScheduleResult(task.status)
-                  ? "rgba(16, 185, 129, 0.1)"
-                  : task.status === "failed"
-                    ? "rgba(239, 68, 68, 0.1)"
-                    : "rgba(245, 158, 11, 0.1)",
-                color: hasScheduleResult(task.status)
-                  ? "#10b981"
-                  : task.status === "failed"
-                    ? "#ef4444"
-                    : "#f59e0b",
-              }}
-            >
-              {hasScheduleResult(task.status) ? (
-                <CheckCircle2 size={24} />
-              ) : task.status === "failed" ? (
-                <XCircle size={24} />
-              ) : (
-                <Clock size={24} />
-              )}
-            </div>
-
-            {/* Info */}
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: "0.25rem",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "0.75rem",
-                }}
-              >
-                <span style={{ fontWeight: 800, fontSize: "1.125rem" }}>
-                  Расчет #{task.id} · версия {task.version_number || 1}
-                </span>
-                <span
-                  style={{
-                    fontSize: "0.625rem",
-                    fontWeight: 900,
-                    textTransform: "uppercase",
-                    padding: "2px 8px",
-                    borderRadius: "20px",
-                    backgroundColor: hasScheduleResult(task.status)
-                      ? "rgba(16, 185, 129, 0.1)"
-                      : "rgba(245, 158, 11, 0.1)",
-                    color: hasScheduleResult(task.status)
-                      ? "#10b981"
-                      : "#f59e0b",
-                  }}
-                >
-                  {task.status === "success"
-                    ? "Готово"
-                    : task.status === "partial"
-                      ? "Частично"
-                      : task.status === "failed"
-                        ? "Ошибка"
-                        : task.status === "canceled"
-                          ? "Отменено"
-                          : "В процессе"}
-                </span>
-              </div>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "1.5rem",
-                  color: "var(--text-secondary)",
-                  fontSize: "0.8125rem",
-                  fontWeight: 600,
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "0.4rem",
-                  }}
-                >
-                  <Calendar size={14} /> {formatDate(task.created_at)}
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "0.4rem",
-                  }}
-                >
-                  <UsersIcon size={14} /> {task.groups ? task.groups.length : 0}{" "}
-                  групп
-                </div>
-                {hasScheduleResult(task.status) && (
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "0.4rem",
-                      color: "#10b981",
-                    }}
-                  >
-                    <CheckCircle2 size={14} /> {task.result_count} пар
-                  </div>
-                )}
-                <div style={{ color: "var(--brand)" }}>
-                  {task.publication_status === "published"
-                    ? "Опубликовано"
-                    : task.publication_status === "archived"
-                      ? "Архив"
-                      : `Черновик · редакция ${task.edit_revision || 0}`}
-                </div>
-                {!hasScheduleResult(task.status) &&
-                  task.status !== "failed" && (
-                    <div style={{ color: "#f59e0b" }}>
-                      {task.progress_percent || 0}% ·{" "}
-                      {task.completed_components || 0}/
-                      {task.total_components || 0} компонент
+      {tasks.length > 0 ? (
+        <section className="task-registry app-panel">
+          <div className="task-registry__head">
+            <span>Расчёт</span>
+            <span>Параметры</span>
+            <span>Статус</span>
+            <span>Публикация</span>
+            <span>Действия</span>
+          </div>
+          <div className="task-registry__body">
+            {tasks.map((task) => {
+              const status = statusMeta(task.status);
+              const StatusIcon = status.Icon;
+              return (
+                <article className="task-row" key={task.id}>
+                  <div className="task-row__identity">
+                    <div
+                      className={`task-row__status-icon task-row__status-icon--${status.tone}`}
+                    >
+                      <StatusIcon size={18} />
                     </div>
-                  )}
-              </div>
-            </div>
-
-            {/* Error message if failed */}
-            {(task.status === "failed" || task.status === "partial") &&
-              task.error_message && (
-                <div
-                  style={{
-                    fontSize: "0.75rem",
-                    color: task.status === "failed" ? "#ef4444" : "#f59e0b",
-                    fontWeight: 600,
-                    maxWidth: "300px",
-                  }}
-                >
-                  {task.error_message}
-                </div>
-              )}
-
-            {/* Actions */}
-            <div style={{ display: "flex", gap: "0.75rem" }}>
-              {(task.status === "queued" || task.status === "running") && (
-                <button
-                  onClick={() => void runTaskAction(task.id, "cancel")}
-                  title="Отменить расчет"
-                  className="rounded-xl border border-red-200 bg-red-50 p-3 text-red-600 hover:bg-red-100"
-                >
-                  <Ban size={16} />
-                </button>
-              )}
-              {(task.status === "failed" || task.status === "canceled") && (
-                <button
-                  onClick={() => void runTaskAction(task.id, "retry")}
-                  title="Повторить расчет"
-                  className="rounded-xl border border-border-light bg-white p-3 text-text-secondary hover:text-brand"
-                >
-                  <RotateCcw size={16} />
-                </button>
-              )}
-              {hasScheduleResult(task.status) &&
-                task.publication_status === "draft" && (
-                  <button
-                    onClick={() => void runTaskAction(task.id, "publish")}
-                    title="Опубликовать версию"
-                    className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-emerald-600 hover:bg-emerald-100"
-                  >
-                    <Send size={16} />
-                  </button>
-                )}
-              {task.publication_status === "published" && (
-                <button
-                  onClick={() => void runTaskAction(task.id, "archive")}
-                  title="Отправить в архив"
-                  className="rounded-xl border border-border-light bg-white p-3 text-text-secondary hover:text-brand"
-                >
-                  <Archive size={16} />
-                </button>
-              )}
-              {(task.status === "partial" || task.status === "failed") && (
-                <button
-                  onClick={() => void showDiagnostics(task.id)}
-                  title="Показать диагностику"
-                  className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-amber-600 hover:bg-amber-100"
-                >
-                  <AlertTriangle size={16} />
-                </button>
-              )}
-              <button
-                onClick={() => handleInherit(task)}
-                style={{
-                  padding: "0.75rem 1.25rem",
-                  borderRadius: "12px",
-                  border: "1px solid var(--border-light)",
-                  backgroundColor: "white",
-                  fontWeight: 700,
-                  fontSize: "0.875rem",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "0.5rem",
-                  cursor: "pointer",
-                  transition: "all 0.2s",
-                }}
-              >
-                <RefreshCcw size={16} /> Наследовать
-              </button>
-              {hasScheduleResult(task.status) && (
-                <button
-                  onClick={() => handleDownload(task.id)}
-                  style={{
-                    padding: "0.75rem 1.25rem",
-                    borderRadius: "12px",
-                    border: "none",
-                    backgroundColor: "var(--brand)",
-                    color: "white",
-                    fontWeight: 700,
-                    fontSize: "0.875rem",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "0.5rem",
-                    cursor: "pointer",
-                    boxShadow: "0 4px 12px rgba(79, 70, 229, 0.2)",
-                    transition: "all 0.2s",
-                  }}
-                >
-                  <Download size={16} /> Скачать Excel
-                </button>
-              )}
-              {hasScheduleResult(task.status) && (
-                <button
-                  onClick={() => navigate(`/schedule/${task.id}`)}
-                  style={{
-                    padding: "0.75rem 1.25rem",
-                    borderRadius: "12px",
-                    border: "1px solid var(--brand)",
-                    backgroundColor: "rgba(79, 70, 229, 0.05)",
-                    color: "var(--brand)",
-                    fontWeight: 700,
-                    fontSize: "0.875rem",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "0.5rem",
-                    cursor: "pointer",
-                    transition: "all 0.2s",
-                  }}
-                >
-                  <LayoutIcon size={16} /> Открыть редактор
-                </button>
-              )}
-            </div>
+                    <div>
+                      <strong>Расчёт #{task.id}</strong>
+                      <span>
+                        Версия {task.version_number || 1} ·{" "}
+                        {formatDate(task.created_at)}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="task-row__parameters">
+                    <span>
+                      <Users size={14} /> {task.groups?.length || 0} групп
+                    </span>
+                    {hasScheduleResult(task.status) && (
+                      <span>
+                        <Calendar size={14} /> {task.result_count} пар
+                      </span>
+                    )}
+                    {!hasScheduleResult(task.status) &&
+                      task.status !== "failed" && (
+                        <span>
+                          {task.progress_percent || 0}% ·{" "}
+                          {task.completed_components || 0}/
+                          {task.total_components || 0}
+                        </span>
+                      )}
+                    {task.error_message && (
+                      <small title={task.error_message}>
+                        {task.error_message}
+                      </small>
+                    )}
+                  </div>
+                  <div>
+                    <span
+                      className={`status-badge status-badge--${status.tone}`}
+                    >
+                      <StatusIcon size={13} /> {status.label}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="task-row__publication">
+                      {publicationLabel(task)}
+                    </span>
+                  </div>
+                  <div className="task-row__actions">
+                    {(task.status === "queued" ||
+                      task.status === "running") && (
+                      <button
+                        type="button"
+                        className="button-icon button-danger"
+                        title="Отменить расчёт"
+                        onClick={() => void runTaskAction(task.id, "cancel")}
+                      >
+                        <Ban size={16} />
+                      </button>
+                    )}
+                    {(task.status === "failed" ||
+                      task.status === "canceled") && (
+                      <button
+                        type="button"
+                        className="button-icon"
+                        title="Повторить расчёт"
+                        onClick={() => void runTaskAction(task.id, "retry")}
+                      >
+                        <RotateCcw size={16} />
+                      </button>
+                    )}
+                    {hasScheduleResult(task.status) &&
+                      task.publication_status === "draft" && (
+                        <button
+                          type="button"
+                          className="button-icon task-action--success"
+                          title="Опубликовать версию"
+                          onClick={() => void runTaskAction(task.id, "publish")}
+                        >
+                          <Send size={16} />
+                        </button>
+                      )}
+                    {task.publication_status === "published" && (
+                      <button
+                        type="button"
+                        className="button-icon"
+                        title="Отправить в архив"
+                        onClick={() => void runTaskAction(task.id, "archive")}
+                      >
+                        <Archive size={16} />
+                      </button>
+                    )}
+                    {(task.status === "partial" ||
+                      task.status === "failed") && (
+                      <button
+                        type="button"
+                        className="button-icon task-action--warning"
+                        title="Показать диагностику"
+                        onClick={() => void showDiagnostics(task.id)}
+                      >
+                        <AlertTriangle size={16} />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="button-icon"
+                      title="Наследовать параметры"
+                      onClick={() => handleInherit(task)}
+                    >
+                      <RefreshCcw size={16} />
+                    </button>
+                    {hasScheduleResult(task.status) && (
+                      <button
+                        type="button"
+                        className="button-icon task-action--primary"
+                        title="Скачать Excel"
+                        onClick={() => handleDownload(task.id)}
+                      >
+                        <Download size={16} />
+                      </button>
+                    )}
+                    {hasScheduleResult(task.status) && (
+                      <button
+                        type="button"
+                        className="button-icon task-action--primary"
+                        title="Открыть редактор"
+                        onClick={() => navigate(`/schedule/${task.id}`)}
+                      >
+                        <LayoutDashboard size={16} />
+                      </button>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
           </div>
-        ))}
-
-        {tasks.length === 0 && (
-          <div
-            style={{
-              padding: "5rem",
-              textAlign: "center",
-              backgroundColor: "white",
-              borderRadius: "24px",
-              border: "1px dashed var(--border-light)",
-            }}
-          >
-            <HistoryIcon
-              size={48}
-              style={{ color: "var(--text-tertiary)", marginBottom: "1rem" }}
-            />
-            <h3 style={{ fontWeight: 800, color: "var(--text-secondary)" }}>
-              История пуста
-            </h3>
-            <p style={{ fontSize: "0.875rem", color: "var(--text-tertiary)" }}>
-              Запустите первый расчет, чтобы он появился здесь
-            </p>
-          </div>
-        )}
-      </div>
+        </section>
+      ) : (
+        <section className="empty-registry app-panel">
+          <HistoryIcon size={32} />
+          <h3>Расчётов пока нет</h3>
+          <p>
+            Запустите первый расчёт расписания — его статус и версии появятся в
+            этом журнале.
+          </p>
+        </section>
+      )}
     </div>
   );
 };

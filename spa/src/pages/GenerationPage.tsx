@@ -720,20 +720,15 @@ export const GenerationPage: React.FC = () => {
       style={{
         display: "flex",
         flexDirection: "column",
-        gap: "2rem",
-        paddingBottom: "5rem",
+        gap: "1.25rem",
+        paddingBottom: "2rem",
       }}
-      className="animate-fade-in"
+      className="enterprise-page generation-workspace animate-fade-in"
     >
-      <header
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-end",
-        }}
-      >
+      <header className="workspace-header calc-header">
         <div>
-          <h1
+          <h2
+            className="calc-header__title"
             style={{
               fontSize: "2rem",
               fontWeight: 900,
@@ -742,7 +737,7 @@ export const GenerationPage: React.FC = () => {
             }}
           >
             Генератор расписания
-          </h1>
+          </h2>
           <p
             style={{
               color: "var(--text-secondary)",
@@ -754,8 +749,12 @@ export const GenerationPage: React.FC = () => {
             Настройка фильтров и запуск алгоритма планирования.
           </p>
         </div>
-        <div style={{ display: "flex", gap: "0.75rem" }}>
+        <div
+          className="calc-summary"
+          style={{ display: "flex", gap: "0.75rem" }}
+        >
           <div
+            className="calc-summary__item"
             style={{
               backgroundColor: "white",
               border: "1px solid var(--border-light)",
@@ -789,6 +788,7 @@ export const GenerationPage: React.FC = () => {
             </span>
           </div>
           <div
+            className="calc-summary__item"
             style={{
               backgroundColor: "white",
               border: "1px solid var(--border-light)",
@@ -823,6 +823,7 @@ export const GenerationPage: React.FC = () => {
           </div>
           <button
             onClick={handleExport}
+            className="btn-secondary calc-summary__export"
             style={{
               backgroundColor: "white",
               color: "var(--text-primary)",
@@ -845,30 +846,28 @@ export const GenerationPage: React.FC = () => {
         </div>
       </header>
 
-      <section className="grid grid-cols-2 gap-2 rounded-2xl border border-border-light bg-white p-2 shadow-sm">
+      <section className="calc-mode-switch">
         <button
           onClick={() => setGenerationMode("week")}
-          className={`flex items-center justify-center gap-3 rounded-xl px-5 py-4 text-sm font-extrabold transition-all ${
-            generationMode === "week"
-              ? "bg-brand text-white shadow-md"
-              : "text-text-secondary hover:bg-bg-base hover:text-brand"
+          className={`calc-mode-switch__button ${
+            generationMode === "week" ? "calc-mode-switch__button--active" : ""
           }`}
         >
           <CalendarRange size={19} /> Одна неделя
         </button>
         <button
           onClick={() => setGenerationMode("semester")}
-          className={`flex items-center justify-center gap-3 rounded-xl px-5 py-4 text-sm font-extrabold transition-all ${
+          className={`calc-mode-switch__button ${
             generationMode === "semester"
-              ? "bg-brand text-white shadow-md"
-              : "text-text-secondary hover:bg-bg-base hover:text-brand"
+              ? "calc-mode-switch__button--active"
+              : ""
           }`}
         >
           <Layers3 size={19} /> Весь семестр по неделям
         </button>
       </section>
 
-      <section className="flex items-center justify-between rounded-2xl border border-border-light bg-white px-5 py-4 shadow-sm">
+      <section className="calc-rule-profile">
         <div>
           <h2 className="text-sm font-extrabold text-text-primary">
             Профиль правил
@@ -880,7 +879,7 @@ export const GenerationPage: React.FC = () => {
         <select
           value={ruleProfileId ?? ""}
           onChange={(event) => setRuleProfileId(Number(event.target.value))}
-          className="min-w-64 rounded-xl border border-border-light bg-white px-4 py-2.5 text-sm font-bold text-text-primary outline-none focus:border-brand"
+          className="calc-rule-profile__select"
         >
           {ruleProfiles.map((profile) => (
             <option key={profile.id} value={profile.id}>
@@ -892,6 +891,7 @@ export const GenerationPage: React.FC = () => {
       </section>
 
       <div
+        className="calc-layout"
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(12, 1fr)",
@@ -899,8 +899,9 @@ export const GenerationPage: React.FC = () => {
         }}
       >
         {/* Left Column: Group Selection */}
-        <div style={{ gridColumn: "span 4" }}>
+        <div className="calc-sidebar" style={{ gridColumn: "span 4" }}>
           <div
+            className="calc-panel calc-group-panel"
             style={{
               backgroundColor: "white",
               borderRadius: "20px",
@@ -1062,6 +1063,7 @@ export const GenerationPage: React.FC = () => {
 
         {/* Right Column: Filters & Preview */}
         <div
+          className="calc-main"
           style={{
             gridColumn: "span 8",
             display: "flex",
@@ -1071,6 +1073,7 @@ export const GenerationPage: React.FC = () => {
         >
           {/* Global Type Filter */}
           <div
+            className="calc-panel calc-types-panel"
             style={{
               backgroundColor: "white",
               borderRadius: "20px",
@@ -1115,11 +1118,15 @@ export const GenerationPage: React.FC = () => {
               </div>
             </div>
 
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem" }}>
+            <div
+              className="calc-type-list"
+              style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem" }}
+            >
               {ALL_TYPES.map((type) => (
                 <button
                   key={type}
                   onClick={() => handleToggleType(type)}
+                  className={`calc-type-button ${enabledTypes.includes(type) ? "calc-type-button--active" : ""}`}
                   style={{
                     padding: "0.625rem 1rem",
                     borderRadius: "12px",
@@ -1144,6 +1151,7 @@ export const GenerationPage: React.FC = () => {
 
           {/* Subject Priorities Grouped by Direction */}
           <div
+            className="calc-panel calc-priorities-panel"
             style={{
               backgroundColor: "white",
               borderRadius: "20px",
@@ -1379,6 +1387,7 @@ export const GenerationPage: React.FC = () => {
 
           {/* Preview Section */}
           <div
+            className="calc-panel calc-preview-panel"
             style={{
               backgroundColor: "white",
               borderRadius: "20px",
@@ -1599,6 +1608,7 @@ export const GenerationPage: React.FC = () => {
           </div>
 
           <div
+            className="calc-bottom-grid"
             style={{
               display: "grid",
               gridTemplateColumns: "1fr 1fr",
@@ -1607,6 +1617,7 @@ export const GenerationPage: React.FC = () => {
           >
             {/* Semester Dates */}
             <div
+              className="calc-panel calc-period-panel"
               style={{
                 backgroundColor: "white",
                 borderRadius: "20px",
@@ -1792,7 +1803,7 @@ export const GenerationPage: React.FC = () => {
             </div>
 
             {generationMode === "semester" && selectedPeriod && (
-              <div className="col-span-2 rounded-[20px] border border-border-light bg-white p-6 shadow-md">
+              <div className="semester-command-center col-span-2 rounded-[20px] border border-border-light bg-white p-6 shadow-md">
                 <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <h3 className="flex items-center gap-2 font-extrabold text-text-primary">
@@ -1806,7 +1817,7 @@ export const GenerationPage: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="mb-5 grid gap-3 md:grid-cols-3">
+                <div className="semester-command-center__steps mb-5 grid gap-3 md:grid-cols-3">
                   <div
                     className={`rounded-xl border p-4 ${
                       selectedGroups.length > 0
@@ -1845,7 +1856,7 @@ export const GenerationPage: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="mb-5 rounded-2xl border-2 border-brand/20 bg-brand/5 p-5">
+                <div className="semester-command-center__action mb-5 rounded-2xl border-2 border-brand/20 bg-brand/5 p-5">
                   {selectedGroups.length === 0 && (
                     <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
                       <div>
@@ -1874,7 +1885,7 @@ export const GenerationPage: React.FC = () => {
                       selectedGroups.length === 0 ||
                       enabledTypes.length === 0
                     }
-                    className="flex w-full items-center justify-center gap-3 rounded-xl bg-brand px-5 py-4 text-sm font-black text-white shadow-lg shadow-brand/20 transition-all hover:-translate-y-0.5 hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0"
+                    className="semester-command-center__distribute flex w-full items-center justify-center gap-3 rounded-xl bg-brand px-5 py-4 text-sm font-black text-white shadow-lg shadow-brand/20 transition-all hover:-translate-y-0.5 hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0"
                   >
                     <RefreshCcw
                       size={18}
@@ -1893,7 +1904,7 @@ export const GenerationPage: React.FC = () => {
                 </div>
 
                 {distributionResult && (
-                  <div className="mb-5 grid gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-xs font-bold text-emerald-900 sm:grid-cols-3">
+                  <div className="semester-command-center__result mb-5 grid gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-xs font-bold text-emerald-900 sm:grid-cols-3">
                     <div>План: {distributionResult.planned_lessons} пар</div>
                     <div>
                       Уже опубликовано: {distributionResult.published_lessons}
@@ -2062,6 +2073,7 @@ export const GenerationPage: React.FC = () => {
 
             {/* Holidays */}
             <div
+              className="calc-panel calc-holidays-panel"
               style={{
                 backgroundColor: "white",
                 borderRadius: "20px",
@@ -2177,6 +2189,7 @@ export const GenerationPage: React.FC = () => {
 
             {/* Action Card */}
             <div
+              className="calc-action-panel"
               style={{
                 backgroundColor: "var(--text-primary)",
                 borderRadius: "20px",

@@ -120,12 +120,6 @@ const DraggableCard: React.FC<{
           {count}
         </div>
       )}
-      {count && count > 1 && (
-        <div className="absolute inset-0 border border-black/5 rounded-lg -rotate-1 -translate-x-1 translate-y-1 bg-white/50 -z-10" />
-      )}
-      {count && count > 2 && (
-        <div className="absolute inset-0 border border-black/5 rounded-lg -rotate-2 -translate-x-2 translate-y-2 bg-white/30 -z-20" />
-      )}
       <div className="flex justify-between items-start mb-1">
         <div className="flex items-center gap-1">
           <div className="p-0.5 hover:bg-black/5 rounded">
@@ -717,28 +711,21 @@ export const SchedulePage: React.FC = () => {
   );
 
   return (
-    <div className="space-y-6">
-      <header className="flex justify-between items-center">
+    <div className="enterprise-page schedule-workspace">
+      <header className="workspace-header">
         <div>
-          <h1 className="text-2xl font-bold text-text-primary">
-            Интерактивное расписание
-          </h1>
-          <p className="text-text-secondary mt-1 text-sm">
-            Просмотр и ручная корректировка сгенерированного расписания.
-          </p>
+          <h2>Интерактивное расписание</h2>
+          <p>Просмотр и ручная корректировка сгенерированного расписания.</p>
         </div>
         <div className="flex gap-3">
-          <button
-            onClick={handleExport}
-            className="flex items-center gap-2 px-4 py-2 bg-white border border-border-light rounded-xl text-sm font-semibold hover:bg-gray-50 transition-all"
-          >
+          <button onClick={handleExport} className="btn-secondary">
             <Download size={18} />
             Экспорт Excel
           </button>
         </div>
       </header>
 
-      <div className="bg-white p-4 rounded-2xl border border-border-light shadow-sm flex flex-wrap gap-4 items-center">
+      <div className="workspace-toolbar flex flex-wrap gap-4 items-center">
         <div className="flex items-center gap-2">
           <Calendar size={18} className="text-text-tertiary" />
           <select

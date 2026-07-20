@@ -1,591 +1,385 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Folder,
-  FileUp,
-  FileText,
-  CheckCircle2,
-  Trash2,
   ArrowLeft,
+  CheckCircle2,
+  ChevronRight,
+  Download,
+  FileSpreadsheet,
+  FileText,
+  FileUp,
+  FolderOpen,
+  Trash2,
+  Users,
 } from "lucide-react";
 import { API_BASE_URL } from "../api/apiConfig";
 
-const DragDropZone = ({
-  onDrop,
-  isDragging,
-  setIsDragging,
-}: {
+type FolderName =
+  | "Учебные планы и потоки"
+  | "Нагрузка и аудитории"
+  | "Доступность преподавателей";
+
+interface FileItem {
+  id: number;
+  name: string;
+  size: string;
+  status: string;
+  date: string;
+}
+
+const folders: Array<{
+  title: FolderName;
+  description: string;
+  icon: typeof FileSpreadsheet;
+  accent: "blue" | "slate" | "amber";
+  note: string;
+}> = [
+  {
+    title: "Учебные планы и потоки",
+    description: "Учебные дисциплины, потоки и состав групп для расчёта.",
+    icon: FileSpreadsheet,
+    accent: "blue",
+    note: "Импорт Excel и CSV",
+  },
+  {
+    title: "Нагрузка и аудитории",
+    description: "Данные для сверки учебной нагрузки и размещения занятий.",
+    icon: FolderOpen,
+    accent: "slate",
+    note: "Единый каталог данных",
+  },
+  {
+    title: "Доступность преподавателей",
+    description:
+      "Индивидуальные окна доступности и ограничения преподавателей.",
+    icon: Users,
+    accent: "amber",
+    note: "Шаблон доступности Excel",
+  },
+];
+
+const DragDropZone: React.FC<{
   onDrop: (files: FileList) => void;
   isDragging: boolean;
-  setIsDragging: (val: boolean) => void;
-}) => {
+  setIsDragging: (value: boolean) => void;
+}> = ({ onDrop, isDragging, setIsDragging }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      onDrop(e.target.files);
-    }
-  };
 
   return (
     <div
-      onDragOver={(e) => {
-        e.preventDefault();
+      className={`upload-zone ${isDragging ? "upload-zone--active" : ""}`}
+      onDragOver={(event) => {
+        event.preventDefault();
         setIsDragging(true);
       }}
       onDragLeave={() => setIsDragging(false)}
-      onDrop={(e) => {
-        e.preventDefault();
+      onDrop={(event) => {
+        event.preventDefault();
         setIsDragging(false);
-        if (e.dataTransfer.files) onDrop(e.dataTransfer.files);
+        if (event.dataTransfer.files.length > 0)
+          onDrop(event.dataTransfer.files);
       }}
-      style={{
-        border: `2px dashed ${isDragging ? "var(--brand)" : "var(--border-light)"}`,
-        borderRadius: "32px",
-        padding: "4rem 2rem",
-        textAlign: "center",
-        backgroundColor: isDragging ? "var(--bg-base)" : "white",
-        transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-        cursor: "pointer",
-        transform: isDragging ? "scale(1.02)" : "scale(1)",
-      }}
-      className="group"
     >
-      <div
-        style={{
-          width: "64px",
-          height: "64px",
-          backgroundColor: isDragging ? "var(--brand)" : "var(--bg-base)",
-          color: isDragging ? "white" : "var(--brand)",
-          borderRadius: "20px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          margin: "0 auto 1.5rem",
-          transition: "all 0.3s",
-        }}
-      >
-        <FileUp size={32} />
+      <div className="upload-zone__icon">
+        <FileUp size={24} strokeWidth={1.8} />
       </div>
-      <h3
-        style={{ fontSize: "1.25rem", fontWeight: 800, marginBottom: "0.5rem" }}
-      >
-        Перетащите Excel-файлы сюда
-      </h3>
-      <p
-        className="text-text-secondary"
-        style={{
-          maxWidth: "400px",
-          margin: "0 auto 1.5rem",
-          fontSize: "0.875rem",
-        }}
-      >
-        Загрузите файлы для добавления в эту папку.
-      </p>
+      <div>
+        <h3>Загрузите файл</h3>
+        <p>
+          Перетащите Excel или CSV в эту область либо выберите его на
+          компьютере.
+        </p>
+      </div>
       <input
-        type="file"
         ref={fileInputRef}
-        style={{ display: "none" }}
-        onChange={handleFileChange}
+        type="file"
+        hidden
         accept=".xls,.xlsx,.csv"
+        onChange={(event) => {
+          if (event.target.files?.length) onDrop(event.target.files);
+        }}
       />
       <button
-        className="btn-primary"
-        style={{
-          margin: "0 auto",
-          fontSize: "0.875rem",
-          padding: "0.5rem 1rem",
-        }}
+        type="button"
+        className="btn-secondary"
         onClick={() => fileInputRef.current?.click()}
       >
-        Выбрать на компьютере
+        Выбрать файл
       </button>
+      <span className="upload-zone__formats">
+        Поддерживаются: XLS, XLSX, CSV
+      </span>
     </div>
   );
 };
 
-const FileListItem = ({
+const FileListItem: React.FC<{ file: FileItem; onRemove: () => void }> = ({
   file,
   onRemove,
-}: {
-  file: { name: string; size: string; status: string };
-  onRemove: () => void;
 }) => (
-  <div
-    className="card"
-    style={{
-      padding: "1rem",
-      display: "flex",
-      alignItems: "center",
-      gap: "1rem",
-      transition: "all 0.2s",
-      borderRadius: "16px",
-    }}
-  >
-    <div
-      style={{
-        width: "40px",
-        height: "40px",
-        borderRadius: "10px",
-        backgroundColor: "var(--bg-base)",
-        color: "var(--brand)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-    >
-      <FileText size={20} />
+  <div className="import-file-row">
+    <div className="import-file-row__icon">
+      <FileText size={19} />
     </div>
-
-    <div style={{ flex: 1 }}>
-      <div className="flex items-center gap-2">
-        <span style={{ fontWeight: 700, fontSize: "0.875rem" }}>
-          {file.name}
-        </span>
-        <span style={{ fontSize: "0.75rem", color: "var(--text-tertiary)" }}>
-          {file.size}
-        </span>
-      </div>
-      <div className="flex items-center gap-3 mt-1">
-        <div
-          style={{
-            height: "4px",
-            backgroundColor: "var(--bg-base)",
-            borderRadius: "100px",
-            flex: 1,
-            overflow: "hidden",
-          }}
-        >
-          <div
-            style={{
-              height: "100%",
-              width: "100%",
-              backgroundColor: "var(--brand)",
-              borderRadius: "100px",
-            }}
-          />
-        </div>
-        <span
-          style={{
-            fontSize: "0.625rem",
-            fontWeight: 800,
-            color: "var(--brand)",
-            display: "flex",
-            alignItems: "center",
-            gap: "0.25rem",
-          }}
-        >
-          <CheckCircle2 size={12} /> Готов
-        </span>
-      </div>
+    <div className="import-file-row__main">
+      <strong>{file.name}</strong>
+      <span>
+        {file.size}
+        {file.date
+          ? ` · ${new Date(file.date).toLocaleDateString("ru-RU")}`
+          : ""}
+      </span>
     </div>
-
+    <span className="status-badge status-badge--success">
+      <CheckCircle2 size={13} /> Загружен
+    </span>
     <button
+      type="button"
       onClick={onRemove}
-      style={{
-        padding: "0.5rem",
-        color: "var(--text-tertiary)",
-        borderRadius: "8px",
-        transition: "all 0.2s",
-      }}
-      className="hover:bg-rose-50 hover:text-rose-500"
+      className="button-icon import-file-row__delete"
+      title="Удалить файл"
+      aria-label={`Удалить ${file.name}`}
     >
-      <Trash2 size={18} />
+      <Trash2 size={16} />
     </button>
   </div>
 );
 
 export const StoragePage: React.FC = () => {
-  const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
-
+  const [selectedFolder, setSelectedFolder] = useState<FolderName | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
-
-  interface FileItem {
-    id: number;
-    name: string;
-    size: string;
-    status: string;
-    date: string;
-  }
-
   const [files, setFiles] = useState<FileItem[]>([]);
 
   const fetchHistory = useCallback(async () => {
     try {
-      const res = await fetch(
+      const response = await fetch(
         `${API_BASE_URL}/api/v1/scheduler/import/history`,
       );
-      if (res.ok) {
-        const data = await res.json();
-        // In a real app we'd filter by selectedFolder type
-        const mapped = data.map(
-          (b: {
+      if (!response.ok) return;
+      const data = await response.json();
+      setFiles(
+        data.map(
+          (item: {
             id: number;
             filename: string;
             file_type: string;
             created_date: string;
           }) => ({
-            id: b.id,
-            name: b.filename,
-            size: b.file_type,
+            id: item.id,
+            name: item.filename,
+            size: item.file_type,
             status: "ready",
-            date: b.created_date,
+            date: item.created_date,
           }),
-        );
-        setFiles(mapped);
-      }
-    } catch (err) {
-      console.error(err);
+        ),
+      );
+    } catch (requestError) {
+      console.error(requestError);
     }
   }, []);
 
   const uploadFile = useCallback(
     async (file: File) => {
+      if (!selectedFolder) return;
       setIsUploading(true);
       setError(null);
       setSuccessMsg(null);
       const formData = new FormData();
       formData.append("file", file);
-
       const isTeacherImport = selectedFolder === "Доступность преподавателей";
       const endpoint = isTeacherImport
         ? `${API_BASE_URL}/api/v1/scheduler/teachers/import`
         : `${API_BASE_URL}/api/v1/scheduler/import/streams`;
 
       try {
-        const res = await fetch(endpoint, {
+        const response = await fetch(endpoint, {
           method: "POST",
           body: formData,
         });
-        if (!res.ok) {
-          const data = await res.json();
-          throw new Error(data.detail || "Upload failed");
+        if (!response.ok) {
+          const payload = await response.json();
+          throw new Error(payload.detail || "Не удалось загрузить файл");
         }
-        const data = await res.json();
-
-        if (isTeacherImport) {
-          setSuccessMsg(
-            `Успешно! Обновлено преподавателей: ${data.updated_teachers}`,
-          );
-        } else {
-          setSuccessMsg(
-            `Успешно загружено! Добавлено потоков: ${data.streams_added}, групп: ${data.groups_added}`,
-          );
-          await fetchHistory();
-        }
-      } catch (err) {
-        if (err instanceof Error) {
-          setError(err.message);
-        } else {
-          setError("An unknown error occurred");
-        }
+        const payload = await response.json();
+        setSuccessMsg(
+          isTeacherImport
+            ? `Доступность обновлена: преподавателей — ${payload.updated_teachers}.`
+            : `Файл загружен: потоков — ${payload.streams_added}, групп — ${payload.groups_added}.`,
+        );
+        if (!isTeacherImport) await fetchHistory();
+      } catch (requestError) {
+        setError(
+          requestError instanceof Error
+            ? requestError.message
+            : "Не удалось загрузить файл",
+        );
       } finally {
         setIsUploading(false);
       }
     },
-    [selectedFolder, fetchHistory],
+    [fetchHistory, selectedFolder],
   );
 
   useEffect(() => {
-    if (selectedFolder) {
-      fetchHistory();
-    }
-  }, [selectedFolder, fetchHistory]);
-
-  const handleDrop = (uploadedFiles: FileList) => {
-    if (uploadedFiles.length > 0) {
-      uploadFile(uploadedFiles[0]);
-    }
-  };
+    if (selectedFolder) void fetchHistory();
+  }, [fetchHistory, selectedFolder]);
 
   const removeFile = async (index: number) => {
     const file = files[index];
-    if (file.id > 0) {
-      try {
-        const res = await fetch(
-          `${API_BASE_URL}/api/v1/scheduler/import/history/${file.id}`,
-          {
-            method: "DELETE",
-          },
-        );
-        if (res.ok) {
-          setSuccessMsg("Файл и связанные данные успешно удалены.");
-          await fetchHistory();
-        }
-      } catch (err) {
-        console.error(err);
-      }
-    } else {
-      setFiles(files.filter((_, i) => i !== index));
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/v1/scheduler/import/history/${file.id}`,
+        { method: "DELETE" },
+      );
+      if (!response.ok) return;
+      setSuccessMsg("Файл и связанные данные удалены.");
+      await fetchHistory();
+    } catch (requestError) {
+      console.error(requestError);
     }
   };
-
-  if (!selectedFolder) {
-    return (
-      <div className="space-y-10">
-        <header>
-          <h1 className="text-3xl font-bold text-brand">Хранилище файлов</h1>
-          <p className="text-text-secondary mt-2">
-            Выберите папку для просмотра и загрузки данных.
-          </p>
-        </header>
-
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))",
-            gap: "2rem",
-          }}
-        >
-          <button
-            className="card"
-            onClick={() => setSelectedFolder("Учебные планы и потоки")}
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              gap: "1rem",
-              padding: "3rem 2rem",
-              transition: "all 0.2s",
-              cursor: "pointer",
-            }}
-            onMouseOver={(e) =>
-              (e.currentTarget.style.transform = "translateY(-4px)")
-            }
-            onMouseOut={(e) =>
-              (e.currentTarget.style.transform = "translateY(0)")
-            }
-          >
-            <Folder size={64} color="var(--brand)" strokeWidth={1.5} />
-            <h3 style={{ fontSize: "1.125rem", fontWeight: 800 }}>
-              Учебные планы и потоки
-            </h3>
-          </button>
-
-          <button
-            className="card"
-            onClick={() => setSelectedFolder("Нагрузка и аудитории")}
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              gap: "1rem",
-              padding: "3rem 2rem",
-              transition: "all 0.2s",
-              cursor: "pointer",
-            }}
-            onMouseOver={(e) =>
-              (e.currentTarget.style.transform = "translateY(-4px)")
-            }
-            onMouseOut={(e) =>
-              (e.currentTarget.style.transform = "translateY(0)")
-            }
-          >
-            <Folder size={64} color="var(--brand)" strokeWidth={1.5} />
-            <h3 style={{ fontSize: "1.125rem", fontWeight: 800 }}>
-              Нагрузка и аудитории
-            </h3>
-          </button>
-
-          <button
-            className="card"
-            onClick={() => setSelectedFolder("Доступность преподавателей")}
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              gap: "1rem",
-              padding: "3rem 2rem",
-              transition: "all 0.2s",
-              cursor: "pointer",
-            }}
-            onMouseOver={(e) =>
-              (e.currentTarget.style.transform = "translateY(-4px)")
-            }
-            onMouseOut={(e) =>
-              (e.currentTarget.style.transform = "translateY(0)")
-            }
-          >
-            <Folder size={64} color="#f59e0b" strokeWidth={1.5} />
-            <h3 style={{ fontSize: "1.125rem", fontWeight: 800 }}>
-              Доступность преподавателей
-            </h3>
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   const handleExportTeachers = () => {
     window.open(`${API_BASE_URL}/api/v1/scheduler/teachers/export`, "_blank");
   };
 
-  return (
-    <div className="space-y-8">
-      <header>
-        <button
-          onClick={() => setSelectedFolder(null)}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "0.5rem",
-            color: "var(--text-secondary)",
-            marginBottom: "1rem",
-            fontWeight: 600,
-          }}
-        >
-          <ArrowLeft size={18} /> Назад в хранилище
-        </button>
-        <h1
-          className="text-3xl font-bold text-brand"
-          style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}
-        >
-          <Folder size={32} /> {selectedFolder}
-        </h1>
+  if (!selectedFolder) {
+    return (
+      <div className="enterprise-page animate-fade-in">
+        <section className="data-overview">
+          <div>
+            <span className="data-overview__eyebrow">КАТАЛОГ ДАННЫХ</span>
+            <h2>Подготовьте исходные данные</h2>
+            <p>
+              Загрузите и проверьте наборы данных перед распределением нагрузки
+              и расчётом расписания.
+            </p>
+          </div>
+          <div className="data-overview__summary">
+            <strong>3</strong>
+            <span>раздела данных</span>
+          </div>
+        </section>
+        <section className="data-source-grid" aria-label="Разделы хранилища">
+          {folders.map((folder) => {
+            const Icon = folder.icon;
+            return (
+              <button
+                key={folder.title}
+                type="button"
+                className="data-source-card"
+                onClick={() => setSelectedFolder(folder.title)}
+              >
+                <div
+                  className={`data-source-card__icon data-source-card__icon--${folder.accent}`}
+                >
+                  <Icon size={23} strokeWidth={1.8} />
+                </div>
+                <div className="data-source-card__content">
+                  <h3>{folder.title}</h3>
+                  <p>{folder.description}</p>
+                </div>
+                <div className="data-source-card__footer">
+                  <span>{folder.note}</span>
+                  <ChevronRight size={17} />
+                </div>
+              </button>
+            );
+          })}
+        </section>
+      </div>
+    );
+  }
 
-        {error && (
-          <div
-            style={{
-              marginTop: "1rem",
-              padding: "1rem",
-              background: "#fee2e2",
-              color: "#b91c1c",
-              borderRadius: "12px",
-            }}
+  const isTeacherFolder = selectedFolder === "Доступность преподавателей";
+  return (
+    <div className="enterprise-page animate-fade-in">
+      <section className="enterprise-page__header">
+        <div>
+          <button
+            type="button"
+            className="page-back"
+            onClick={() => setSelectedFolder(null)}
           >
-            {error}
-          </div>
+            <ArrowLeft size={16} /> Все разделы данных
+          </button>
+          <h2 className="enterprise-page__heading">{selectedFolder}</h2>
+          <p className="enterprise-page__description">
+            Загружайте актуальные файлы и контролируйте историю импорта.
+          </p>
+        </div>
+        {isUploading && (
+          <span className="status-badge status-badge--warning">
+            Выполняется загрузка
+          </span>
         )}
-        {successMsg && (
-          <div
-            style={{
-              marginTop: "1rem",
-              padding: "1rem",
-              background: "#dcfce7",
-              color: "#15803d",
-              borderRadius: "12px",
-            }}
-          >
-            {successMsg}
-          </div>
-        )}
-      </header>
+      </section>
+
+      {error && <div className="notice notice--danger">{error}</div>}
+      {successMsg && <div className="notice notice--success">{successMsg}</div>}
 
       <div
-        style={{
-          display: "grid",
-          gridTemplateColumns:
-            selectedFolder === "Доступность преподавателей"
-              ? "1fr"
-              : "1.5fr 1fr",
-          gap: "2.5rem",
-        }}
+        className={`import-workspace ${isTeacherFolder ? "import-workspace--single" : ""}`}
       >
-        <div className="space-y-6">
-          {selectedFolder === "Доступность преподавателей" && (
-            <div
-              className="card"
-              style={{
-                padding: "2rem",
-                backgroundColor: "rgba(245, 158, 11, 0.05)",
-                border: "1px solid rgba(245, 158, 11, 0.2)",
-              }}
-            >
-              <h3
-                style={{
-                  fontWeight: 800,
-                  marginBottom: "1rem",
-                  color: "#b45309",
-                }}
-              >
-                Управление доступностью
-              </h3>
-              <p
-                style={{
-                  fontSize: "0.875rem",
-                  color: "#92400e",
-                  marginBottom: "1.5rem",
-                  lineHeight: 1.6,
-                }}
-              >
-                Вы можете выгрузить текущий список преподавателей в Excel,
-                отредактировать их окна доступности и загрузить файл обратно.
-                Формат: День_Пара (например, 0_1 для Пн 1 пара) или
-                ГГГГ-ММ-ДД_Пара для конкретных дат.
-              </p>
+        <div className="app-panel import-workspace__upload">
+          {isTeacherFolder && (
+            <div className="availability-note">
+              <div className="availability-note__icon">
+                <Users size={20} />
+              </div>
+              <div>
+                <h3>Управление доступностью</h3>
+                <p>
+                  Скачайте текущий список, укажите окна в формате «день_пара»
+                  или «ГГГГ-ММ-ДД_пара», затем загрузите файл обратно.
+                </p>
+              </div>
               <button
+                type="button"
+                className="btn-secondary"
                 onClick={handleExportTeachers}
-                className="btn-primary"
-                style={{
-                  backgroundColor: "#f59e0b",
-                  boxShadow: "0 4px 12px rgba(245, 158, 11, 0.3)",
-                }}
               >
-                Скачать текущую доступность (Excel)
+                <Download size={16} /> Скачать шаблон
               </button>
             </div>
           )}
           <DragDropZone
-            onDrop={handleDrop}
+            onDrop={(uploadedFiles) => void uploadFile(uploadedFiles[0])}
             isDragging={isDragging}
             setIsDragging={setIsDragging}
           />
         </div>
 
-        {selectedFolder !== "Доступность преподавателей" && (
-          <div className="space-y-4">
-            <h3
-              style={{
-                fontSize: "1.125rem",
-                fontWeight: 800,
-                display: "flex",
-                alignItems: "center",
-                gap: "0.5rem",
-              }}
-            >
-              Загруженные файлы
-              <span
-                style={{
-                  fontSize: "0.75rem",
-                  padding: "0.125rem 0.5rem",
-                  backgroundColor: "var(--bg-base)",
-                  borderRadius: "100px",
-                  color: "var(--text-tertiary)",
-                }}
-              >
+        {!isTeacherFolder && (
+          <section className="app-panel import-history">
+            <div className="import-history__header">
+              <div>
+                <h3>История импорта</h3>
+                <p>Файлы, на основе которых сформированы данные.</p>
+              </div>
+              <span className="status-badge status-badge--neutral">
                 {files.length}
               </span>
-              {isUploading && (
-                <span style={{ fontSize: "0.8rem", color: "var(--brand)" }}>
-                  Загрузка...
-                </span>
-              )}
-            </h3>
-            <div className="space-y-3">
-              {files.map((file, idx) => (
+            </div>
+            <div className="import-history__list">
+              {files.map((file, index) => (
                 <FileListItem
-                  key={idx}
+                  key={file.id}
                   file={file}
-                  onRemove={() => removeFile(idx)}
+                  onRemove={() => void removeFile(index)}
                 />
               ))}
               {files.length === 0 && (
-                <div
-                  style={{
-                    padding: "3rem",
-                    textAlign: "center",
-                    color: "var(--text-tertiary)",
-                    border: "1px dashed var(--border-light)",
-                    borderRadius: "24px",
-                  }}
-                >
-                  Папка пуста
+                <div className="import-empty">
+                  <FileSpreadsheet size={26} />
+                  <strong>Нет загруженных файлов</strong>
+                  <span>После импорта файлы появятся в этом списке.</span>
                 </div>
               )}
             </div>
-          </div>
+          </section>
         )}
       </div>
     </div>
