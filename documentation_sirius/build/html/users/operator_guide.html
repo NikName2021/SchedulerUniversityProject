@@ -1,0 +1,257 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="ru" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Руководство оператора расписания &mdash; Система расписания для Университета «Сириус»</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=9edc463e" />
+      <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=db78ff84" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=9ca2116e"></script>
+      <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+      <script src="../_static/translations.js?v=cd1d70c9"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Алфавитный указатель" href="../genindex.html" />
+    <link rel="search" title="Поиск" href="../search.html" />
+    <link rel="next" title="Частые вопросы и поддержка" href="faq_support.html" />
+    <link rel="prev" title="Роли и зоны ответственности" href="roles.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            Система расписания для Университета «Сириус»
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Поиск в документации" aria-label="Поиск в документации" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Меню навигации">
+              <p class="caption" role="heading"><span class="caption-text">Для пользователей</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="roles.html">Роли и зоны ответственности</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Руководство оператора расписания</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#id2">Введение</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#id3">1. Подготовка исходных данных</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#id4">2. Проверка учебных потоков</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#id5">3. Календарь и ограничения</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#id6">4. Распределение и запуск расчёта</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#id7">5. Проверка и ручное редактирование</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#id8">6. Публикация и экспорт</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="faq_support.html">Частые вопросы и поддержка</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Для разработчиков и администраторов</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../developer/architecture.html">Архитектура системы</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../developer/reference_data.html">Справочники и ресурсы</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../developer/planning.html">Календарное и недельное планирование</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../developer/generation.html">Генерация, версии и диагностика</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../developer/database.html">Схема и словарь данных</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../developer/deployment.html">Развёртывание и сопровождение</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Меню навигации для мобильных устройств" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">Система расписания для Университета «Сириус»</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Навигация по страницам">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Руководство оператора расписания</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/users/operator_guide.rst.txt" rel="nofollow"> Просмотреть исходный код страницы</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="id1">
+<h1>Руководство оператора расписания<a class="headerlink" href="#id1" title="Ссылка на этот заголовок"></a></h1>
+<dl class="field-list simple">
+<dt class="field-odd">Для кого<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Операторы расписания</p>
+</dd>
+<dt class="field-even">Результат<span class="colon">:</span></dt>
+<dd class="field-even"><p>согласованная и опубликованная версия расписания</p>
+</dd>
+</dl>
+<section id="id2">
+<h2>Введение<a class="headerlink" href="#id2" title="Ссылка на этот заголовок"></a></h2>
+<p>Система формирует расписание на основе учебных потоков, доступности ресурсов,
+календаря и правил. Расчёт выполняется асинхронно; его результат всегда
+сохраняется как отдельная версия.</p>
+</section>
+<section id="id3">
+<h2>1. Подготовка исходных данных<a class="headerlink" href="#id3" title="Ссылка на этот заголовок"></a></h2>
+<p>Откройте раздел <strong>«Исходные данные»</strong> и загрузите файл учебной нагрузки.
+Поддерживаются файлы <code class="docutils literal notranslate"><span class="pre">.xls</span></code>, <code class="docutils literal notranslate"><span class="pre">.xlsx</span></code> и <code class="docutils literal notranslate"><span class="pre">.csv</span></code>.</p>
+<figure class="align-default" id="id9">
+<img alt="Раздел «Исходные данные»" class="doc-screenshot" src="../_images/01-source-data.png" />
+<figcaption>
+<p><span class="caption-text">Стартовая страница подготовки учебных планов, нагрузки и доступности преподавателей.</span><a class="headerlink" href="#id9" title="Ссылка на это изображение"></a></p>
+</figcaption>
+</figure>
+<ol class="arabic simple">
+<li><p>Выберите актуальный файл и запустите импорт.</p></li>
+<li><p>Убедитесь, что система сообщила количество добавленных потоков и групп.</p></li>
+<li><p>Откройте историю импорта и сохраните сведения о применённой партии.</p></li>
+<li><p>Если загрузка ошибочна, удалите её до начала работы с созданными потоками.</p></li>
+</ol>
+<div class="admonition warning">
+<p class="admonition-title">Предупреждение</p>
+<p>Удаление партии импорта удаляет связанные потоки. Не удаляйте партию, если
+на её основе уже подготовлена версия, переданная на согласование.</p>
+</div>
+</section>
+<section id="id4">
+<h2>2. Проверка учебных потоков<a class="headerlink" href="#id4" title="Ссылка на этот заголовок"></a></h2>
+<p>В разделе <strong>«Учебные потоки»</strong> проверьте группу, дисциплину, преподавателя,
+тип занятия и количество занятий. Отфильтруйте данные по группе и типу занятия.
+Поток, который не должен участвовать в расчёте, отметьте как исключённый.</p>
+<p>Перед расчётом убедитесь:</p>
+<ul class="simple">
+<li><p>у потока назначены группа и учебная нагрузка;</p></li>
+<li><p>для занятия указан допустимый тип;</p></li>
+<li><p>преподаватель и аудитория определены либо могут быть подобраны системой;</p></li>
+<li><p>исключённые потоки действительно не должны попасть в итоговую сетку.</p></li>
+</ul>
+</section>
+<section id="id5">
+<h2>3. Календарь и ограничения<a class="headerlink" href="#id5" title="Ссылка на этот заголовок"></a></h2>
+<p>В разделе <strong>«Календарь»</strong> создайте учебный период с датами начала и окончания.
+Период содержит последовательность недель, для каждой из которых хранится
+отдельная нагрузка.</p>
+<p>Добавьте правила доступности для преподавателя, группы, аудитории или всей
+организации. Правило может действовать еженедельно, в определённую дату или
+в диапазоне дат; режимы — «недоступно», «доступно», «предпочтительно».
+Жёсткое правило нельзя нарушать, а мягкое влияет на качество решения через вес 1–10.</p>
+<figure class="align-default" id="id10">
+<img alt="Календарь доступности преподавателя" class="doc-screenshot" src="../_images/02-calendar.png" />
+<figcaption>
+<p><span class="caption-text">Пример настройки доступности преподавателя в календаре.</span><a class="headerlink" href="#id10" title="Ссылка на это изображение"></a></p>
+</figcaption>
+</figure>
+</section>
+<section id="id6">
+<h2>4. Распределение и запуск расчёта<a class="headerlink" href="#id6" title="Ссылка на этот заголовок"></a></h2>
+<ol class="arabic simple">
+<li><p>Откройте <strong>«Расчёты»</strong> и выберите подготовленный период или недели.</p></li>
+<li><p>Распределите нагрузку по неделям, настройте приоритеты и отметьте праздники.</p></li>
+<li><p>Запустите расчёт и дождитесь статуса завершения.</p></li>
+<li><p>При необходимости откройте компоненты и диагностику задачи.</p></li>
+</ol>
+<figure class="align-default" id="id11">
+<img alt="Настройки генератора расписания" class="doc-screenshot" src="../_images/03-calculation.png" />
+<figcaption>
+<p><span class="caption-text">Экран выбора групп, типов занятий и профиля правил перед запуском расчёта.</span><a class="headerlink" href="#id11" title="Ссылка на это изображение"></a></p>
+</figcaption>
+</figure>
+<div class="admonition important">
+<p class="admonition-title">Важно</p>
+<p>Одна задача ограничена горизонтом в 14 календарных дней. Семестр
+рассчитывается последовательностью недельных задач. Одновременный запуск
+расчётов в пересекающейся области возвращает конфликт HTTP 409.</p>
+</div>
+</section>
+<section id="id7">
+<h2>5. Проверка и ручное редактирование<a class="headerlink" href="#id7" title="Ссылка на этот заголовок"></a></h2>
+<p>В разделе <strong>«Расписание»</strong> выберите расчёт, группу и неделю. Карточка занятия
+содержит дисциплину, тип, преподавателя, аудиторию и предупреждение.</p>
+<p>При ручном изменении даты, пары, преподавателя или аудитории сервер проверяет:</p>
+<ul class="simple">
+<li><p>пересечение группы;</p></li>
+<li><p>пересечение преподавателя;</p></li>
+<li><p>двойное использование аудитории;</p></li>
+<li><p>правила доступности;</p></li>
+<li><p>активность аудитории и попадание даты в период версии.</p></li>
+</ul>
+<p>Если запись нельзя перемещать при следующем расчёте, включите фиксацию.
+При конфликте сервер отклоняет изменение и возвращает перечень причин.</p>
+<figure class="align-default" id="id12">
+<img alt="Интерактивное расписание" class="doc-screenshot" src="../_images/04-schedule.png" />
+<figcaption>
+<p><span class="caption-text">Просмотр расписания по группе: сетка занятий и список невставленных пар.</span><a class="headerlink" href="#id12" title="Ссылка на это изображение"></a></p>
+</figcaption>
+</figure>
+</section>
+<section id="id8">
+<h2>6. Публикация и экспорт<a class="headerlink" href="#id8" title="Ссылка на этот заголовок"></a></h2>
+<p>В <strong>«Журнале операций»</strong> найдите готовую версию. Состояния публикации:</p>
+<ul class="simple">
+<li><p><strong>draft</strong> — черновик, доступный для проверки и ручного редактирования;</p></li>
+<li><p><strong>published</strong> — действующая версия, доступная только для чтения;</p></li>
+<li><p><strong>archived</strong> — ранее опубликованная или снятая версия.</p></li>
+</ul>
+<p>Публикация новой версии архивирует предыдущую опубликованную версию того же
+периода. Экспорт без явного выбора задачи формирует Excel по опубликованной
+версии. Каждая ручная правка увеличивает редакцию версии, поэтому выгрузка
+однозначно соответствует открытому состоянию расписания.</p>
+<figure class="align-default" id="id13">
+<img alt="Журнал операций с результатом расчёта" class="doc-screenshot" src="../_images/05-history.png" />
+<figcaption>
+<p><span class="caption-text">Реестр расчётов со статусом, параметрами, публикацией и действиями.</span><a class="headerlink" href="#id13" title="Ссылка на это изображение"></a></p>
+</figcaption>
+</figure>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Нижняя область">
+        <a href="roles.html" class="btn btn-neutral float-left" title="Роли и зоны ответственности" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Предыдущая</a>
+        <a href="faq_support.html" class="btn btn-neutral float-right" title="Частые вопросы и поддержка" accesskey="n" rel="next">Следующая <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Авторские права 2026, Университет «Сириус». </p>
+  </div>
+
+  Собрано при помощи <a href="https://www.sphinx-doc.org/">Sphinx</a> с использованием
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">темы,</a>
+    предоставленной <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

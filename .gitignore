@@ -28,3 +28,7 @@ spa/package-lock.json
 /src/.env
 *.xls
 *.xlsx
+
+examle_doc
+tools/.sphinx-deps/
+/tools/

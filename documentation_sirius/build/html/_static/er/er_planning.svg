@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="680" viewBox="0 0 1320 680">
+<style>
+text { font-family: Arial, sans-serif; fill: #102a43; }
+.title { font-size: 24px; font-weight: 700; fill: #0b355d; }
+.table { font-size: 16px; font-weight: 700; fill: #ffffff; }
+.field { font-size: 12px; }
+.key { font-weight: 700; fill: #0b5792; }
+.foreign { fill: #5a3d8c; }
+.card { fill: #f8fbfe; stroke: #1769aa; stroke-width: 2; }
+.card-header { fill: #1769aa; }
+.separator { stroke: #1769aa; stroke-width: 1.4; }
+.relation { fill: none; stroke: #66788a; stroke-width: 1.8; marker-end: url(#arrow); }
+</style>
+<defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L0,9 L9,4.5 z" fill="#66788a"/></marker></defs>
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="32" y="36" class="title">ER-схема: планирование и доступность</text>
+<path d="M365 142H327V120H290" class="relation"/><path d="M700 142H657V120H615" class="relation"/><path d="M950 164H990V115H1030" class="relation"/><path d="M670 457H730V435H790" class="relation"/><path d="M670 479H735V365H1048V395H1060" class="relation"/><path d="M670 501H730V580H790" class="relation"/>
+<rect x="40" y="75" width="250" height="184" rx="8" class="card"/>
+<rect x="40" y="75" width="250" height="34" rx="8" class="card-header"/>
+<path d="M40 109H290" class="separator"/>
+<text x="54" y="98" class="table">academic_period</text>
+<text x="54" y="129" class="field key">PK  id : Integer</text>
+<text x="54" y="151" class="field">name : String</text>
+<text x="54" y="173" class="field">period_type : String</text>
+<text x="54" y="195" class="field">starts_on : Date</text>
+<text x="54" y="217" class="field">ends_on : Date</text>
+<text x="54" y="239" class="field">status : String</text><rect x="365" y="75" width="250" height="184" rx="8" class="card"/>
+<rect x="365" y="75" width="250" height="34" rx="8" class="card-header"/>
+<path d="M365 109H615" class="separator"/>
+<text x="379" y="98" class="table">planning_week</text>
+<text x="379" y="129" class="field key">PK  id : Integer</text>
+<text x="379" y="151" class="field foreign">FK  period_id : Integer</text>
+<text x="379" y="173" class="field">sequence_number : Integer</text>
+<text x="379" y="195" class="field">starts_on : Date</text>
+<text x="379" y="217" class="field">ends_on : Date</text>
+<text x="379" y="239" class="field">status : String</text><rect x="700" y="75" width="250" height="162" rx="8" class="card"/>
+<rect x="700" y="75" width="250" height="34" rx="8" class="card-header"/>
+<path d="M700 109H950" class="separator"/>
+<text x="714" y="98" class="table">weekly_lesson_demand</text>
+<text x="714" y="129" class="field key">PK  id : Integer</text>
+<text x="714" y="151" class="field foreign">FK  week_id : Integer</text>
+<text x="714" y="173" class="field foreign">FK  stream_id : Integer</text>
+<text x="714" y="195" class="field">lessons_count : Integer</text>
+<text x="714" y="217" class="field">priority : Integer</text><rect x="1030" y="70" width="250" height="118" rx="8" class="card"/>
+<rect x="1030" y="70" width="250" height="34" rx="8" class="card-header"/>
+<path d="M1030 104H1280" class="separator"/>
+<text x="1044" y="93" class="table">stream</text>
+<text x="1044" y="124" class="field key">PK  id : Integer</text>
+<text x="1044" y="146" class="field">event_name : String</text>
+<text x="1044" y="168" class="field">lessons_count : Integer</text><rect x="420" y="390" width="250" height="272" rx="8" class="card"/>
+<rect x="420" y="390" width="250" height="34" rx="8" class="card-header"/>
+<path d="M420 424H670" class="separator"/>
+<text x="434" y="413" class="table">availability_rule</text>
+<text x="434" y="444" class="field key">PK  id : Integer</text>
+<text x="434" y="466" class="field foreign">FK  teacher_id : Integer</text>
+<text x="434" y="488" class="field foreign">FK  student_group_id : Integer</text>
+<text x="434" y="510" class="field foreign">FK  room_id : Integer</text>
+<text x="434" y="532" class="field">rule_kind : String</text>
+<text x="434" y="554" class="field">recurrence : String</text>
+<text x="434" y="576" class="field">lesson_start : Integer</text>
+<text x="434" y="598" class="field">lesson_end : Integer</text>
+<text x="434" y="620" class="field">is_hard : Boolean</text>
+<text x="434" y="642" class="field">weight : Integer</text><rect x="790" y="390" width="250" height="96" rx="8" class="card"/>
+<rect x="790" y="390" width="250" height="34" rx="8" class="card-header"/>
+<path d="M790 424H1040" class="separator"/>
+<text x="804" y="413" class="table">teacher</text>
+<text x="804" y="444" class="field key">PK  id : Integer</text>
+<text x="804" y="466" class="field">name : String</text><rect x="1060" y="350" width="250" height="118" rx="8" class="card"/>
+<rect x="1060" y="350" width="250" height="34" rx="8" class="card-header"/>
+<path d="M1060 384H1310" class="separator"/>
+<text x="1074" y="373" class="table">student_group</text>
+<text x="1074" y="404" class="field key">PK  id : Integer</text>
+<text x="1074" y="426" class="field">name : String</text>
+<text x="1074" y="448" class="field">student_count : Integer</text><rect x="790" y="535" width="250" height="118" rx="8" class="card"/>
+<rect x="790" y="535" width="250" height="34" rx="8" class="card-header"/>
+<path d="M790 569H1040" class="separator"/>
+<text x="804" y="558" class="table">room</text>
+<text x="804" y="589" class="field key">PK  id : Integer</text>
+<text x="804" y="611" class="field">code : String</text>
+<text x="804" y="633" class="field">capacity : Integer</text>
+</svg>
