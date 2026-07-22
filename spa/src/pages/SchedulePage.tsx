@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import {
   Calendar,
   Download,
@@ -47,6 +47,26 @@ interface ScheduleEntry {
   lesson_number: number;
   warning: string | null;
   is_locked: boolean;
+}
+
+interface GenerationTaskSummary {
+  id: number;
+  created_at: string;
+  semester_batch_id: string | null;
+  planning_week: {
+    id: number;
+    sequence_number: number;
+    starts_on: string;
+    ends_on: string;
+    period_id: number;
+    period_name: string | null;
+  } | null;
+}
+
+interface ScheduleSource {
+  id: string;
+  label: string;
+  kind: "task" | "semester";
 }
 
 const DAYS = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"];
@@ -249,11 +269,16 @@ const SidebarDroppable: React.FC<{ children: React.ReactNode }> = ({
 
 export const SchedulePage: React.FC = () => {
   const { taskId } = useParams<{ taskId?: string }>();
+  const [searchParams] = useSearchParams();
+  const requestedSemesterBatchId = searchParams.get("semester_batch_id");
+  const requestedWeek = searchParams.get("week");
   const [entries, setEntries] = useState<ScheduleEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [tasks, setTasks] = useState<{ id: number; created_at: string }[]>([]);
+  const [tasks, setTasks] = useState<GenerationTaskSummary[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(
-    taskId || null,
+    requestedSemesterBatchId
+      ? `semester:${requestedSemesterBatchId}`
+      : taskId || null,
   );
   const [selectedGroup, setSelectedGroup] = useState<string>("");
   const [groups, setGroups] = useState<string[]>([]);
@@ -355,14 +380,33 @@ export const SchedulePage: React.FC = () => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/v1/scheduler/tasks`);
       const data = await res.json();
-      setTasks(data);
-      if (!selectedTaskId && data.length > 0) {
-        setSelectedTaskId(data[0].id.toString());
-      }
+      const fetchedTasks = data as GenerationTaskSummary[];
+      setTasks(fetchedTasks);
+      setSelectedTaskId((current) => {
+        if (current) {
+          const selectedTask = fetchedTasks.find(
+            (task) => task.id.toString() === current,
+          );
+          return selectedTask?.semester_batch_id
+            ? `semester:${selectedTask.semester_batch_id}`
+            : current;
+        }
+        if (requestedSemesterBatchId)
+          return `semester:${requestedSemesterBatchId}`;
+        const requestedTask = fetchedTasks.find(
+          (task) => task.id === Number(taskId),
+        );
+        if (requestedTask?.semester_batch_id) {
+          return `semester:${requestedTask.semester_batch_id}`;
+        }
+        return (
+          requestedTask?.id.toString() || fetchedTasks[0]?.id.toString() || null
+        );
+      });
     } catch {
       console.error("Failed to fetch tasks");
     }
-  }, [selectedTaskId]);
+  }, [requestedSemesterBatchId, taskId]);
 
   const fetchGroups = useCallback(async () => {
     try {
@@ -395,7 +439,12 @@ export const SchedulePage: React.FC = () => {
     async (id: string, mode: "group" | "teacher", filterId: string) => {
       setIsLoading(true);
       try {
-        let url = `${API_BASE_URL}/api/v1/scheduler/schedule?task_id=${id}`;
+        const semesterBatchId = id.startsWith("semester:")
+          ? id.slice("semester:".length)
+          : null;
+        let url = semesterBatchId
+          ? `${API_BASE_URL}/api/v1/scheduler/schedule?semester_batch_id=${encodeURIComponent(semesterBatchId)}`
+          : `${API_BASE_URL}/api/v1/scheduler/schedule?task_id=${id}`;
         if (mode === "group" && filterId) {
           url += `&group_name=${encodeURIComponent(filterId)}`;
         } else if (mode === "teacher" && filterId) {
@@ -415,8 +464,13 @@ export const SchedulePage: React.FC = () => {
 
   const handleExport = () => {
     if (selectedTaskId) {
+      const semesterBatchId = selectedTaskId.startsWith("semester:")
+        ? selectedTaskId.slice("semester:".length)
+        : null;
       window.open(
-        `${API_BASE_URL}/api/v1/scheduler/export?task_id=${selectedTaskId}`,
+        semesterBatchId
+          ? `${API_BASE_URL}/api/v1/scheduler/export?semester_batch_id=${encodeURIComponent(semesterBatchId)}`
+          : `${API_BASE_URL}/api/v1/scheduler/export?task_id=${selectedTaskId}`,
         "_blank",
       );
     }
@@ -445,6 +499,7 @@ export const SchedulePage: React.FC = () => {
   useEffect(() => {
     if (
       !selectedTaskId ||
+      selectedTaskId.startsWith("semester:") ||
       viewMode !== "group" ||
       !selectedGroup ||
       selectedGroup === "Все"
@@ -497,10 +552,56 @@ export const SchedulePage: React.FC = () => {
   }, [entries]);
 
   useEffect(() => {
-    if (availableWeeks.length > 0 && !selectedWeek) {
-      setSelectedWeek(availableWeeks[0][0]);
+    if (availableWeeks.length === 0) return;
+    setSelectedWeek((current) => {
+      if (current && availableWeeks.some(([week]) => week === current))
+        return current;
+      if (
+        requestedWeek &&
+        availableWeeks.some(([week]) => week === requestedWeek)
+      ) {
+        return requestedWeek;
+      }
+      return availableWeeks[0][0];
+    });
+  }, [availableWeeks, requestedWeek]);
+
+  const scheduleSources = React.useMemo<ScheduleSource[]>(() => {
+    const semesterBatches = new Map<string, GenerationTaskSummary[]>();
+    const standaloneTasks: GenerationTaskSummary[] = [];
+    for (const task of tasks) {
+      if (task.semester_batch_id) {
+        const batch = semesterBatches.get(task.semester_batch_id) || [];
+        batch.push(task);
+        semesterBatches.set(task.semester_batch_id, batch);
+      } else {
+        standaloneTasks.push(task);
+      }
     }
-  }, [availableWeeks, selectedWeek]);
+    const semesters = Array.from(semesterBatches.entries()).map(
+      ([batchId, batch]) => {
+        const firstTask = [...batch].sort(
+          (left, right) =>
+            (left.planning_week?.sequence_number || 0) -
+            (right.planning_week?.sequence_number || 0),
+        )[0];
+        const title = firstTask.planning_week?.period_name || "Учебный период";
+        return {
+          id: `semester:${batchId}`,
+          label: `${title} · ${batch.length} нед.`,
+          kind: "semester" as const,
+        };
+      },
+    );
+    return [
+      ...semesters,
+      ...standaloneTasks.map((task) => ({
+        id: task.id.toString(),
+        label: `Расчёт #${task.id} · ${new Date(task.created_at).toLocaleDateString("ru-RU")}`,
+        kind: "task" as const,
+      })),
+    ];
+  }, [tasks]);
 
   const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
@@ -730,13 +831,17 @@ export const SchedulePage: React.FC = () => {
           <Calendar size={18} className="text-text-tertiary" />
           <select
             value={selectedTaskId || ""}
-            onChange={(e) => setSelectedTaskId(e.target.value)}
+            onChange={(e) => {
+              setSelectedTaskId(e.target.value);
+              setSelectedWeek(null);
+            }}
             className="bg-transparent border-none font-semibold text-text-primary focus:ring-0 cursor-pointer"
           >
             <option value="">Выберите расчет...</option>
-            {tasks.map((t) => (
-              <option key={t.id} value={t.id}>
-                Расчет #{t.id} ({new Date(t.created_at).toLocaleDateString()})
+            {scheduleSources.map((source) => (
+              <option key={source.id} value={source.id}>
+                {source.kind === "semester" ? "Семестр: " : ""}
+                {source.label}
               </option>
             ))}
           </select>

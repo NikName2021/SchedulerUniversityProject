@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   AlertTriangle,
@@ -6,9 +6,12 @@ import {
   Ban,
   Calendar,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   Clock3,
   Download,
   History as HistoryIcon,
+  Layers3,
   LayoutDashboard,
   RefreshCcw,
   RotateCcw,
@@ -17,6 +20,15 @@ import {
   XCircle,
 } from "lucide-react";
 import { API_BASE_URL } from "../api/apiConfig";
+
+interface PlanningWeekSummary {
+  id: number;
+  sequence_number: number;
+  starts_on: string;
+  ends_on: string;
+  period_id: number;
+  period_name: string | null;
+}
 
 interface GenerationTask {
   id: number;
@@ -35,6 +47,15 @@ interface GenerationTask {
   version_number: number;
   publication_status: "draft" | "published" | "archived";
   edit_revision: number;
+  semester_batch_id: string | null;
+  planning_week: PlanningWeekSummary | null;
+}
+
+interface SemesterBatch {
+  id: string;
+  tasks: GenerationTask[];
+  createdAt: string;
+  periodName: string;
 }
 
 const hasScheduleResult = (status: string) =>
@@ -58,9 +79,30 @@ const publicationLabel = (task: GenerationTask) => {
   return `Черновик · редакция ${task.edit_revision || 0}`;
 };
 
+const batchStatus = (tasks: GenerationTask[]) => {
+  if (
+    tasks.some((task) => task.status === "running" || task.status === "queued")
+  ) {
+    return statusMeta("running");
+  }
+  if (tasks.every((task) => task.status === "canceled"))
+    return statusMeta("canceled");
+  if (
+    tasks.some((task) => task.status === "failed" || task.status === "partial")
+  ) {
+    return statusMeta("partial");
+  }
+  if (tasks.every((task) => task.status === "success"))
+    return statusMeta("success");
+  return statusMeta("partial");
+};
+
 const HistoryPage: React.FC = () => {
   const [tasks, setTasks] = useState<GenerationTask[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [expandedBatches, setExpandedBatches] = useState<Set<string>>(
+    new Set(),
+  );
   const navigate = useNavigate();
 
   const fetchTasks = useCallback(async () => {
@@ -81,11 +123,51 @@ const HistoryPage: React.FC = () => {
     return () => window.clearInterval(intervalId);
   }, [fetchTasks]);
 
-  const handleDownload = (taskId: number) =>
-    window.open(
-      `${API_BASE_URL}/api/v1/scheduler/export?task_id=${taskId}`,
-      "_blank",
+  const registryItems = useMemo(() => {
+    const batches = new Map<string, GenerationTask[]>();
+    const standalone: GenerationTask[] = [];
+    for (const task of tasks) {
+      if (task.semester_batch_id) {
+        const batch = batches.get(task.semester_batch_id) || [];
+        batch.push(task);
+        batches.set(task.semester_batch_id, batch);
+      } else {
+        standalone.push(task);
+      }
+    }
+    const semesterBatches: SemesterBatch[] = Array.from(batches.entries()).map(
+      ([id, batchTasks]) => {
+        const sortedTasks = [...batchTasks].sort(
+          (left, right) =>
+            (left.planning_week?.sequence_number || 0) -
+            (right.planning_week?.sequence_number || 0),
+        );
+        return {
+          id,
+          tasks: sortedTasks,
+          createdAt: batchTasks.reduce(
+            (latest, task) =>
+              latest > task.created_at ? latest : task.created_at,
+            batchTasks[0].created_at,
+          ),
+          periodName:
+            sortedTasks[0]?.planning_week?.period_name || "Учебный период",
+        };
+      },
     );
+    return [
+      ...semesterBatches.map((batch) => ({
+        kind: "semester" as const,
+        createdAt: batch.createdAt,
+        batch,
+      })),
+      ...standalone.map((task) => ({
+        kind: "task" as const,
+        createdAt: task.created_at,
+        task,
+      })),
+    ].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }, [tasks]);
 
   const runTaskAction = async (
     taskId: number,
@@ -141,13 +223,114 @@ const HistoryPage: React.FC = () => {
         });
   };
 
-  if (isLoading) {
+  const openSemester = (batchId: string, week?: PlanningWeekSummary | null) => {
+    const params = new URLSearchParams({ semester_batch_id: batchId });
+    if (week) params.set("week", week.starts_on);
+    navigate(`/schedule?${params.toString()}`);
+  };
+
+  const renderTaskActions = (
+    task: GenerationTask,
+    semesterBatchId?: string,
+  ) => (
+    <div className="task-row__actions">
+      {(task.status === "queued" || task.status === "running") && (
+        <button
+          type="button"
+          className="button-icon button-danger"
+          title="Отменить расчёт"
+          onClick={() => void runTaskAction(task.id, "cancel")}
+        >
+          <Ban size={16} />
+        </button>
+      )}
+      {(task.status === "failed" || task.status === "canceled") && (
+        <button
+          type="button"
+          className="button-icon"
+          title="Повторить расчёт"
+          onClick={() => void runTaskAction(task.id, "retry")}
+        >
+          <RotateCcw size={16} />
+        </button>
+      )}
+      {hasScheduleResult(task.status) &&
+        task.publication_status === "draft" && (
+          <button
+            type="button"
+            className="button-icon task-action--success"
+            title="Опубликовать версию"
+            onClick={() => void runTaskAction(task.id, "publish")}
+          >
+            <Send size={16} />
+          </button>
+        )}
+      {task.publication_status === "published" && (
+        <button
+          type="button"
+          className="button-icon"
+          title="Отправить в архив"
+          onClick={() => void runTaskAction(task.id, "archive")}
+        >
+          <Archive size={16} />
+        </button>
+      )}
+      {(task.status === "partial" || task.status === "failed") && (
+        <button
+          type="button"
+          className="button-icon task-action--warning"
+          title="Показать диагностику"
+          onClick={() => void showDiagnostics(task.id)}
+        >
+          <AlertTriangle size={16} />
+        </button>
+      )}
+      <button
+        type="button"
+        className="button-icon"
+        title="Наследовать параметры"
+        onClick={() => handleInherit(task)}
+      >
+        <RefreshCcw size={16} />
+      </button>
+      {hasScheduleResult(task.status) && (
+        <button
+          type="button"
+          className="button-icon task-action--primary"
+          title="Скачать Excel"
+          onClick={() =>
+            window.open(
+              `${API_BASE_URL}/api/v1/scheduler/export?task_id=${task.id}`,
+              "_blank",
+            )
+          }
+        >
+          <Download size={16} />
+        </button>
+      )}
+      {hasScheduleResult(task.status) && (
+        <button
+          type="button"
+          className="button-icon task-action--primary"
+          title="Открыть расписание"
+          onClick={() =>
+            semesterBatchId
+              ? openSemester(semesterBatchId, task.planning_week)
+              : navigate(`/schedule/${task.id}`)
+          }
+        >
+          <LayoutDashboard size={16} />
+        </button>
+      )}
+    </div>
+  );
+
+  if (isLoading)
     return (
       <div className="loading-state">
         <span className="loading-state__spinner" /> Загрузка журнала операций…
       </div>
     );
-  }
 
   return (
     <div className="enterprise-page animate-fade-in">
@@ -155,20 +338,20 @@ const HistoryPage: React.FC = () => {
         <div>
           <h2 className="enterprise-page__heading">Реестр расчётов</h2>
           <p className="enterprise-page__description">
-            Статус задач, версии сформированного расписания и доступные
-            действия.
+            Семестровые запуски объединены в одну операцию с детализацией по
+            неделям.
           </p>
         </div>
         <button
           type="button"
           className="btn-secondary"
-          onClick={() => void fetchTasks}
+          onClick={() => void fetchTasks()}
         >
           <RefreshCcw size={16} /> Обновить
         </button>
       </section>
 
-      {tasks.length > 0 ? (
+      {registryItems.length > 0 ? (
         <section className="task-registry app-panel">
           <div className="task-registry__head">
             <span>Расчёт</span>
@@ -178,144 +361,195 @@ const HistoryPage: React.FC = () => {
             <span>Действия</span>
           </div>
           <div className="task-registry__body">
-            {tasks.map((task) => {
-              const status = statusMeta(task.status);
-              const StatusIcon = status.Icon;
-              return (
-                <article className="task-row" key={task.id}>
-                  <div className="task-row__identity">
-                    <div
-                      className={`task-row__status-icon task-row__status-icon--${status.tone}`}
-                    >
-                      <StatusIcon size={18} />
-                    </div>
-                    <div>
-                      <strong>Расчёт #{task.id}</strong>
-                      <span>
-                        Версия {task.version_number || 1} ·{" "}
-                        {formatDate(task.created_at)}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="task-row__parameters">
-                    <span>
-                      <Users size={14} /> {task.groups?.length || 0} групп
-                    </span>
-                    {hasScheduleResult(task.status) && (
-                      <span>
-                        <Calendar size={14} /> {task.result_count} пар
-                      </span>
-                    )}
-                    {!hasScheduleResult(task.status) &&
-                      task.status !== "failed" && (
+            {registryItems.map((item) => {
+              if (item.kind === "task") {
+                const task = item.task;
+                const status = statusMeta(task.status);
+                const StatusIcon = status.Icon;
+                return (
+                  <article className="task-row" key={task.id}>
+                    <div className="task-row__identity">
+                      <div
+                        className={`task-row__status-icon task-row__status-icon--${status.tone}`}
+                      >
+                        <StatusIcon size={18} />
+                      </div>
+                      <div>
+                        <strong>Расчёт #{task.id}</strong>
                         <span>
-                          {task.progress_percent || 0}% ·{" "}
-                          {task.completed_components || 0}/
-                          {task.total_components || 0}
+                          Версия {task.version_number || 1} ·{" "}
+                          {formatDate(task.created_at)}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="task-row__parameters">
+                      <span>
+                        <Users size={14} /> {task.groups?.length || 0} групп
+                      </span>
+                      {hasScheduleResult(task.status) && (
+                        <span>
+                          <Calendar size={14} /> {task.result_count} пар
                         </span>
                       )}
-                    {task.error_message && (
-                      <small title={task.error_message}>
-                        {task.error_message}
-                      </small>
-                    )}
-                  </div>
-                  <div>
-                    <span
-                      className={`status-badge status-badge--${status.tone}`}
-                    >
-                      <StatusIcon size={13} /> {status.label}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="task-row__publication">
-                      {publicationLabel(task)}
-                    </span>
-                  </div>
-                  <div className="task-row__actions">
-                    {(task.status === "queued" ||
-                      task.status === "running") && (
-                      <button
-                        type="button"
-                        className="button-icon button-danger"
-                        title="Отменить расчёт"
-                        onClick={() => void runTaskAction(task.id, "cancel")}
-                      >
-                        <Ban size={16} />
-                      </button>
-                    )}
-                    {(task.status === "failed" ||
-                      task.status === "canceled") && (
-                      <button
-                        type="button"
-                        className="button-icon"
-                        title="Повторить расчёт"
-                        onClick={() => void runTaskAction(task.id, "retry")}
-                      >
-                        <RotateCcw size={16} />
-                      </button>
-                    )}
-                    {hasScheduleResult(task.status) &&
-                      task.publication_status === "draft" && (
-                        <button
-                          type="button"
-                          className="button-icon task-action--success"
-                          title="Опубликовать версию"
-                          onClick={() => void runTaskAction(task.id, "publish")}
-                        >
-                          <Send size={16} />
-                        </button>
+                      {!hasScheduleResult(task.status) &&
+                        task.status !== "failed" && (
+                          <span>
+                            {task.progress_percent || 0}% ·{" "}
+                            {task.completed_components || 0}/
+                            {task.total_components || 0}
+                          </span>
+                        )}
+                      {task.error_message && (
+                        <small title={task.error_message}>
+                          {task.error_message}
+                        </small>
                       )}
-                    {task.publication_status === "published" && (
-                      <button
-                        type="button"
-                        className="button-icon"
-                        title="Отправить в архив"
-                        onClick={() => void runTaskAction(task.id, "archive")}
+                    </div>
+                    <div>
+                      <span
+                        className={`status-badge status-badge--${status.tone}`}
                       >
-                        <Archive size={16} />
-                      </button>
-                    )}
-                    {(task.status === "partial" ||
-                      task.status === "failed") && (
-                      <button
-                        type="button"
-                        className="button-icon task-action--warning"
-                        title="Показать диагностику"
-                        onClick={() => void showDiagnostics(task.id)}
-                      >
-                        <AlertTriangle size={16} />
-                      </button>
-                    )}
+                        <StatusIcon size={13} /> {status.label}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="task-row__publication">
+                        {publicationLabel(task)}
+                      </span>
+                    </div>
+                    {renderTaskActions(task)}
+                  </article>
+                );
+              }
+
+              const batch = item.batch;
+              const status = batchStatus(batch.tasks);
+              const StatusIcon = status.Icon;
+              const expanded = expandedBatches.has(batch.id);
+              const completedWeeks = batch.tasks.filter((task) =>
+                hasScheduleResult(task.status),
+              ).length;
+              const scheduledLessons = batch.tasks.reduce(
+                (sum, task) => sum + task.result_count,
+                0,
+              );
+              return (
+                <article className="semester-task" key={batch.id}>
+                  <div className="task-row task-row--semester">
                     <button
                       type="button"
-                      className="button-icon"
-                      title="Наследовать параметры"
-                      onClick={() => handleInherit(task)}
+                      className="semester-task__toggle"
+                      onClick={() =>
+                        setExpandedBatches((current) => {
+                          const next = new Set(current);
+                          if (next.has(batch.id)) next.delete(batch.id);
+                          else next.add(batch.id);
+                          return next;
+                        })
+                      }
+                      aria-label={
+                        expanded ? "Свернуть недели" : "Развернуть недели"
+                      }
                     >
-                      <RefreshCcw size={16} />
+                      {expanded ? (
+                        <ChevronDown size={17} />
+                      ) : (
+                        <ChevronRight size={17} />
+                      )}
                     </button>
-                    {hasScheduleResult(task.status) && (
-                      <button
-                        type="button"
-                        className="button-icon task-action--primary"
-                        title="Скачать Excel"
-                        onClick={() => handleDownload(task.id)}
+                    <div className="task-row__identity">
+                      <div
+                        className={`task-row__status-icon task-row__status-icon--${status.tone}`}
                       >
-                        <Download size={16} />
-                      </button>
-                    )}
-                    {hasScheduleResult(task.status) && (
+                        <Layers3 size={18} />
+                      </div>
+                      <div>
+                        <strong>Семестровый расчёт</strong>
+                        <span>
+                          {batch.periodName} · {formatDate(batch.createdAt)}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="task-row__parameters">
+                      <span>
+                        <Users size={14} /> {batch.tasks[0]?.groups.length || 0}{" "}
+                        групп
+                      </span>
+                      <span>
+                        <Calendar size={14} /> {batch.tasks.length} нед.
+                      </span>
+                      <span>{scheduledLessons} пар</span>
+                    </div>
+                    <div>
+                      <span
+                        className={`status-badge status-badge--${status.tone}`}
+                      >
+                        <StatusIcon size={13} /> {completedWeeks}/
+                        {batch.tasks.length} недель
+                      </span>
+                    </div>
+                    <div>
+                      <span className="task-row__publication">
+                        {status.label}
+                      </span>
+                    </div>
+                    <div className="task-row__actions">
                       <button
                         type="button"
                         className="button-icon task-action--primary"
-                        title="Открыть редактор"
-                        onClick={() => navigate(`/schedule/${task.id}`)}
+                        title="Открыть расписание семестра"
+                        onClick={() => openSemester(batch.id)}
                       >
                         <LayoutDashboard size={16} />
                       </button>
-                    )}
+                      <button
+                        type="button"
+                        className="button-icon task-action--primary"
+                        title="Скачать расписание семестра"
+                        onClick={() =>
+                          window.open(
+                            `${API_BASE_URL}/api/v1/scheduler/export?semester_batch_id=${encodeURIComponent(batch.id)}`,
+                            "_blank",
+                          )
+                        }
+                      >
+                        <Download size={16} />
+                      </button>
+                    </div>
                   </div>
+                  {expanded && (
+                    <div className="semester-task__weeks">
+                      {batch.tasks.map((task) => {
+                        const weekStatus = statusMeta(task.status);
+                        const WeekStatusIcon = weekStatus.Icon;
+                        return (
+                          <div className="semester-week-row" key={task.id}>
+                            <div className="semester-week-row__title">
+                              <span>
+                                Неделя{" "}
+                                {task.planning_week?.sequence_number || "—"}
+                              </span>
+                              <small>
+                                {task.planning_week
+                                  ? `${task.planning_week.starts_on} — ${task.planning_week.ends_on}`
+                                  : formatDate(task.created_at)}
+                              </small>
+                            </div>
+                            <div>{task.result_count} пар</div>
+                            <div>
+                              <span
+                                className={`status-badge status-badge--${weekStatus.tone}`}
+                              >
+                                <WeekStatusIcon size={13} /> {weekStatus.label}
+                              </span>
+                            </div>
+                            <div>{publicationLabel(task)}</div>
+                            {renderTaskActions(task, batch.id)}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </article>
               );
             })}

@@ -370,7 +370,10 @@ class WeeklyLessonDemand(DeclBase):
 
 class GenerationTask(DeclBase):
     __tablename__ = "generation_task"
-    __table_args__ = (Index("ix_generation_task_planning_week_id", "planning_week_id"),)
+    __table_args__ = (
+        Index("ix_generation_task_planning_week_id", "planning_week_id"),
+        Index("ix_generation_task_semester_batch_id", "semester_batch_id"),
+    )
     id = Column(Integer, primary_key=True, index=True)
     planning_week_id = Column(
         Integer, ForeignKey("planning_week.id", ondelete="SET NULL"), nullable=True
@@ -378,6 +381,7 @@ class GenerationTask(DeclBase):
     parent_task_id = Column(
         Integer, ForeignKey("generation_task.id", ondelete="SET NULL"), nullable=True
     )
+    semester_batch_id = Column(String, nullable=True)
     version_number = Column(Integer, nullable=False, default=1)
     publication_status = Column(String, nullable=False, default="draft")
     published_at = Column(DateTime, nullable=True)

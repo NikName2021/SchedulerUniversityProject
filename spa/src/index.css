@@ -934,6 +934,78 @@ textarea:focus-visible {
   width: 31px;
   height: 31px;
 }
+.task-row--semester {
+  grid-template-columns:
+    28px minmax(182px, 1.1fr) minmax(185px, 1.1fr) minmax(110px, 0.6fr)
+    minmax(105px, 0.55fr) minmax(72px, auto);
+  background: #f8fbff;
+}
+.semester-task {
+  border-bottom: 1px solid #e9edf2;
+}
+.semester-task:last-child {
+  border-bottom: 0;
+}
+.semester-task .task-row {
+  border-bottom: 0;
+}
+.semester-task__toggle {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #c9d7eb;
+  border-radius: 5px;
+  background: white;
+  color: #3a609a;
+}
+.semester-task__toggle:hover {
+  border-color: #97b5e6;
+  color: var(--brand);
+}
+.semester-task__weeks {
+  margin: 0 18px 14px 46px;
+  overflow: hidden;
+  border: 1px solid #dce5f0;
+  border-radius: 6px;
+  background: white;
+}
+.semester-week-row {
+  display: grid;
+  grid-template-columns:
+    minmax(190px, 1.2fr) minmax(85px, 0.45fr) minmax(110px, 0.6fr)
+    minmax(115px, 0.65fr) minmax(145px, auto);
+  gap: 14px;
+  align-items: center;
+  min-height: 50px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #edf0f4;
+  color: #526075;
+  font-size: 12px;
+}
+.semester-week-row:last-child {
+  border-bottom: 0;
+}
+.semester-week-row:hover {
+  background: #fbfcfe;
+}
+.semester-week-row__title {
+  display: flex;
+  flex-direction: column;
+}
+.semester-week-row__title span {
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
+}
+.semester-week-row__title small {
+  margin-top: 2px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+.semester-week-row .task-row__actions {
+  justify-content: flex-end;
+}
 .task-action--success {
   border-color: #bce4d2;
   background: var(--success-bg);

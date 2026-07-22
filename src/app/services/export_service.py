@@ -26,10 +26,16 @@ COLORS = {
 }
 
 
-async def generate_excel_report(session, task_id: int | None = None):
+async def generate_excel_report(
+    session, task_id: int | None = None, semester_batch_id: str | None = None
+):
     stmt = select(ScheduleEntry).options(selectinload(ScheduleEntry.teacher))
     if task_id:
         stmt = stmt.filter(ScheduleEntry.task_id == task_id)
+    elif semester_batch_id:
+        stmt = stmt.join(
+            GenerationTask, GenerationTask.id == ScheduleEntry.task_id
+        ).where(GenerationTask.semester_batch_id == semester_batch_id)
     else:
         stmt = stmt.join(
             GenerationTask, GenerationTask.id == ScheduleEntry.task_id

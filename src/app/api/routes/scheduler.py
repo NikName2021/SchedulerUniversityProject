@@ -86,6 +86,7 @@ class GenerationTaskModel(BaseModel):
     start_date: str | None = None
     end_date: str | None = None
     settings: dict | None = None
+    semester_batch_id: str | None = None
 
 
 class ScheduleUpdateModel(BaseModel):
@@ -488,6 +489,7 @@ async def generate_schedule(
             planning_week_id=task.planning_week_id,
             start_date=start_dt,
             end_date=end_dt,
+            semester_batch_id=task.semester_batch_id,
         )
     except (RuntimeError, IntegrityError) as exc:
         await db.rollback()
@@ -527,14 +529,21 @@ async def generate_schedule(
 @router.get("/export")
 async def export_schedule(
     task_id: int | None = None,
+    semester_batch_id: str | None = None,
     db: Annotated[AsyncSession, Depends(async_get_db)] = None,
 ) -> StreamingResponse:
-    output = await generate_excel_report(db, task_id)
+    output = await generate_excel_report(db, task_id, semester_batch_id)
     if not output:
         raise HTTPException(status_code=404, detail="No schedule found to export")
 
     filename = (
-        f"schedule_export_{task_id}.xlsx" if task_id else "schedule_export_all.xlsx"
+        (
+            f"schedule_export_semester_{semester_batch_id}.xlsx"
+            if semester_batch_id
+            else f"schedule_export_{task_id}.xlsx"
+            if task_id
+            else "schedule_export_all.xlsx"
+        )
     )
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
     return StreamingResponse(
@@ -548,7 +557,15 @@ async def export_schedule(
 async def get_generation_tasks(
     db: Annotated[AsyncSession, Depends(async_get_db)] = None,
 ) -> list[dict[str, Any]]:
-    stmt = select(GenerationTask).order_by(GenerationTask.created_at.desc())
+    stmt = (
+        select(GenerationTask)
+        .options(
+            selectinload(GenerationTask.planning_week).selectinload(
+                PlanningWeek.period
+            )
+        )
+        .order_by(GenerationTask.created_at.desc())
+    )
     result = await db.execute(stmt)
     tasks = result.scalars().all()
     return [
@@ -564,6 +581,21 @@ async def get_generation_tasks(
             "result_count": t.result_count,
             "error_message": t.error_message,
             "planning_week_id": t.planning_week_id,
+            "semester_batch_id": t.semester_batch_id,
+            "planning_week": (
+                {
+                    "id": t.planning_week.id,
+                    "sequence_number": t.planning_week.sequence_number,
+                    "starts_on": t.planning_week.starts_on.isoformat(),
+                    "ends_on": t.planning_week.ends_on.isoformat(),
+                    "period_id": t.planning_week.period_id,
+                    "period_name": t.planning_week.period.name
+                    if t.planning_week.period
+                    else None,
+                }
+                if t.planning_week
+                else None
+            ),
             "total_components": t.total_components,
             "completed_components": t.completed_components,
             "progress_percent": t.progress_percent,
@@ -639,6 +671,7 @@ async def retry_generation_task(
             start_date=source.start_date,
             end_date=source.end_date,
             parent_task_id=source.id,
+            semester_batch_id=source.semester_batch_id,
         )
         async_result = generate_schedule_task.delay(
             retry_task.id,
@@ -746,6 +779,7 @@ async def get_schedule_quality(
 @router.get("/schedule")
 async def get_schedule(
     task_id: int | None = None,
+    semester_batch_id: str | None = None,
     group_name: str | None = None,
     teacher_id: int | None = None,
     db: Annotated[AsyncSession, Depends(async_get_db)] = None,
@@ -754,6 +788,10 @@ async def get_schedule(
 
     if task_id:
         stmt = stmt.where(ScheduleEntry.task_id == task_id)
+    if semester_batch_id:
+        stmt = stmt.join(
+            GenerationTask, GenerationTask.id == ScheduleEntry.task_id
+        ).where(GenerationTask.semester_batch_id == semester_batch_id)
     if group_name:
         stmt = stmt.where(ScheduleEntry.group_name == group_name)
     if teacher_id:

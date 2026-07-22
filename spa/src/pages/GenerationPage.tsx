@@ -485,6 +485,7 @@ export const GenerationPage: React.FC = () => {
     }
     setIsGenerating(true);
     setStatus(null);
+    const semesterBatchId = crypto.randomUUID();
     setBatchWeeks(
       weeks.map((week) => ({
         week,
@@ -506,6 +507,7 @@ export const GenerationPage: React.FC = () => {
                 groups: selectedGroups,
                 holidays,
                 planning_week_id: week.id,
+                semester_batch_id: semesterBatchId,
                 settings: {
                   enabled_types: enabledTypes,
                   priorities: subjectPriorities,

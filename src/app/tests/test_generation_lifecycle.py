@@ -59,6 +59,25 @@ async def test_generation_lock_and_version_lifecycle(db_session: AsyncSession) -
 
 
 @pytest.mark.asyncio
+async def test_semester_tasks_keep_a_shared_batch_identifier(
+    db_session: AsyncSession,
+) -> None:
+    batch_id = "semester-run-2026-09"
+    task = await GenerationLifecycleService.reserve_task(
+        db_session,
+        groups=["ИВТ-101"],
+        holidays=[],
+        settings={"semester_period_id": 1},
+        planning_week_id=101,
+        start_date=datetime.datetime(2026, 9, 7),
+        end_date=datetime.datetime(2026, 9, 13),
+        semester_batch_id=batch_id,
+    )
+
+    assert task.semester_batch_id == batch_id
+
+
+@pytest.mark.asyncio
 async def test_manual_change_detects_teacher_conflict_and_diagnostics(
     db_session: AsyncSession,
 ) -> None:

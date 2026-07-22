@@ -40,6 +40,7 @@ class GenerationLifecycleService:
         start_date: datetime.datetime | None,
         end_date: datetime.datetime | None,
         parent_task_id: int | None = None,
+        semester_batch_id: str | None = None,
     ) -> GenerationTask:
         await db.execute(
             delete(GenerationLock).where(
@@ -77,6 +78,7 @@ class GenerationLifecycleService:
             start_date=start_date,
             end_date=end_date,
             parent_task_id=parent_task_id,
+            semester_batch_id=semester_batch_id,
             version_number=version_number,
             publication_status="draft",
             status="queued",
