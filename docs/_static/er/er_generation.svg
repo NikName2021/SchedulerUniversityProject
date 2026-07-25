@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="650" viewBox="0 0 1240 650">
+<style>
+text { font-family: Arial, sans-serif; fill: #102a43; }
+.title { font-size: 24px; font-weight: 700; fill: #0b355d; }
+.table { font-size: 16px; font-weight: 700; fill: #ffffff; }
+.field { font-size: 12px; }
+.key { font-weight: 700; fill: #0b5792; }
+.foreign { fill: #5a3d8c; }
+.card { fill: #f8fbfe; stroke: #1769aa; stroke-width: 2; }
+.card-header { fill: #1769aa; }
+.separator { stroke: #1769aa; stroke-width: 1.4; }
+.relation { fill: none; stroke: #66788a; stroke-width: 1.8; marker-end: url(#arrow); }
+</style>
+<defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L0,9 L9,4.5 z" fill="#66788a"/></marker></defs>
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="32" y="36" class="title">ER-схема: расчёт и диагностика</text>
+<path d="M375 257V193H290V130" class="relation"/><path d="M810 127H710V250H625" class="relation"/><path d="M810 327H685V300H625" class="relation"/><path d="M810 349H735V455H320V465H290" class="relation"/><path d="M810 547H660V350H625" class="relation"/>
+<rect x="40" y="85" width="250" height="162" rx="8" class="card"/>
+<rect x="40" y="85" width="250" height="34" rx="8" class="card-header"/>
+<path d="M40 119H290" class="separator"/>
+<text x="54" y="108" class="table">planning_week</text>
+<text x="54" y="139" class="field key">PK  id : Integer</text>
+<text x="54" y="161" class="field foreign">FK  period_id : Integer</text>
+<text x="54" y="183" class="field">sequence_number : Integer</text>
+<text x="54" y="205" class="field">starts_on : Date</text>
+<text x="54" y="227" class="field">ends_on : Date</text><rect x="375" y="190" width="250" height="228" rx="8" class="card"/>
+<rect x="375" y="190" width="250" height="34" rx="8" class="card-header"/>
+<path d="M375 224H625" class="separator"/>
+<text x="389" y="213" class="table">generation_task</text>
+<text x="389" y="244" class="field key">PK  id : Integer</text>
+<text x="389" y="266" class="field foreign">FK  planning_week_id : Integer</text>
+<text x="389" y="288" class="field foreign">FK  parent_task_id : Integer</text>
+<text x="389" y="310" class="field">version_number : Integer</text>
+<text x="389" y="332" class="field">publication_status : String</text>
+<text x="389" y="354" class="field">status : String</text>
+<text x="389" y="376" class="field">progress_percent : Integer</text>
+<text x="389" y="398" class="field">result_count : Integer</text><rect x="810" y="60" width="250" height="184" rx="8" class="card"/>
+<rect x="810" y="60" width="250" height="34" rx="8" class="card-header"/>
+<path d="M810 94H1060" class="separator"/>
+<text x="824" y="83" class="table">generation_component</text>
+<text x="824" y="114" class="field key">PK  id : Integer</text>
+<text x="824" y="136" class="field foreign">FK  task_id : Integer</text>
+<text x="824" y="158" class="field">component_key : String</text>
+<text x="824" y="180" class="field">status : String</text>
+<text x="824" y="202" class="field">event_count : Integer</text>
+<text x="824" y="224" class="field">solve_seconds : Float</text><rect x="810" y="260" width="250" height="184" rx="8" class="card"/>
+<rect x="810" y="260" width="250" height="34" rx="8" class="card-header"/>
+<path d="M810 294H1060" class="separator"/>
+<text x="824" y="283" class="table">generation_issue</text>
+<text x="824" y="314" class="field key">PK  id : Integer</text>
+<text x="824" y="336" class="field foreign">FK  task_id : Integer</text>
+<text x="824" y="358" class="field foreign">FK  stream_id : Integer</text>
+<text x="824" y="380" class="field">kind : String</text>
+<text x="824" y="402" class="field">severity : String</text>
+<text x="824" y="424" class="field">message : String</text><rect x="810" y="480" width="250" height="118" rx="8" class="card"/>
+<rect x="810" y="480" width="250" height="34" rx="8" class="card-header"/>
+<path d="M810 514H1060" class="separator"/>
+<text x="824" y="503" class="table">generation_lock</text>
+<text x="824" y="534" class="field key">PK  scope_key : String</text>
+<text x="824" y="556" class="field foreign">FK  task_id : Integer</text>
+<text x="824" y="578" class="field">created_at : DateTime</text><rect x="40" y="420" width="250" height="118" rx="8" class="card"/>
+<rect x="40" y="420" width="250" height="34" rx="8" class="card-header"/>
+<path d="M40 454H290" class="separator"/>
+<text x="54" y="443" class="table">stream</text>
+<text x="54" y="474" class="field key">PK  id : Integer</text>
+<text x="54" y="496" class="field">event_name : String</text>
+<text x="54" y="518" class="field">lessons_count : Integer</text>
+</svg>

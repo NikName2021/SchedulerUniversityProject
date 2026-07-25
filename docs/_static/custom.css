@@ -1,0 +1,13 @@
+:root { --sirius: #1769aa; --sirius-dark: #0b355d; }
+.wy-side-nav-search { background-color: var(--sirius-dark); }
+.wy-menu-vertical header, .wy-menu-vertical p.caption { color: #75c6ff; }
+.wy-nav-content { max-width: 1000px; }
+.rst-content h1, .rst-content h2, .rst-content h3 { color: var(--sirius-dark); }
+.rst-content code.literal { color: #0b5792; }
+.rst-content .admonition-title { background: var(--sirius); }
+.rst-content .admonition { background: #f4f8fb; }
+.rst-content .doc-screenshot {
+  border: 1px solid #d5e0ea;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(11, 53, 93, 0.12);
+}
