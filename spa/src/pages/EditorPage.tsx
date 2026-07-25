@@ -27,14 +27,16 @@ export const EditorPage: React.FC = () => {
   const [streams, setStreams] = useState<StreamItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [typeFilter, setTypeFilter] = useState<string>("Все типы");
+  const [error, setError] = useState<string | null>(null);
 
   const fetchGroups = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/v1/scheduler/groups`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setGroups(data.groups || []);
     } catch {
-      console.error("Failed to fetch groups");
+      setError("Не удалось загрузить список групп");
     }
   }, []);
 
@@ -44,10 +46,11 @@ export const EditorPage: React.FC = () => {
       const res = await fetch(
         `${API_BASE_URL}/api/v1/scheduler/streams?group_name=${encodeURIComponent(group)}`,
       );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setStreams(data);
     } catch {
-      console.error("Failed to fetch streams");
+      setError("Не удалось загрузить учебные потоки");
     } finally {
       setIsLoading(false);
     }
@@ -55,25 +58,35 @@ export const EditorPage: React.FC = () => {
 
   const updateStream = useCallback(
     async (id: number, payload: Partial<StreamItem>) => {
+      const previous = streams.find((stream) => stream.id === id);
+      setError(null);
       // Optimistic UI update
       setStreams((prev) =>
         prev.map((s) => (s.id === id ? { ...s, ...payload } : s)),
       );
 
       try {
-        await fetch(`${API_BASE_URL}/api/v1/scheduler/streams/${id}`, {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
+        const response = await fetch(
+          `${API_BASE_URL}/api/v1/scheduler/streams/${id}`,
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
           },
-          body: JSON.stringify(payload),
-        });
+        );
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
       } catch {
-        console.error("Update failed");
-        // Revert on error (ideal case, skipped for MVP simplicity)
+        if (previous) {
+          setStreams((current) =>
+            current.map((stream) => (stream.id === id ? previous : stream)),
+          );
+        }
+        setError("Изменение не сохранено. Предыдущее значение восстановлено.");
       }
     },
-    [],
+    [streams],
   );
 
   useEffect(() => {
@@ -112,6 +125,11 @@ export const EditorPage: React.FC = () => {
           </p>
         </div>
       </header>
+      {error && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+          {error}
+        </div>
+      )}
 
       <div
         style={{ display: "flex", gap: "1.5rem", flex: 1, overflow: "hidden" }}

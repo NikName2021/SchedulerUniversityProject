@@ -2,48 +2,14 @@ import { create } from "zustand";
 import { MockAPI } from "../api/mockService";
 import type { Stream } from "../api/mockService";
 import { API_BASE_URL } from "../api/apiConfig";
+import {
+  getSlotsForInterval,
+  minutesToTime,
+  PAIR_TIMES,
+  timeToMinutes,
+} from "../utils/scheduleTime";
 
-/**
- * Real pair time ranges used across the university schedule.
- * Each pair has start/end in minutes from midnight for easy comparison.
- */
-export const PAIR_TIMES = [
-  { num: 1, label: "08:45 – 10:05", startMin: 525, endMin: 605 },
-  { num: 2, label: "10:20 – 11:40", startMin: 620, endMin: 700 },
-  { num: 3, label: "11:55 – 13:15", startMin: 715, endMin: 795 },
-  { num: 4, label: "13:30 – 14:50", startMin: 810, endMin: 890 },
-  { num: 5, label: "15:05 – 16:25", startMin: 905, endMin: 985 },
-  { num: 6, label: "16:40 – 18:00", startMin: 1000, endMin: 1080 },
-  { num: 7, label: "18:15 – 19:35", startMin: 1095, endMin: 1175 },
-] as const;
-
-/** Convert "HH:MM" to minutes from midnight */
-export function timeToMinutes(hhmm: string): number {
-  const [h, m] = hhmm.split(":").map(Number);
-  return h * 60 + m;
-}
-
-/** Convert minutes from midnight to "HH:MM" */
-export function minutesToTime(mins: number): string {
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-}
-
-/**
- * Given a time interval [startTime, endTime], return which pair numbers
- * overlap with that interval. A pair overlaps if any part of its range
- * intersects with the given interval.
- */
-export function getSlotsForInterval(start: string, end: string): number[] {
-  const startMins = timeToMinutes(start);
-  const endMins = timeToMinutes(end);
-  if (endMins <= startMins) return [];
-
-  return PAIR_TIMES.filter(
-    (p) => p.startMin < endMins && p.endMin > startMins,
-  ).map((p) => p.num);
-}
+export { getSlotsForInterval, minutesToTime, PAIR_TIMES, timeToMinutes };
 
 export interface TimeInterval {
   id: string;
@@ -123,10 +89,17 @@ export const useAppStore = create<AppState>((set) => ({
   logs: [],
 
   fetchInitialData: async () => {
-    set({ isLoading: true });
+    set({ isLoading: true, error: null });
     try {
       const res = await fetch(`${API_BASE_URL}/api/v1/scheduler/teachers`);
-      const rawTeachers = await res.json();
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const payload: unknown = await res.json();
+      if (!Array.isArray(payload)) {
+        throw new Error("Некорректный ответ сервера");
+      }
+      const rawTeachers = payload;
 
       // Parse raw backend data into structured restrictions
       const teachers: Teacher[] = rawTeachers.map(
@@ -144,10 +117,23 @@ export const useAppStore = create<AppState>((set) => ({
           ) {
             const b = t.blocked as Partial<TeacherRestrictions>;
             restrictions = {
-              mode: b.mode || "blacklist",
-              specific: b.specific || [],
-              recurring: b.recurring || [],
-              intervals: (b.intervals as TimeInterval[]) || [],
+              mode:
+                b.mode === "whitelist" || b.mode === "blacklist"
+                  ? b.mode
+                  : "blacklist",
+              specific: Array.isArray(b.specific)
+                ? b.specific.filter(
+                    (value): value is string => typeof value === "string",
+                  )
+                : [],
+              recurring: Array.isArray(b.recurring)
+                ? b.recurring.filter(
+                    (value): value is string => typeof value === "string",
+                  )
+                : [],
+              intervals: Array.isArray(b.intervals)
+                ? (b.intervals as TimeInterval[])
+                : [],
             };
           } else if (Array.isArray(t.blocked)) {
             // Old format migration or simple list
@@ -168,7 +154,10 @@ export const useAppStore = create<AppState>((set) => ({
         selectedTeacherId: teachers[0]?.id || null,
       });
     } catch {
-      set({ error: "Failed to fetch initial data", isLoading: false });
+      set({
+        error: "Не удалось загрузить данные преподавателей",
+        isLoading: false,
+      });
     }
   },
 
@@ -316,7 +305,7 @@ export const useAppStore = create<AppState>((set) => ({
     if (!teacher) return;
 
     try {
-      await fetch(
+      const response = await fetch(
         `${API_BASE_URL}/api/v1/scheduler/teachers/${teacherId}/restrictions`,
         {
           method: "POST",
@@ -324,8 +313,20 @@ export const useAppStore = create<AppState>((set) => ({
           body: JSON.stringify({ restrictions: teacher.restrictions }),
         },
       );
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as {
+          detail?: string;
+        } | null;
+        set({
+          error:
+            payload?.detail || "Не удалось сохранить ограничения преподавателя",
+        });
+        return;
+      }
+      set({ error: null });
     } catch (e) {
       console.error("Failed to save restrictions", e);
+      set({ error: "Не удалось сохранить ограничения преподавателя" });
     }
   },
 }));

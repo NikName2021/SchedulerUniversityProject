@@ -11,7 +11,7 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
-import { API_BASE_URL } from "../api/apiConfig";
+import { API_BASE_URL, openDownload } from "../api/apiConfig";
 
 type FolderName =
   | "Учебные планы и потоки"
@@ -242,7 +242,7 @@ export const StoragePage: React.FC = () => {
   };
 
   const handleExportTeachers = () => {
-    window.open(`${API_BASE_URL}/api/v1/scheduler/teachers/export`, "_blank");
+    openDownload(`${API_BASE_URL}/api/v1/scheduler/teachers/export`);
   };
 
   if (!selectedFolder) {

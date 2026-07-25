@@ -18,7 +18,7 @@ import {
   RefreshCcw,
   RotateCcw,
 } from "lucide-react";
-import { API_BASE_URL } from "../api/apiConfig";
+import { API_BASE_URL, openDownload } from "../api/apiConfig";
 
 interface Stats {
   total_streams: number;
@@ -692,7 +692,7 @@ export const GenerationPage: React.FC = () => {
   };
 
   const handleExport = () => {
-    window.open(`${API_BASE_URL}/api/v1/scheduler/export`, "_blank");
+    openDownload(`${API_BASE_URL}/api/v1/scheduler/export`);
   };
 
   const filteredGroups = groups.filter((g) =>
@@ -1042,6 +1042,8 @@ export const GenerationPage: React.FC = () => {
                     {group}
                   </span>
                   <button
+                    aria-label={`Просмотреть состав группы ${group}`}
+                    title={`Просмотреть состав группы ${group}`}
                     onClick={(e) => {
                       e.stopPropagation();
                       handlePreviewGroup(group);

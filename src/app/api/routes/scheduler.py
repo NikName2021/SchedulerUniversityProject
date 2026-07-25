@@ -1,14 +1,19 @@
 import io
 import json
 import logging
-import os
+import re
 import uuid
 from datetime import datetime
-from typing import Annotated, Any
+from pathlib import Path
+from typing import Annotated, Any, Literal
 
 import pandas as pd
 from core.config import async_get_db
-from core.constants import MAX_GENERATION_HORIZON_DAYS
+from core.constants import (
+    MAX_GENERATION_HORIZON_DAYS,
+    MAX_TIME_SECONDS,
+    NUM_WORKERS,
+)
 from database.all_models import (
     AvailabilityRule,
     FileType,
@@ -30,16 +35,17 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel
-from services.export_service import generate_excel_report
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from services.export_service import escape_excel_formula, generate_excel_report
 from services.generation_lifecycle_service import (
     ACTIVE_STATUSES,
     GenerationLifecycleService,
 )
 from services.generation_service import GenerationService
-from services.parser_service import parse_streams_content
+from services.parser_service import parse_streams_content, read_tabular_content
 from services.quality_service import ScheduleQualityService
 from services.schedule_service import ScheduleService
+from services.upload_service import read_upload_limited
 from sqlalchemy import delete, distinct, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,50 +56,153 @@ from worker import celery_app, generate_schedule_task
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/scheduler", tags=["Scheduler"])
 
-UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "../../uploads")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+UPLOAD_DIR = Path(__file__).resolve().parents[2] / "uploads"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+SEMESTER_BATCH_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$")
 
 
 class StreamUpdateModel(BaseModel):
-    stream_type: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    stream_type: str | None = Field(default=None, min_length=1, max_length=100)
     is_ignored: bool | None = None
 
 
 class TimeIntervalModel(BaseModel):
-    id: str = ""
-    start: str  # "HH:MM"
-    end: str  # "HH:MM"
-    type: str  # "recurring" | "specific"
-    day: int | None = None  # JS weekday for recurring
-    date: str | None = None  # "YYYY-MM-DD" for specific
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(default="", max_length=100)
+    start: str = Field(pattern=r"^\d{2}:\d{2}$")
+    end: str = Field(pattern=r"^\d{2}:\d{2}$")
+    type: Literal["recurring", "specific"]
+    day: int | None = Field(default=None, ge=0, le=6)
+    date: str | None = None
+
+    @model_validator(mode="after")
+    def validate_interval(self) -> "TimeIntervalModel":
+        try:
+            start = datetime.strptime(self.start, "%H:%M").time()
+            end = datetime.strptime(self.end, "%H:%M").time()
+        except ValueError as exc:
+            raise ValueError("Interval times must use HH:MM") from exc
+        if end <= start:
+            raise ValueError("Interval end must be later than start")
+        if self.type == "recurring" and self.day is None:
+            raise ValueError("day is required for a recurring interval")
+        if self.type == "specific":
+            if self.date is None:
+                raise ValueError("date is required for a specific interval")
+            try:
+                datetime.strptime(self.date, "%Y-%m-%d")
+            except ValueError as exc:
+                raise ValueError("Interval date must use YYYY-MM-DD") from exc
+        return self
 
 
 class TeacherRestrictionsDetails(BaseModel):
-    mode: str
-    specific: list[str]
-    recurring: list[str]
-    intervals: list[TimeIntervalModel] = []
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["blacklist", "whitelist"]
+    specific: list[str] = Field(default_factory=list, max_length=5_000)
+    recurring: list[str] = Field(default_factory=list, max_length=500)
+    intervals: list[TimeIntervalModel] = Field(default_factory=list, max_length=500)
+
+    @field_validator("recurring")
+    @classmethod
+    def validate_recurring(cls, values: list[str]) -> list[str]:
+        for value in values:
+            match = re.fullmatch(r"([0-6])-([1-7])", value)
+            if match is None:
+                raise ValueError(f"Invalid recurring restriction: {value}")
+        return list(dict.fromkeys(values))
+
+    @field_validator("specific")
+    @classmethod
+    def validate_specific(cls, values: list[str]) -> list[str]:
+        for value in values:
+            try:
+                date_string, lesson = value.rsplit("-", 1)
+                datetime.strptime(date_string, "%Y-%m-%d")
+                if int(lesson) not in range(1, 8):
+                    raise ValueError
+            except ValueError as exc:
+                raise ValueError(f"Invalid specific restriction: {value}") from exc
+        return list(dict.fromkeys(values))
 
 
 class TeacherRestrictionsModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     restrictions: TeacherRestrictionsDetails
 
 
+class GenerationSettingsModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled_types: list[str] = Field(default_factory=list, max_length=20)
+    priorities: dict[str, Literal["morning", "day", "evening"]] = Field(
+        default_factory=dict
+    )
+    rule_profile_id: int | None = Field(default=None, ge=1)
+    created_at: datetime | None = None
+    semester_period_id: int | None = Field(default=None, ge=1)
+    base_task_id: int | None = Field(default=None, ge=1)
+    affected_stream_ids: list[int] = Field(default_factory=list, max_length=10_000)
+    max_total_events: int = Field(default=20_000, ge=1, le=20_000)
+    max_component_events: int = Field(default=2_000, ge=1, le=2_000)
+    max_component_seconds: int = Field(
+        default=min(120, MAX_TIME_SECONDS), ge=5, le=MAX_TIME_SECONDS
+    )
+    solver_workers: int = Field(default=1, ge=1, le=NUM_WORKERS)
+    room_assignment_max_seconds: int = Field(default=5, ge=1, le=60)
+
+
 class GenerationTaskModel(BaseModel):
-    groups: list[str]
-    holidays: list[str]
+    model_config = ConfigDict(extra="forbid")
+
+    groups: list[str] = Field(min_length=1, max_length=1_000)
+    holidays: list[str] = Field(default_factory=list, max_length=366)
     planning_week_id: int | None = None
     start_date: str | None = None
     end_date: str | None = None
-    settings: dict | None = None
-    semester_batch_id: str | None = None
+    settings: GenerationSettingsModel | None = None
+    semester_batch_id: str | None = Field(default=None, max_length=100)
+
+    @field_validator("groups")
+    @classmethod
+    def validate_groups(cls, values: list[str]) -> list[str]:
+        cleaned = [value.strip() for value in values]
+        if any(not value or len(value) > 255 for value in cleaned):
+            raise ValueError("Group names must contain 1 to 255 characters")
+        if len(cleaned) != len(set(cleaned)):
+            raise ValueError("Group names must be unique")
+        return cleaned
+
+    @field_validator("holidays")
+    @classmethod
+    def validate_holidays(cls, values: list[str]) -> list[str]:
+        for value in values:
+            try:
+                datetime.strptime(value, "%Y-%m-%d")
+            except ValueError as exc:
+                raise ValueError("Holidays must use YYYY-MM-DD") from exc
+        return list(dict.fromkeys(values))
+
+    @field_validator("semester_batch_id")
+    @classmethod
+    def validate_batch_id(cls, value: str | None) -> str | None:
+        if value is not None and SEMESTER_BATCH_PATTERN.fullmatch(value) is None:
+            raise ValueError("Invalid semester_batch_id")
+        return value
 
 
 class ScheduleUpdateModel(BaseModel):
-    lesson_number: int | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    lesson_number: int | None = Field(default=None, ge=1, le=7)
     date: str | None = None
-    teacher_id: int | None = None
-    room_id: str | None = None  # room_id is string in model
+    teacher_id: int | None = Field(default=None, ge=1)
+    room_id: str | None = Field(default=None, min_length=1, max_length=100)
     apply_to_stream: bool | None = None
     is_locked: bool | None = None
 
@@ -102,41 +211,50 @@ class ScheduleUpdateModel(BaseModel):
 async def import_streams(
     file: UploadFile = File(...), db: AsyncSession = Depends(async_get_db)
 ):
-    if not file.filename.endswith((".xls", ".xlsx", ".csv")):
-        raise HTTPException(status_code=400, detail="Invalid file type")
-
-    content = await file.read()
+    content, safe_filename = await read_upload_limited(
+        file, allowed_extensions={".xls", ".xlsx", ".csv"}
+    )
 
     try:
-        parsed_data = parse_streams_content(content)
-    except Exception as e:
+        parsed_data = parse_streams_content(content, safe_filename)
+    except (ValueError, TypeError, pd.errors.ParserError) as exc:
         raise HTTPException(
-            status_code=400, detail=f"Error parsing file: {str(e)}"
-        ) from e
+            status_code=400, detail=f"Error parsing file: {str(exc)}"
+        ) from exc
 
     if not parsed_data:
         raise HTTPException(status_code=400, detail="No streams found in the document")
 
     # Save file to disk
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    unique_filename = f"{timestamp}_{uuid.uuid4().hex[:8]}_{file.filename}"
-    file_path = os.path.join(UPLOAD_DIR, unique_filename)
+    extension = Path(safe_filename).suffix.lower()
+    unique_filename = f"{timestamp}_{uuid.uuid4().hex[:12]}{extension}"
+    file_path = UPLOAD_DIR / unique_filename
 
-    with open(file_path, "wb") as f:
-        f.write(content)
+    try:
+        file_path.write_bytes(content)
 
-    # Create ImportBatch
-    batch = ImportBatch(
-        filename=file.filename,
-        file_path=file_path,
-        file_type=FileType.STREAMS,
-        status="completed",
-    )
-    db.add(batch)
-    await db.flush()
+        batch = ImportBatch(
+            filename=safe_filename,
+            file_path=str(file_path),
+            file_type=FileType.STREAMS,
+            status="completed",
+        )
+        db.add(batch)
+        await db.flush()
 
-    res = await ScheduleService.import_streams(parsed_data, batch.id, db)
-    await db.commit()
+        res = await ScheduleService.import_streams(parsed_data, batch.id, db)
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        file_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=409, detail="Imported data conflicts with existing records"
+        ) from exc
+    except Exception:
+        await db.rollback()
+        file_path.unlink(missing_ok=True)
+        raise
 
     return {
         "detail": "Success",
@@ -173,11 +291,18 @@ async def delete_import_batch(batch_id: int, db: AsyncSession = Depends(async_ge
     if not batch:
         raise HTTPException(status_code=404, detail="Batch not found")
 
-    if batch.file_path and os.path.exists(batch.file_path):
+    if batch.file_path:
         try:
-            os.remove(batch.file_path)
+            candidate = Path(batch.file_path).resolve()
+            if candidate.is_relative_to(UPLOAD_DIR.resolve()) and candidate.is_file():
+                candidate.unlink()
+            elif candidate.exists():
+                logger.warning(
+                    "Refused to delete import file outside upload directory: %s",
+                    candidate,
+                )
         except OSError as e:
-            logger.error(f"Error deleting file {batch.file_path}: {e}")
+            logger.error("Error deleting file %s: %s", batch.file_path, e)
 
     await db.delete(batch)
     await db.commit()
@@ -206,9 +331,12 @@ async def get_subjects_summary(
             selected_groups, enabled_types
         )
         return summary
-    except Exception as e:
-        logger.error(f"Error getting subjects summary: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from None
+    except Exception:
+        logger.exception("Error getting subjects summary")
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to build subjects summary",
+        ) from None
 
 
 @router.get("/streams")
@@ -399,10 +527,14 @@ async def export_teacher_availability(
 
         data.append(
             {
-                "ФИО преподавателя": t.name,
+                "ФИО преподавателя": escape_excel_formula(t.name),
                 "Режим": res.get("mode", "blacklist"),
-                "Регулярные окна (День_Пара)": ",".join(res.get("recurring", [])),
-                "Конкретные даты (ГГГГ-ММ-ДД_Пара)": ",".join(res.get("specific", [])),
+                "Регулярные окна (День_Пара)": escape_excel_formula(
+                    ",".join(res.get("recurring", []))
+                ),
+                "Конкретные даты (ГГГГ-ММ-ДД_Пара)": escape_excel_formula(
+                    ",".join(res.get("specific", []))
+                ),
             }
         )
 
@@ -428,11 +560,29 @@ async def import_teacher_availability(
     file: Annotated[UploadFile, File(...)],
     db: Annotated[AsyncSession, Depends(async_get_db)] = None,
 ) -> JSONResponse:
-    content = await file.read()
-    df = pd.read_excel(io.BytesIO(content))
+    content, filename = await read_upload_limited(
+        file, allowed_extensions={".xls", ".xlsx", ".csv"}
+    )
+    try:
+        df = read_tabular_content(content, filename)
+        required_columns = {"ФИО преподавателя", "Режим"}
+        missing_columns = required_columns - set(df.columns)
+        if missing_columns:
+            missing = ", ".join(sorted(missing_columns))
+            raise ValueError(f"Missing required columns: {missing}")
+    except (ValueError, TypeError, pd.errors.ParserError) as exc:
+        raise HTTPException(
+            status_code=400, detail=f"Error parsing file: {str(exc)}"
+        ) from exc
 
-    updated_count = await ScheduleService.import_teacher_availability(df, db)
-    await db.commit()
+    try:
+        updated_count = await ScheduleService.import_teacher_availability(df, db)
+        await db.commit()
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=400, detail=f"Error parsing file: {str(exc)}"
+        ) from exc
     return {"status": "ok", "updated_teachers": updated_count}
 
 
@@ -479,7 +629,11 @@ async def generate_schedule(
             ),
         )
 
-    settings = task.settings or {}
+    settings = (
+        task.settings.model_dump(mode="json", exclude_none=True)
+        if task.settings is not None
+        else {}
+    )
     try:
         new_task = await GenerationLifecycleService.reserve_task(
             db,
@@ -532,6 +686,11 @@ async def export_schedule(
     semester_batch_id: str | None = None,
     db: Annotated[AsyncSession, Depends(async_get_db)] = None,
 ) -> StreamingResponse:
+    if (
+        semester_batch_id is not None
+        and SEMESTER_BATCH_PATTERN.fullmatch(semester_batch_id) is None
+    ):
+        raise HTTPException(status_code=422, detail="Invalid semester_batch_id")
     output = await generate_excel_report(db, task_id, semester_batch_id)
     if not output:
         raise HTTPException(status_code=404, detail="No schedule found to export")
@@ -786,15 +945,15 @@ async def get_schedule(
 ) -> list[dict[str, Any]]:
     stmt = select(ScheduleEntry).options(selectinload(ScheduleEntry.teacher))
 
-    if task_id:
+    if task_id is not None:
         stmt = stmt.where(ScheduleEntry.task_id == task_id)
-    if semester_batch_id:
+    if semester_batch_id is not None:
         stmt = stmt.join(
             GenerationTask, GenerationTask.id == ScheduleEntry.task_id
         ).where(GenerationTask.semester_batch_id == semester_batch_id)
-    if group_name:
+    if group_name is not None:
         stmt = stmt.where(ScheduleEntry.group_name == group_name)
-    if teacher_id:
+    if teacher_id is not None:
         stmt = stmt.where(ScheduleEntry.teacher_id == teacher_id)
 
     stmt = stmt.order_by(ScheduleEntry.date, ScheduleEntry.lesson_number)

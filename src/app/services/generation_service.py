@@ -82,8 +82,8 @@ class GenerationService:
         for h in holidays_str:
             try:
                 holidays.append(datetime.strptime(h, "%Y-%m-%d").date())
-            except Exception:
-                pass
+            except (TypeError, ValueError):
+                logger.warning("Ignoring invalid holiday value: %r", h)
 
         async with sessionmaker() as session:
             try:
@@ -263,7 +263,7 @@ class GenerationService:
                                                             (py_day, lesson_num)
                                                         )
                                                         break
-                                                    except Exception:
+                                                    except (TypeError, ValueError):
                                                         continue
 
                                     specific_keys = restrs.get("specific", [])
@@ -285,7 +285,7 @@ class GenerationService:
                                                                 (dt, lesson_num)
                                                             )
                                                             break
-                                                    except Exception:
+                                                    except (TypeError, ValueError):
                                                         continue
 
                                     if mode == "whitelist":

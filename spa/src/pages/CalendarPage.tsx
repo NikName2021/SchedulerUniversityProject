@@ -14,19 +14,16 @@ import {
   Trash2,
   Plus,
 } from "lucide-react";
-import { useAppStore, getSlotsForInterval } from "../store/useAppStore";
+import {
+  useAppStore,
+  getSlotsForInterval,
+  PAIR_TIMES,
+} from "../store/useAppStore";
 import type { TimeInterval } from "../store/useAppStore";
 
-const TIMES = [
-  "09:00 - 10:30",
-  "10:45 - 12:15",
-  "13:00 - 14:30",
-  "14:45 - 16:15",
-  "16:30 - 18:00",
-  "18:15 - 19:45",
-];
+const TIMES = PAIR_TIMES.map((pair) => pair.label);
 
-const WEEK_DAYS = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ"];
+const WEEK_DAYS = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"];
 const MONTHS = [
   "Январь",
   "Февраль",
@@ -66,8 +63,8 @@ const getStartOfWeek = (date: Date) => {
 
 const getDaysOfWeek = (startDate: Date) => {
   const days = [];
-  for (let i = 0; i < 6; i++) {
-    // Mon - Sat
+  for (let i = 0; i < 7; i++) {
+    // Mon - Sun
     const d = new Date(startDate);
     d.setDate(startDate.getDate() + i);
     days.push(d);
@@ -104,6 +101,7 @@ export const CalendarPage: React.FC = () => {
     removeInterval,
     fetchInitialData,
     isLoading,
+    error,
   } = useAppStore();
 
   const selectedTeacher = teachers.find((t) => t.id === selectedTeacherId);
@@ -266,6 +264,11 @@ export const CalendarPage: React.FC = () => {
           </p>
         </div>
       </header>
+      {error && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+          {error}
+        </div>
+      )}
 
       <div
         style={{ display: "flex", gap: "1.5rem", flex: 1, overflow: "hidden" }}
@@ -449,6 +452,8 @@ export const CalendarPage: React.FC = () => {
                     >
                       <button
                         onClick={handlePrevWeek}
+                        aria-label="Предыдущая неделя"
+                        title="Предыдущая неделя"
                         style={{
                           padding: "0.5rem",
                           borderRadius: "8px",
@@ -475,6 +480,8 @@ export const CalendarPage: React.FC = () => {
                       </button>
                       <button
                         onClick={handleNextWeek}
+                        aria-label="Следующая неделя"
+                        title="Следующая неделя"
                         style={{
                           padding: "0.5rem",
                           borderRadius: "8px",
@@ -725,7 +732,8 @@ export const CalendarPage: React.FC = () => {
                 <div
                   style={{
                     display: "grid",
-                    gridTemplateColumns: "80px repeat(6, 1fr)",
+                    gridTemplateColumns: `80px repeat(${WEEK_DAYS.length}, minmax(92px, 1fr))`,
+                    minWidth: "820px",
                     border: "1px solid var(--border-light)",
                     borderRadius: "8px",
                     overflow: "hidden",
@@ -755,7 +763,7 @@ export const CalendarPage: React.FC = () => {
                           textAlign: "center",
                           borderBottom: "1px solid var(--border-light)",
                           borderRight:
-                            idx !== 5
+                            idx !== weekDays.length - 1
                               ? "1px solid var(--border-light)"
                               : "none",
                         }}
@@ -869,9 +877,19 @@ export const CalendarPage: React.FC = () => {
                         return (
                           <button
                             key={idx}
+                            aria-label={`${dateStr}, ${slotNum} пара: ${
+                              isBlocked ? "недоступно" : "доступно"
+                            }`}
+                            aria-pressed={hasRecurring || hasSpecific}
                             onMouseDown={() =>
                               handleMouseDown(dateStr, slotIdx)
                             }
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                handleMouseDown(dateStr, slotIdx);
+                              }
+                            }}
                             onMouseEnter={() =>
                               handleMouseEnter(dateStr, slotIdx)
                             }
@@ -887,7 +905,7 @@ export const CalendarPage: React.FC = () => {
                                   ? "1px solid var(--border-light)"
                                   : "none",
                               borderRight:
-                                idx !== 5
+                                idx !== weekDays.length - 1
                                   ? "1px solid var(--border-light)"
                                   : "none",
                               cursor: "pointer",

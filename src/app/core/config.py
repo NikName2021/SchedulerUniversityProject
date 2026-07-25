@@ -3,11 +3,8 @@ import os
 from logging.config import dictConfig
 from typing import AsyncGenerator
 
-from fastapi.security import HTTPBearer
-from passlib.context import CryptContext
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from starlette.config import Config
-from starlette.datastructures import Secret
 
 from .logging import logging_config
 
@@ -18,15 +15,14 @@ else:
 
 API_PREFIX = "/api"
 VERSION = "0.1.0"
+# Keep in sync with the single Alembic head; readiness fails closed on schema drift.
+DATABASE_SCHEMA_REVISION = "20260720_0006"
 DEBUG: bool = config("DEBUG", cast=bool, default=False)
-SECRET_KEY: Secret = config("SECRET_KEY", cast=Secret, default="")
 MEMOIZATION_FLAG: bool = config("MEMOIZATION_FLAG", cast=bool, default=True)
 AUTO_CREATE_TABLES: bool = config("AUTO_CREATE_TABLES", cast=bool, default=False)
-
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-REFRESH_TOKEN_EXPIRE_DAYS = 30
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+MAX_UPLOAD_BYTES: int = config(
+    "MAX_UPLOAD_BYTES", cast=int, default=10 * 1024 * 1024
+)
 
 HOST: str = config("HOST", cast=str, default="localhost")
 PORT: int = config("PORT", cast=int, default=8000)
@@ -53,13 +49,18 @@ CORS_ORIGINS: list[str] = [
     ).split(",")
     if origin.strip()
 ]
-
-BOT_TOKEN: str = config("BOT_TOKEN", cast=str, default="")
+ALLOWED_HOSTS: list[str] = [
+    host.strip()
+    for host in config(
+        "ALLOWED_HOSTS",
+        cast=str,
+        default="localhost,127.0.0.1,test",
+    ).split(",")
+    if host.strip()
+]
 
 engine = create_async_engine(DATABASE_URL, pool_pre_ping=True)
 sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
-
-security = HTTPBearer()
 
 
 async def async_get_db() -> AsyncGenerator[AsyncSession, None]:

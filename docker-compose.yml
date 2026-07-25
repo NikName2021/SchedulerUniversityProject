@@ -12,7 +12,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "${POSTGRES_PORT:-5446}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5446}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DATABASE}"]
       interval: 5s
@@ -43,15 +43,16 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DATABASE}
       REDIS_URL: redis://redis:6379/0
-      SECRET_KEY: ${SECRET_KEY}
       CORS_ORIGINS: ${CORS_ORIGINS}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-10485760}
       RUN_MIGRATIONS: "true"
       TZ: Europe/Moscow
     volumes:
       - uploads:/app/app/uploads
       - backend_logs:/app/logs
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -85,7 +86,6 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DATABASE}
       REDIS_URL: redis://redis:6379/0
-      SECRET_KEY: ${SECRET_KEY}
       RUN_MIGRATIONS: "false"
       TZ: Europe/Moscow
     volumes:

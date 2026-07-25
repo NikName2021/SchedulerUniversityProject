@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 
 import pandas as pd
 from database.all_models import (
+    AvailabilityRule,
     Room,
     ScheduleEntry,
     Stream,
@@ -11,13 +12,18 @@ from database.all_models import (
     StudentGroup,
     Teacher,
 )
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from services.availability_service import build_availability_context
 
 logger = logging.getLogger(__name__)
+NO_ROOM_VALUES = {"НЕТ АУДИТОРИИ", "NO ROOM"}
+
+
+def _is_real_room_code(room_code: str | None) -> bool:
+    return bool(room_code and room_code.strip().upper() not in NO_ROOM_VALUES)
 
 
 class ScheduleService:
@@ -62,7 +68,11 @@ class ScheduleService:
                         f"Преподаватель уже занят: {other.event_name} "
                         f"({other.group_name})"
                     )
-                if entry.room_id and entry.room_id == other.room_id and not same_stream:
+                if (
+                    _is_real_room_code(entry.room_id)
+                    and entry.room_id == other.room_id
+                    and not same_stream
+                ):
                     errors.add(
                         f"Аудитория {entry.room_id} уже занята: {other.event_name}"
                     )
@@ -81,7 +91,9 @@ class ScheduleService:
                 errors.add(f"Преподаватель {entry.teacher.name} недоступен")
             if slot in unavailable.get("group", {}).get(entry.group_name, []):
                 errors.add(f"Группа {entry.group_name} недоступна")
-            if entry.room_id and slot in unavailable.get("room", {}).get(
+            if _is_real_room_code(entry.room_id) and slot in unavailable.get(
+                "room", {}
+            ).get(
                 entry.room_id, []
             ):
                 errors.add(f"Аудитория {entry.room_id} недоступна")
@@ -131,16 +143,16 @@ class ScheduleService:
                 for e2 in slot_entries:
                     if e1.id == e2.id:
                         continue
+                    same_stream = bool(
+                        e1.source_stream_id
+                        and e1.source_stream_id == e2.source_stream_id
+                    )
 
-                    # Same teacher = conflict (unless same event+group = stream lecture)
+                    # Shared stream rows represent one lesson for several groups.
                     if (
                         e1.teacher_id
                         and e1.teacher_id == e2.teacher_id
-                        and not (
-                            e1.event_name == e2.event_name
-                            and e1.stream_type == e2.stream_type
-                            and e1.stream_type in ("Лекция", "lecture")
-                        )
+                        and not same_stream
                     ):
                         slot_warnings.append(
                             f"Преподаватель занят: {e2.event_name} ({e2.group_name})"
@@ -150,6 +162,15 @@ class ScheduleService:
                     if e1.group_name == e2.group_name:
                         slot_warnings.append(
                             f"У группы {e1.group_name} уже есть пара ({e2.event_name})"
+                        )
+
+                    if (
+                        _is_real_room_code(e1.room_id)
+                        and e1.room_id == e2.room_id
+                        and not same_stream
+                    ):
+                        slot_warnings.append(
+                            f"Аудитория занята: {e2.event_name} ({e2.group_name})"
                         )
 
                 # 2. Personal Teacher Availability
@@ -193,7 +214,7 @@ class ScheduleService:
                                         ):
                                             is_in_recurring = True
                                             break
-                                    except Exception:
+                                    except (TypeError, ValueError):
                                         continue
                             if is_in_recurring:
                                 break
@@ -213,7 +234,7 @@ class ScheduleService:
                                         ):
                                             is_in_specific = True
                                             break
-                                    except Exception:
+                                    except (TypeError, ValueError):
                                         continue
                             if is_in_specific:
                                 break
@@ -363,8 +384,13 @@ class ScheduleService:
     async def import_teacher_availability(
         cls, df: pd.DataFrame, db: AsyncSession
     ) -> int:
-        teacher_names = []
-        rows_to_process = []
+        required_columns = {"ФИО преподавателя", "Режим"}
+        missing_columns = required_columns - set(df.columns)
+        if missing_columns:
+            missing = ", ".join(sorted(missing_columns))
+            raise ValueError(f"Missing required columns: {missing}")
+
+        rows_to_process: dict[str, dict[str, Any]] = {}
 
         for _, row in df.iterrows():
             name = str(row["ФИО преподавателя"]).strip()
@@ -385,29 +411,85 @@ class ScheduleService:
                 if specific and specific != "nan"
                 else []
             )
+            for value in rec_list:
+                try:
+                    js_day, lesson = value.split("-", 1)
+                    if int(js_day) not in range(7) or int(lesson) not in range(1, 8):
+                        raise ValueError
+                except ValueError as exc:
+                    raise ValueError(
+                        f"Invalid recurring restriction for {name}: {value}"
+                    ) from exc
+            for value in spec_list:
+                try:
+                    date_string, lesson = value.rsplit("-", 1)
+                    pd.Timestamp(date_string)
+                    if int(lesson) not in range(1, 8):
+                        raise ValueError
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"Invalid specific restriction for {name}: {value}"
+                    ) from exc
 
             restr = {
                 "mode": mode if mode in ["blacklist", "whitelist"] else "blacklist",
                 "recurring": rec_list,
                 "specific": spec_list,
+                "intervals": [],
             }
 
-            teacher_names.append(name)
-            rows_to_process.append((name, restr))
+            rows_to_process[name] = restr
 
-        if not teacher_names:
+        if not rows_to_process:
             return 0
 
         # Preload teachers to update
-        stmt = select(Teacher).where(Teacher.name.in_(teacher_names))
+        stmt = select(Teacher).where(Teacher.name.in_(rows_to_process))
         res = await db.execute(stmt)
         teachers_map = {t.name: t for t in res.scalars().all()}
 
-        updated_count = 0
-        for name, restr in rows_to_process:
-            teacher = teachers_map.get(name)
-            if teacher:
-                teacher.restrictions_json = json.dumps(restr)
-                updated_count += 1
+        teacher_ids = [teacher.id for teacher in teachers_map.values()]
+        if teacher_ids:
+            await db.execute(
+                delete(AvailabilityRule).where(
+                    AvailabilityRule.teacher_id.in_(teacher_ids)
+                )
+            )
 
-        return updated_count
+        structured_rules: list[AvailabilityRule] = []
+        for name, teacher in teachers_map.items():
+            restrictions = rows_to_process[name]
+            teacher.restrictions_json = json.dumps(restrictions)
+            rule_kind = (
+                "available"
+                if restrictions["mode"] == "whitelist"
+                else "unavailable"
+            )
+            for value in restrictions["recurring"]:
+                js_day, lesson = value.split("-", 1)
+                structured_rules.append(
+                    AvailabilityRule(
+                        teacher_id=teacher.id,
+                        rule_kind=rule_kind,
+                        recurrence="weekly",
+                        weekday=(int(js_day) - 1) % 7,
+                        lesson_start=int(lesson),
+                        lesson_end=int(lesson),
+                        is_hard=True,
+                    )
+                )
+            for value in restrictions["specific"]:
+                date_string, lesson = value.rsplit("-", 1)
+                structured_rules.append(
+                    AvailabilityRule(
+                        teacher_id=teacher.id,
+                        rule_kind=rule_kind,
+                        recurrence="specific",
+                        specific_date=pd.Timestamp(date_string).date(),
+                        lesson_start=int(lesson),
+                        lesson_end=int(lesson),
+                        is_hard=True,
+                    )
+                )
+        db.add_all(structured_rules)
+        return len(teachers_map)

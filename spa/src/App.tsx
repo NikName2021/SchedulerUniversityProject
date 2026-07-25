@@ -1,4 +1,3 @@
-import React from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { StoragePage } from "./pages/StoragePage";
@@ -8,15 +7,8 @@ import { GenerationPage } from "./pages/GenerationPage";
 import HistoryPage from "./pages/HistoryPage";
 import { SchedulePage } from "./pages/SchedulePage";
 import { ReferenceDataPage } from "./pages/ReferenceDataPage";
-import { useAppStore } from "./store/useAppStore";
 
 function App() {
-  const fetchInitialData = useAppStore((state) => state.fetchInitialData);
-
-  React.useEffect(() => {
-    fetchInitialData();
-  }, [fetchInitialData]);
-
   return (
     <BrowserRouter>
       <Routes>

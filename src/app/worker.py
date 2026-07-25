@@ -104,17 +104,25 @@ def generate_schedule_task(
     end_date: str | None,
     planning_week_id: int | None = None,
 ) -> dict[str, Any]:
-    payload = _run_async(
-        ScalableGenerationService.prepare(
-            task_id,
-            selected_groups,
-            holidays,
-            enabled_types,
-            start_date,
-            end_date,
-            planning_week_id,
+    try:
+        payload = _run_async(
+            ScalableGenerationService.prepare(
+                task_id,
+                selected_groups,
+                holidays,
+                enabled_types,
+                start_date,
+                end_date,
+                planning_week_id,
+            )
         )
-    )
+    except Exception as exc:
+        _run_async(
+            ScalableGenerationService.fail(
+                task_id, f"Failed to prepare generation: {exc}"
+            )
+        )
+        raise
     if payload is None:
         return {"dispatched": 0, "task_id": task_id}
 

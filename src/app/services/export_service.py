@@ -2,6 +2,7 @@ import datetime
 import io
 
 import pandas as pd
+from core.constants import LESSONS
 from database.all_models import GenerationTask, ScheduleEntry
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from sqlalchemy import select
@@ -26,13 +27,21 @@ COLORS = {
 }
 
 
+def escape_excel_formula(value: str) -> str:
+    """Keep imported text from being interpreted as an Excel formula."""
+
+    if value and value.lstrip().startswith(("=", "+", "-", "@")):
+        return f"'{value}"
+    return value
+
+
 async def generate_excel_report(
     session, task_id: int | None = None, semester_batch_id: str | None = None
 ):
     stmt = select(ScheduleEntry).options(selectinload(ScheduleEntry.teacher))
-    if task_id:
+    if task_id is not None:
         stmt = stmt.filter(ScheduleEntry.task_id == task_id)
-    elif semester_batch_id:
+    elif semester_batch_id is not None:
         stmt = stmt.join(
             GenerationTask, GenerationTask.id == ScheduleEntry.task_id
         ).where(GenerationTask.semester_batch_id == semester_batch_id)
@@ -53,29 +62,34 @@ async def generate_excel_report(
         if ev.date is None:
             continue
         wd = ev.date.weekday()
-        subject_str = f"{ev.event_name} ({ev.stream_type})\n{ev.teacher.name if ev.teacher else ''}\nАуд: {ev.room_id or ''}"
+        subject_str = escape_excel_formula(
+            f"{ev.event_name} ({ev.stream_type})\n"
+            f"{ev.teacher.name if ev.teacher else ''}\nАуд: {ev.room_id or ''}"
+        )
 
         rows.append(
             {
                 "date": ev.date.strftime("%Y-%m-%d"),
                 "weekday": WEEK[wd],
                 "lesson": ev.lesson_number,
-                "group": ev.group_name,
+                "group": escape_excel_formula(ev.group_name),
                 "subject": subject_str,
-                "type": ev.stream_type,
-                "warning": ev.warning or "",
+                "type": escape_excel_formula(ev.stream_type),
+                "warning": escape_excel_formula(ev.warning or ""),
             }
         )
+
+    if not rows:
+        return None
 
     df = pd.DataFrame(rows)
 
     all_dates = sorted(df["date"].unique())
-    all_lessons = [1, 2, 3, 4, 5, 6]
 
     slots_tuples = []
     for d_str in all_dates:
         d_obj = datetime.datetime.strptime(d_str, "%Y-%m-%d")
-        for lesson_number in all_lessons:
+        for lesson_number in LESSONS:
             slots_tuples.append((d_str, WEEK[d_obj.weekday()], lesson_number))
 
     all_slots_idx = pd.MultiIndex.from_tuples(
@@ -191,14 +205,18 @@ async def generate_excel_report(
                     val = str(c_subj)
                     if pd.notna(c_warn) and c_warn:
                         val += f"\n⚠️ {c_warn}"
-                    cell.value = val
+                    cell.value = escape_excel_formula(val)
 
             current_row_idx += 1
 
         for j, col_name in enumerate(pivot_type.columns):
             cell = ws.cell(row=header_row, column=j + 1)
-            cell.value = {"date": "Дата", "weekday": "День", "lesson": "Пара"}.get(
-                col_name, col_name
+            cell.value = escape_excel_formula(
+                str(
+                    {"date": "Дата", "weekday": "День", "lesson": "Пара"}.get(
+                        col_name, col_name
+                    )
+                )
             )
             cell.fill = PatternFill(
                 start_color="333333", end_color="333333", fill_type="solid"

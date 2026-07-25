@@ -10,14 +10,11 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 from docx import Document
-from docx.enum.section import WD_SECTION
-from docx.enum.style import WD_STYLE_TYPE
 from docx.enum.table import WD_ALIGN_VERTICAL, WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
-
 
 OUTPUT = Path("deliverables/Документация_Умное_Расписание")
 BLUE = "2E74B5"
@@ -460,7 +457,6 @@ def build_developer_document() -> Path:
         ("POSTGRES_PASSWORD", "Пароль PostgreSQL", "Используйте уникальный секрет production."),
         ("POSTGRES_DATABASE", "Имя БД", "Используется сервисами backend и worker."),
         ("POSTGRES_PORT", "Внешний порт PostgreSQL", "По умолчанию в Compose: 5446."),
-        ("SECRET_KEY", "Подпись токенов", "Длинное случайное значение; не публиковать."),
         ("CORS_ORIGINS", "Разрешённые источники браузера", "Список через запятую; задайте домен production."),
         ("CELERY_WORKER_CONCURRENCY", "Параллелизм worker", "Подбирается по CPU/RAM сервера."),
         ("DATABASE_URL / REDIS_URL", "Подключения приложения", "В Compose формируются для внутренних имён сервисов."),
@@ -468,7 +464,7 @@ def build_developer_document() -> Path:
     ], [2600, 3150, 3610], 8.5)
     add_heading(doc, "4. Развёртывание Docker Compose")
     add_numbers(doc, [
-        "Скопируйте .env.example в .env и замените значения POSTGRES_PASSWORD и SECRET_KEY на безопасные. Проверьте CORS_ORIGINS для внешнего домена.",
+        "Скопируйте .env.example в .env и замените POSTGRES_PASSWORD на безопасное значение. Проверьте CORS_ORIGINS для внешнего домена.",
         "Соберите и запустите сервисы командой: docker compose --env-file .env up -d --build.",
         "Проверьте состояние: docker compose ps. Backend готов, когда отвечает /health/live и /health/ready; Compose ожидает readiness БД перед запуском API.",
         "Откройте frontend на опубликованном порту 80. API доступен через frontend/Nginx либо напрямую на порту 8000, если он не закрыт сетевыми правилами.",

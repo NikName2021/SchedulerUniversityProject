@@ -108,8 +108,8 @@ class AvailabilityRuleCreate(BaseModel):
     specific_date: date | None = None
     starts_on: date | None = None
     ends_on: date | None = None
-    lesson_start: int = Field(ge=1, le=20)
-    lesson_end: int = Field(ge=1, le=20)
+    lesson_start: int = Field(ge=1, le=7)
+    lesson_end: int = Field(ge=1, le=7)
     is_hard: bool = True
     weight: int = Field(default=5, ge=1, le=10)
     description: str | None = Field(default=None, max_length=500)

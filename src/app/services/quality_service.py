@@ -61,10 +61,7 @@ def _analyze_windows(
         first, last = sorted_l[0], sorted_l[-1]
         span = last - first + 1
         actual = len(sorted_l)
-
-        # Subtract 1 if both 3rd and 4th slots are occupied (lunch break)
-        has_lunch_overlap = 3 in sorted_l and 4 in sorted_l
-        gaps = span - actual - (1 if has_lunch_overlap else 0)
+        gaps = span - actual
 
         if gaps > 0:
             total_windows += gaps
@@ -154,8 +151,8 @@ def _analyze_progress(
     entries: list[ScheduleEntry],
 ) -> dict[str, Any]:
     """Criterion 5: Seminars should not precede lectures for the same subject."""
-    # Group by event_name → {type → [dates]}
-    subject_dates: dict[str, dict[str, list[str]]] = defaultdict(
+    # Group by event_name → {type → [(date, lesson)]}
+    subject_slots: dict[str, dict[str, list[tuple[str, int]]]] = defaultdict(
         lambda: defaultdict(list)
     )
     for e in entries:
@@ -163,26 +160,29 @@ def _analyze_progress(
             continue
         date_str = e.date.strftime("%Y-%m-%d") if hasattr(e.date, "strftime") else str(e.date)
         stype = (e.stream_type or "").lower()
+        slot = (date_str, int(e.lesson_number or 0))
 
         if "лекция" in stype or "lecture" in stype:
-            subject_dates[e.event_name]["lecture"].append(date_str)
+            subject_slots[e.event_name]["lecture"].append(slot)
         elif "семинар" in stype or "practice" in stype:
-            subject_dates[e.event_name]["seminar"].append(date_str)
+            subject_slots[e.event_name]["seminar"].append(slot)
 
     violations = 0
     issues: list[str] = []
 
-    for subj, types in subject_dates.items():
+    for subj, types in subject_slots.items():
         lectures = sorted(types.get("lecture", []))
         seminars = sorted(types.get("seminar", []))
         if not lectures or not seminars:
             continue
         first_lecture = lectures[0]
-        for sem_date in seminars:
-            if sem_date < first_lecture:
+        for seminar_slot in seminars:
+            if seminar_slot < first_lecture:
                 violations += 1
                 issues.append(
-                    f"{subj}: семинар {sem_date} до первой лекции {first_lecture}"
+                    f"{subj}: семинар {seminar_slot[0]} "
+                    f"(пара {seminar_slot[1]}) до первой лекции "
+                    f"{first_lecture[0]} (пара {first_lecture[1]})"
                 )
 
     deduction = violations * PENALTY_PER_PROGRESS

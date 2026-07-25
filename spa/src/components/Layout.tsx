@@ -121,11 +121,11 @@ export const Layout: React.FC = () => {
 
         <div className="app-sidebar__bottom">
           <div className="app-user">
-            <div className="app-user__avatar">А</div>
+            <div className="app-user__avatar">О</div>
             {!isCollapsed && (
               <div className="app-user__meta">
-                <strong>Администратор</strong>
-                <span>Система доступна</span>
+                <strong>Оператор</strong>
+                <span>Локальный контур</span>
               </div>
             )}
           </div>

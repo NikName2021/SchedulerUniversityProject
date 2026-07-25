@@ -10,7 +10,6 @@
 Скопируйте ``.env.example`` в ``.env`` и задайте безопасные значения:
 
 * ``POSTGRES_USER``, ``POSTGRES_PASSWORD``, ``POSTGRES_DATABASE``;
-* ``SECRET_KEY``;
 * ``CORS_ORIGINS``;
 * ``CELERY_WORKER_CONCURRENCY``.
 

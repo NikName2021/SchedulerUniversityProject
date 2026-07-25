@@ -19,7 +19,7 @@ import {
   Users,
   XCircle,
 } from "lucide-react";
-import { API_BASE_URL } from "../api/apiConfig";
+import { API_BASE_URL, openDownload } from "../api/apiConfig";
 
 interface PlanningWeekSummary {
   id: number;
@@ -299,9 +299,8 @@ const HistoryPage: React.FC = () => {
           className="button-icon task-action--primary"
           title="Скачать Excel"
           onClick={() =>
-            window.open(
+            openDownload(
               `${API_BASE_URL}/api/v1/scheduler/export?task_id=${task.id}`,
-              "_blank",
             )
           }
         >
@@ -507,9 +506,8 @@ const HistoryPage: React.FC = () => {
                         className="button-icon task-action--primary"
                         title="Скачать расписание семестра"
                         onClick={() =>
-                          window.open(
+                          openDownload(
                             `${API_BASE_URL}/api/v1/scheduler/export?semester_batch_id=${encodeURIComponent(batch.id)}`,
-                            "_blank",
                           )
                         }
                       >

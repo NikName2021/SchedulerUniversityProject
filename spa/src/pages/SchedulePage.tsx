@@ -33,7 +33,7 @@ import {
 } from "@dnd-kit/core";
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { API_BASE_URL } from "../api/apiConfig";
+import { API_BASE_URL, openDownload } from "../api/apiConfig";
 
 interface ScheduleEntry {
   id: number;
@@ -467,11 +467,10 @@ export const SchedulePage: React.FC = () => {
       const semesterBatchId = selectedTaskId.startsWith("semester:")
         ? selectedTaskId.slice("semester:".length)
         : null;
-      window.open(
+      openDownload(
         semesterBatchId
           ? `${API_BASE_URL}/api/v1/scheduler/export?semester_batch_id=${encodeURIComponent(semesterBatchId)}`
           : `${API_BASE_URL}/api/v1/scheduler/export?task_id=${selectedTaskId}`,
-        "_blank",
       );
     }
   };
@@ -911,6 +910,8 @@ export const SchedulePage: React.FC = () => {
             <div className="h-6 w-px bg-border-light mx-2" />
             <div className="flex items-center gap-2">
               <button
+                aria-label="Предыдущая учебная неделя"
+                title="Предыдущая учебная неделя"
                 disabled={
                   availableWeeks.findIndex((w) => w[0] === selectedWeek) <= 0
                 }
@@ -936,6 +937,8 @@ export const SchedulePage: React.FC = () => {
                 ))}
               </select>
               <button
+                aria-label="Следующая учебная неделя"
+                title="Следующая учебная неделя"
                 disabled={
                   availableWeeks.findIndex((w) => w[0] === selectedWeek) >=
                   availableWeeks.length - 1

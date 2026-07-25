@@ -19,6 +19,11 @@
 | Оператор расписания | Загружает и проверяет данные, настраивает ограничения, запускает расчёты, корректирует и публикует расписание. |
 | Технический администратор | Развёртывает и обновляет сервисы, применяет миграции, следит за health-check, журналами и очередью задач. |
 
+> В текущей версии роли описывают зоны ответственности, но не являются
+> встроенной моделью доступа: активный API не выполняет аутентификацию и
+> авторизацию. До реализации RBAC размещайте систему только в закрытом контуре
+> за аутентифицирующим reverse proxy и не публикуйте backend-порт во внешнюю сеть.
+
 ## Архитектура
 
 ```text
@@ -81,7 +86,7 @@ docker compose up --build
 - liveness: `http://localhost:8000/health/live`;
 - readiness с проверкой PostgreSQL: `http://localhost:8000/health/ready`.
 
-При старте backend применяет Alembic-миграции. Расчёты передаются в Redis и выполняются отдельным Celery worker. Перед развёртыванием в production замените `SECRET_KEY`, пароль PostgreSQL и `CORS_ORIGINS`; TLS следует завершать на внешнем reverse proxy или ingress.
+При старте backend применяет Alembic-миграции. Расчёты передаются в Redis и выполняются отдельным Celery worker. Перед развёртыванием в production замените пароль PostgreSQL, задайте точные `CORS_ORIGINS` и `ALLOWED_HOSTS`; TLS и аутентификацию следует завершать на внешнем reverse proxy или ingress.
 
 ## Локальная разработка
 
@@ -94,6 +99,19 @@ cd src
 alembic upgrade head
 uvicorn main:app --app-dir app --reload
 ```
+
+Если локальная SQLite-база была создана старой версией приложения до
+внедрения Alembic и в ней нет таблицы `alembic_version`, сначала сделайте
+резервную копию. Только для исходной схемы старого приложения отметьте
+начальную ревизию, затем примените остальные миграции:
+
+```bash
+alembic stamp 20260716_0001
+alembic upgrade head
+```
+
+Readiness endpoint возвращает `503`, если база недоступна или её ревизия
+отстаёт от текущей миграции.
 
 Для фоновых расчётов также запустите Redis и Celery worker:
 
@@ -117,7 +135,8 @@ npm run dev
 ```bash
 python -m ruff check src/app
 python -m pytest
-cd spa && npm run build
+pip-audit -r src/requirements.txt
+cd spa && npm run validate && npm audit
 docker compose --env-file .env.example config --quiet
 ```
 

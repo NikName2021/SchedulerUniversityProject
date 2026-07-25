@@ -1,5 +1,8 @@
 import pytest_asyncio
+from core.config import async_get_db
 from database import DeclBase
+from httpx import ASGITransport, AsyncClient
+from main import app
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -21,7 +24,16 @@ async def db_session() -> AsyncSession:
 
     # Создаем все таблицы
     async with engine.begin() as conn:
+        await conn.exec_driver_sql("PRAGMA foreign_keys=ON")
         await conn.run_sync(DeclBase.metadata.create_all)
+        await conn.exec_driver_sql(
+            "CREATE TABLE alembic_version "
+            "(version_num VARCHAR(32) NOT NULL PRIMARY KEY)"
+        )
+        await conn.exec_driver_sql(
+            "INSERT INTO alembic_version (version_num) "
+            "VALUES ('20260720_0006')"
+        )
 
     # Создаем сессию
     TestAsyncSessionLocal = sessionmaker(
@@ -35,3 +47,19 @@ async def db_session() -> AsyncSession:
         await conn.run_sync(DeclBase.metadata.drop_all)
 
     await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def api_client(db_session: AsyncSession) -> AsyncClient:
+    async def override_db():
+        yield db_session
+
+    app.dependency_overrides[async_get_db] = override_db
+    transport = ASGITransport(app=app)
+    try:
+        async with AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            yield client
+    finally:
+        app.dependency_overrides.clear()

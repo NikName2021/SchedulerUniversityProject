@@ -14,6 +14,7 @@ from core.constants import (
     MAX_ESTIMATED_DECISION_VARIABLES,
     MAX_GENERATION_HORIZON_DAYS,
     MAX_TIME_SECONDS,
+    NUM_WORKERS,
     STUDY_DAYS,
 )
 from core.constants import ROOMS as DEFAULT_ROOMS
@@ -503,8 +504,12 @@ class ScalableGenerationService:
                 )
                 await session.commit()
                 return None
-            max_total_events = int(settings.get("max_total_events", 20_000))
-            max_component_events = int(settings.get("max_component_events", 2_000))
+            max_total_events = max(
+                1, min(int(settings.get("max_total_events", 20_000)), 20_000)
+            )
+            max_component_events = max(
+                1, min(int(settings.get("max_component_events", 2_000)), 2_000)
+            )
             largest_component = max(map(len, components))
             if (
                 len(events) > max_total_events
@@ -526,6 +531,12 @@ class ScalableGenerationService:
                 settings.get("max_component_seconds", min(120, MAX_TIME_SECONDS))
             )
             max_component_seconds = max(5, min(max_component_seconds, MAX_TIME_SECONDS))
+            solver_workers = max(
+                1, min(int(settings.get("solver_workers", 1)), NUM_WORKERS)
+            )
+            room_assignment_max_seconds = max(
+                1, min(int(settings.get("room_assignment_max_seconds", 5)), 60)
+            )
             context = {
                 "start_date": start_date,
                 "end_date": end_date,
@@ -539,10 +550,8 @@ class ScalableGenerationService:
                 "rule_settings": rule_settings,
                 "group_sizes": group_sizes,
                 "max_time_seconds": max_component_seconds,
-                "num_workers": int(settings.get("solver_workers", 1)),
-                "room_assignment_max_seconds": int(
-                    settings.get("room_assignment_max_seconds", 5)
-                ),
+                "num_workers": solver_workers,
+                "room_assignment_max_seconds": room_assignment_max_seconds,
                 "immutable_before": (
                     max(
                         date.today(), datetime.fromisoformat(start_date).date()

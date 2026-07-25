@@ -1,7 +1,14 @@
 import datetime
 
 import pytest
-from database import GenerationIssue, GenerationTask, ScheduleEntry, Teacher
+from database import (
+    AcademicPeriod,
+    GenerationIssue,
+    GenerationTask,
+    PlanningWeek,
+    ScheduleEntry,
+    Teacher,
+)
 from services.generation_lifecycle_service import GenerationLifecycleService
 from services.schedule_service import ScheduleService
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -63,12 +70,25 @@ async def test_semester_tasks_keep_a_shared_batch_identifier(
     db_session: AsyncSession,
 ) -> None:
     batch_id = "semester-run-2026-09"
+    period = AcademicPeriod(
+        name="Осенний семестр",
+        starts_on=datetime.date(2026, 9, 1),
+        ends_on=datetime.date(2026, 12, 31),
+    )
+    week = PlanningWeek(
+        period=period,
+        sequence_number=1,
+        starts_on=datetime.date(2026, 9, 7),
+        ends_on=datetime.date(2026, 9, 13),
+    )
+    db_session.add(period)
+    await db_session.flush()
     task = await GenerationLifecycleService.reserve_task(
         db_session,
         groups=["ИВТ-101"],
         holidays=[],
-        settings={"semester_period_id": 1},
-        planning_week_id=101,
+        settings={"semester_period_id": period.id},
+        planning_week_id=week.id,
         start_date=datetime.datetime(2026, 9, 7),
         end_date=datetime.datetime(2026, 9, 13),
         semester_batch_id=batch_id,

@@ -11,9 +11,9 @@
 .DS_Store
 /spa/node_modules
 /spa/.env.production
-spa/package-lock.json
 /example/
 /spa/build/
+/spa/.test-build/
 /src/app/worker/old_files/
 /src/app/worker/.env
 /src/app/logs/*.log
