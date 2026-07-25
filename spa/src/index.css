@@ -20,17 +20,17 @@
   --brand: #1d4ed8;
   --brand-light: #eff6ff;
   --brand-hover: #1e40af;
-  --bg-base: #f4f6f8;
-  --bg-light: #f8fafc;
+  --bg-base: #ffffff;
+  --bg-light: #f7f8f9;
   --bg-card: #ffffff;
   --text-primary: #172033;
   --text-secondary: #5e6b82;
   --text-tertiary: #8a96a8;
-  --border-light: #dce3ec;
-  --border-strong: #c5cfdb;
-  --sidebar: #111827;
-  --sidebar-border: #263244;
-  --sidebar-muted: #9aa8bd;
+  --border-light: #d9dfe5;
+  --border-strong: #bfc8d1;
+  --sidebar: #343a40;
+  --sidebar-border: #46505a;
+  --sidebar-muted: #aeb5bc;
   --success: #087f5b;
   --success-bg: #ecfdf5;
   --warning: #a15c07;
@@ -46,12 +46,12 @@
   --amber: var(--warning);
   --amber-bg: var(--warning-bg);
   --amber-text: #8a4b00;
-  --shadow-subtle: 0 1px 2px rgb(15 23 42 / 0.06);
-  --shadow-md: 0 5px 14px rgb(15 23 42 / 0.08);
-  --radius-xl: 12px;
-  --radius-lg: 10px;
-  --radius-md: 8px;
-  --radius-sm: 6px;
+  --shadow-subtle: none;
+  --shadow-md: 0 2px 8px rgb(15 23 42 / 0.08);
+  --radius-xl: 6px;
+  --radius-lg: 5px;
+  --radius-md: 4px;
+  --radius-sm: 3px;
   --transition-fast: 150ms ease;
 }
 
@@ -98,7 +98,7 @@ textarea:focus-visible {
 .app-shell {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 264px minmax(0, 1fr);
+  grid-template-columns: 250px minmax(0, 1fr);
 }
 .app-shell--compact {
   grid-template-columns: 76px minmax(0, 1fr);
@@ -112,7 +112,7 @@ textarea:focus-visible {
   justify-content: space-between;
   background: var(--sidebar);
   border-right: 1px solid var(--sidebar-border);
-  padding: 18px 12px;
+  padding: 14px 0 16px;
   color: white;
   transition: width var(--transition-fast);
   z-index: 10;
@@ -121,25 +121,33 @@ textarea:focus-visible {
   min-width: 0;
 }
 .app-brand {
-  height: 46px;
+  height: 62px;
   display: flex;
   align-items: center;
   gap: 11px;
-  padding: 0 8px;
+  padding: 0 28px 0 30px;
+}
+.app-brand__logo {
+  width: 140px;
+  height: auto;
+  max-height: 43px;
+  display: block;
+  object-fit: contain;
+  object-position: left center;
 }
 .app-brand__mark {
-  width: 32px;
-  height: 32px;
+  width: 33px;
+  height: 33px;
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  background: #2563eb;
-  border: 1px solid #4f86ef;
-  border-radius: 7px;
-  color: white;
-  font-size: 11px;
+  border: 1px solid #43b4b5;
+  border-radius: 50%;
+  background: #0e9da0;
+  color: #f5f7f9;
+  font-size: 10px;
   font-weight: 800;
-  letter-spacing: -0.03em;
+  letter-spacing: 0.02em;
 }
 .app-brand__text {
   min-width: 0;
@@ -148,59 +156,61 @@ textarea:focus-visible {
   line-height: 1.25;
 }
 .app-brand__text strong {
-  font-size: 13px;
-  font-weight: 700;
+  font-size: 14px;
+  font-weight: 600;
   white-space: nowrap;
 }
 .app-brand__text span {
-  margin-top: 2px;
+  margin-top: 1px;
   color: var(--sidebar-muted);
   font-size: 11px;
   white-space: nowrap;
 }
 .app-sidebar__collapse {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   display: grid;
   place-items: center;
   position: absolute;
-  top: 27px;
-  right: -14px;
-  background: white;
-  color: #526075;
-  border: 1px solid var(--border-light);
-  border-radius: 6px;
-  box-shadow: var(--shadow-sm);
+  top: 29px;
+  right: 9px;
+  background: #4a535c;
+  color: #cdd3d9;
+  border: 1px solid #5b6670;
+  border-radius: 3px;
+  box-shadow: none;
 }
 .app-sidebar__collapse:hover {
-  color: var(--brand);
-  border-color: #b7c8e7;
+  color: white;
+  border-color: #7a858f;
+  background: #57616b;
 }
 .app-navigation {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  margin-top: 30px;
+  gap: 0;
+  margin-top: 27px;
 }
 .app-navigation__label {
-  padding: 0 11px 8px;
-  color: #70809a;
+  padding: 0 30px 9px;
+  color: #87919b;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
 }
 .app-nav-link {
-  min-height: 42px;
+  min-height: 39px;
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 0 11px;
-  border: 1px solid transparent;
-  border-radius: 6px;
+  position: relative;
+  gap: 10px;
+  padding: 0 30px;
+  border: 0;
+  border-radius: 0;
   color: var(--sidebar-muted);
   text-decoration: none;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 400;
   white-space: nowrap;
   transition:
     background var(--transition-fast),
@@ -208,14 +218,31 @@ textarea:focus-visible {
     border-color var(--transition-fast);
 }
 .app-nav-link:hover {
-  background: #1d293a;
+  background: #3d444b;
   color: #f8fafc;
 }
 .app-nav-link--active {
-  background: #1e3a61;
-  border-color: #31588a;
+  background: #3d444b;
   color: #fff;
   font-weight: 600;
+}
+.app-nav-link--active::before {
+  width: 3px;
+  height: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
+  background: #4d93d1;
+  content: "";
+}
+.app-nav-link svg {
+  width: 16px;
+  height: 16px;
+  color: #9da7b0;
+}
+.app-nav-link--active svg,
+.app-nav-link:hover svg {
+  color: #e4e8eb;
 }
 .app-shell--compact .app-brand,
 .app-shell--compact .app-nav-link {
@@ -229,7 +256,7 @@ textarea:focus-visible {
   justify-content: space-between;
   gap: 8px;
   border-top: 1px solid var(--sidebar-border);
-  padding: 14px 8px 0;
+  padding: 15px 19px 0 30px;
 }
 .app-shell--compact .app-sidebar__bottom {
   flex-direction: column;
@@ -248,10 +275,10 @@ textarea:focus-visible {
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  border: 1px solid #4b5d75;
-  border-radius: 50%;
-  background: #25364e;
-  color: #dce8ff;
+  border: 1px solid #69737d;
+  border-radius: 3px;
+  background: #454e57;
+  color: #e6eaed;
   font-size: 12px;
   font-weight: 700;
 }
@@ -264,7 +291,7 @@ textarea:focus-visible {
 .app-user__meta strong {
   overflow: hidden;
   text-overflow: ellipsis;
-  color: #e6edf8;
+  color: #e8ecef;
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
@@ -281,48 +308,48 @@ textarea:focus-visible {
   place-items: center;
   flex: 0 0 auto;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: 3px;
   background: transparent;
   color: var(--sidebar-muted);
 }
 .app-sidebar__settings:hover {
-  background: #1d293a;
+  background: #454d55;
   color: white;
 }
 .app-main {
   min-width: 0;
 }
 .app-topbar {
-  height: 74px;
+  height: 64px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 24px;
-  padding: 0 clamp(24px, 4vw, 52px);
+  padding: 0 clamp(28px, 4vw, 54px);
   background: white;
   border-bottom: 1px solid var(--border-light);
 }
 .app-topbar__crumb {
   margin-bottom: 1px;
   color: var(--text-tertiary);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 500;
 }
 .app-topbar h1 {
   color: var(--text-primary);
-  font-size: 20px;
-  font-weight: 700;
-  letter-spacing: -0.015em;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 .app-topbar__status {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  padding: 6px 9px;
-  border: 1px solid #c9eadc;
-  border-radius: 5px;
-  background: #f4fcf8;
-  color: #267458;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #5d796c;
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
@@ -334,12 +361,12 @@ textarea:focus-visible {
   background: #25a879;
 }
 .app-content {
-  width: min(1440px, 100%);
+  width: min(1540px, 100%);
   margin: 0 auto;
-  padding: 30px clamp(24px, 4vw, 52px) 48px;
+  padding: 24px clamp(28px, 4vw, 54px) 48px;
 }
 .app-page-intro {
-  margin-bottom: 22px;
+  margin-bottom: 18px;
   color: var(--text-secondary);
   font-size: 14px;
 }
@@ -349,7 +376,7 @@ textarea:focus-visible {
   background: var(--bg-card);
   border: 1px solid var(--border-light);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-subtle);
+  box-shadow: none;
 }
 .card {
   padding: 20px;
@@ -362,7 +389,7 @@ textarea:focus-visible {
   gap: 8px;
   min-height: 36px;
   padding: 8px 13px;
-  border-radius: 6px;
+  border-radius: 3px;
   font-size: 13px;
   font-weight: 600;
   transition:
@@ -403,7 +430,7 @@ textarea:focus-visible {
   place-items: center;
   padding: 0;
   border: 1px solid var(--border-strong);
-  border-radius: 6px;
+  border-radius: 3px;
   background: white;
   color: #526075;
 }

@@ -13,6 +13,7 @@ import {
   Sparkles,
 } from "lucide-react";
 
+import siriusLogo from "../assets/sirius-logo.svg";
 import ErrorBoundary from "./ErrorBoundary";
 
 const pageMeta: Record<string, { title: string; description: string }> = {
@@ -70,12 +71,16 @@ export const Layout: React.FC = () => {
       <aside className="app-sidebar">
         <div className="app-sidebar__top">
           <div className="app-brand">
-            <div className="app-brand__mark">SC</div>
-            {!isCollapsed && (
-              <div className="app-brand__text">
-                <strong>Schedule Control</strong>
-                <span>Операторская система</span>
+            {isCollapsed ? (
+              <div className="app-brand__mark" aria-label="Система расписаний">
+                SC
               </div>
+            ) : (
+              <img
+                className="app-brand__logo"
+                src={siriusLogo}
+                alt="Университет Сириус"
+              />
             )}
           </div>
 
