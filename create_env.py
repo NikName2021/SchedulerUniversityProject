@@ -7,7 +7,7 @@ def random_word(length: int) -> str:
     return "".join(random.choice(letters) for _ in range(length))
 
 
-with open(".env.example", "w", encoding="utf-8") as f:
+with open(".env", "w", encoding="utf-8") as f:
     f.write(
         f"""
 POSTGRES_USER=user_{random_word(10)}

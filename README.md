@@ -75,8 +75,16 @@ docker-compose.yml        production-контур
 Контур включает PostgreSQL, Redis, FastAPI, отдельный Celery worker и Nginx с собранным React-приложением.
 
 ```bash
-cp .env.example .env
+
+python3 create_env.py
+cp ./spa/.env.example ./spa/.env
 docker compose up --build
+```
+Либо
+
+```bash
+chmod +x ./deploy.sh
+./deploy.sh
 ```
 
 После запуска доступны:
