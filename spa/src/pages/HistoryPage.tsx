@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useNavigate } from "react-router-dom";
 import {
   AlertTriangle,
@@ -16,6 +22,7 @@ import {
   RefreshCcw,
   RotateCcw,
   Send,
+  Upload,
   Users,
   XCircle,
 } from "lucide-react";
@@ -49,6 +56,9 @@ interface GenerationTask {
   edit_revision: number;
   semester_batch_id: string | null;
   planning_week: PlanningWeekSummary | null;
+  execution_mode: "server" | "offline";
+  offline_job_uuid: string | null;
+  offline_result_available: boolean;
 }
 
 interface SemesterBatch {
@@ -62,6 +72,10 @@ const hasScheduleResult = (status: string) =>
   status === "success" || status === "partial";
 
 const statusMeta = (status: string) => {
+  if (status === "awaiting_result")
+    return { label: "Ожидает загрузки", tone: "warning", Icon: Download };
+  if (status === "importing")
+    return { label: "Загрузка результата", tone: "warning", Icon: Upload };
   if (status === "success")
     return { label: "Готово", tone: "success", Icon: CheckCircle2 };
   if (status === "partial")
@@ -81,10 +95,17 @@ const publicationLabel = (task: GenerationTask) => {
 
 const batchStatus = (tasks: GenerationTask[]) => {
   if (
-    tasks.some((task) => task.status === "running" || task.status === "queued")
+    tasks.some(
+      (task) =>
+        task.status === "running" ||
+        task.status === "queued" ||
+        task.status === "importing",
+    )
   ) {
     return statusMeta("running");
   }
+  if (tasks.some((task) => task.status === "awaiting_result"))
+    return statusMeta("awaiting_result");
   if (tasks.every((task) => task.status === "canceled"))
     return statusMeta("canceled");
   if (
@@ -100,6 +121,8 @@ const batchStatus = (tasks: GenerationTask[]) => {
 const HistoryPage: React.FC = () => {
   const [tasks, setTasks] = useState<GenerationTask[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isImportingResult, setIsImportingResult] = useState(false);
+  const resultInputRef = useRef<HTMLInputElement>(null);
   const [expandedBatches, setExpandedBatches] = useState<Set<string>>(
     new Set(),
   );
@@ -185,6 +208,40 @@ const HistoryPage: React.FC = () => {
     await fetchTasks();
   };
 
+  const importOfflineResult = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setIsImportingResult(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const response = await fetch(
+        `${API_BASE_URL}/api/v1/scheduler/offline/results/import`,
+        { method: "POST", body: form },
+      );
+      const payload = (await response.json()) as {
+        detail?: string;
+        imported?: Array<{ task_id: number; status: string }>;
+      };
+      if (!response.ok) {
+        throw new Error(payload.detail || "Результат не принят");
+      }
+      alert(`Загружено расчетов: ${payload.imported?.length || 0}`);
+      await fetchTasks();
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Не удалось загрузить результат",
+      );
+    } finally {
+      setIsImportingResult(false);
+    }
+  };
+
   const showDiagnostics = async (taskId: number) => {
     const response = await fetch(
       `${API_BASE_URL}/api/v1/scheduler/tasks/${taskId}/diagnostics`,
@@ -234,26 +291,28 @@ const HistoryPage: React.FC = () => {
     semesterBatchId?: string,
   ) => (
     <div className="task-row__actions">
-      {(task.status === "queued" || task.status === "running") && (
-        <button
-          type="button"
-          className="button-icon button-danger"
-          title="Отменить расчёт"
-          onClick={() => void runTaskAction(task.id, "cancel")}
-        >
-          <Ban size={16} />
-        </button>
-      )}
-      {(task.status === "failed" || task.status === "canceled") && (
-        <button
-          type="button"
-          className="button-icon"
-          title="Повторить расчёт"
-          onClick={() => void runTaskAction(task.id, "retry")}
-        >
-          <RotateCcw size={16} />
-        </button>
-      )}
+      {task.execution_mode === "server" &&
+        (task.status === "queued" || task.status === "running") && (
+          <button
+            type="button"
+            className="button-icon button-danger"
+            title="Отменить расчёт"
+            onClick={() => void runTaskAction(task.id, "cancel")}
+          >
+            <Ban size={16} />
+          </button>
+        )}
+      {task.execution_mode === "server" &&
+        (task.status === "failed" || task.status === "canceled") && (
+          <button
+            type="button"
+            className="button-icon"
+            title="Повторить расчёт"
+            onClick={() => void runTaskAction(task.id, "retry")}
+          >
+            <RotateCcw size={16} />
+          </button>
+        )}
       {hasScheduleResult(task.status) &&
         task.publication_status === "draft" && (
           <button
@@ -293,6 +352,34 @@ const HistoryPage: React.FC = () => {
       >
         <RefreshCcw size={16} />
       </button>
+      {task.execution_mode === "offline" && (
+        <button
+          type="button"
+          className="button-icon task-action--primary"
+          title="Скачать задачу для локального решателя"
+          onClick={() =>
+            openDownload(
+              `${API_BASE_URL}/api/v1/scheduler/offline/tasks/${task.id}/task`,
+            )
+          }
+        >
+          <Download size={16} />
+        </button>
+      )}
+      {task.execution_mode === "offline" && task.offline_result_available && (
+        <button
+          type="button"
+          className="button-icon task-action--success"
+          title="Скачать пакет результата"
+          onClick={() =>
+            openDownload(
+              `${API_BASE_URL}/api/v1/scheduler/offline/tasks/${task.id}/result`,
+            )
+          }
+        >
+          <Upload size={16} />
+        </button>
+      )}
       {hasScheduleResult(task.status) && (
         <button
           type="button"
@@ -341,13 +428,33 @@ const HistoryPage: React.FC = () => {
             неделям.
           </p>
         </div>
-        <button
-          type="button"
-          className="btn-secondary"
-          onClick={() => void fetchTasks()}
-        >
-          <RefreshCcw size={16} /> Обновить
-        </button>
+        <div style={{ display: "flex", gap: "0.75rem" }}>
+          <input
+            ref={resultInputRef}
+            type="file"
+            accept=".scheduler-result"
+            hidden
+            onChange={(event) => void importOfflineResult(event)}
+          />
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={isImportingResult}
+            onClick={() => resultInputRef.current?.click()}
+          >
+            <Upload size={16} />
+            {isImportingResult
+              ? "Проверка результата..."
+              : "Загрузить результат"}
+          </button>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => void fetchTasks()}
+          >
+            <RefreshCcw size={16} /> Обновить
+          </button>
+        </div>
       </section>
 
       {registryItems.length > 0 ? (

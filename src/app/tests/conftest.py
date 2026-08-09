@@ -31,8 +31,7 @@ async def db_session() -> AsyncSession:
             "(version_num VARCHAR(32) NOT NULL PRIMARY KEY)"
         )
         await conn.exec_driver_sql(
-            "INSERT INTO alembic_version (version_num) "
-            "VALUES ('20260720_0006')"
+            "INSERT INTO alembic_version (version_num) VALUES ('20260809_0007')"
         )
 
     # Создаем сессию
@@ -57,9 +56,7 @@ async def api_client(db_session: AsyncSession) -> AsyncClient:
     app.dependency_overrides[async_get_db] = override_db
     transport = ASGITransport(app=app)
     try:
-        async with AsyncClient(
-            transport=transport, base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
             yield client
     finally:
         app.dependency_overrides.clear()

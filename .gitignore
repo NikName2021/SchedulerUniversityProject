@@ -1,5 +1,6 @@
 /.env
 /logs/
+/src/logs/
 *.db
 **/__pycache__/
 *.py[cod]
@@ -28,6 +29,9 @@
 /src/.env
 *.xls
 *.xlsx
+*.scheduler-task
+*.scheduler-result
+/calculations/
 
 examle_doc
 tools/.sphinx-deps/

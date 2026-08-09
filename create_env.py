@@ -1,10 +1,10 @@
-import random
+import secrets
 import string
 
 
 def random_word(length: int) -> str:
     letters = string.ascii_letters
-    return "".join(random.choice(letters) for _ in range(length))
+    return "".join(secrets.choice(letters) for _ in range(length))
 
 
 with open(".env", "w", encoding="utf-8") as f:
@@ -18,6 +18,8 @@ POSTGRES_PORT=5446
 CORS_ORIGINS=http://localhost,http://localhost:5173
 ALLOWED_HOSTS=localhost,127.0.0.1
 MAX_UPLOAD_BYTES=10485760
+MAX_CALCULATION_PACKAGE_BYTES=52428800
+SERVER_SOLVER_ENABLED=false
 CELERY_WORKER_CONCURRENCY=2
 NGINX_FILE=local_nginx.conf
 
