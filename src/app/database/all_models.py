@@ -13,6 +13,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -414,6 +415,37 @@ class GenerationTask(DeclBase):
     issues = relationship(
         "GenerationIssue", cascade="all,delete-orphan", back_populates="task"
     )
+    offline_calculation = relationship(
+        "OfflineCalculation",
+        cascade="all,delete-orphan",
+        back_populates="task",
+        uselist=False,
+    )
+
+
+class OfflineCalculation(DeclBase):
+    __tablename__ = "offline_calculation"
+    __table_args__ = (
+        UniqueConstraint("task_id"),
+        UniqueConstraint("job_uuid"),
+        Index("ix_offline_calculation_job_uuid", "job_uuid"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(
+        Integer,
+        ForeignKey("generation_task.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    job_uuid = Column(String(36), nullable=False)
+    schema_version = Column(Integer, nullable=False, default=1)
+    input_sha256 = Column(String(64), nullable=False)
+    input_payload_json = Column(Text, nullable=False)
+    result_payload_json = Column(Text, nullable=True)
+    exported_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    imported_at = Column(DateTime, nullable=True)
+
+    task = relationship("GenerationTask", back_populates="offline_calculation")
 
 
 class GenerationLock(DeclBase):

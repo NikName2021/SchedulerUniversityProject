@@ -55,6 +55,46 @@ async def test_generation_rejects_unsafe_solver_settings(
 
 
 @pytest.mark.asyncio
+async def test_generation_can_be_disabled_on_lightweight_server(
+    api_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(scheduler_routes, "SERVER_SOLVER_ENABLED", False)
+
+    capabilities = await api_client.get("/api/v1/scheduler/capabilities")
+    response = await api_client.post(
+        "/api/v1/scheduler/generate",
+        json={
+            "groups": ["ГР-1"],
+            "start_date": "2026-09-07",
+            "end_date": "2026-09-07",
+        },
+    )
+
+    assert capabilities.status_code == 200
+    assert capabilities.json()["server_solver_enabled"] is False
+    assert response.status_code == 503
+    assert "Export" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_offline_result_upload_rejects_invalid_archive(
+    api_client: AsyncClient,
+) -> None:
+    response = await api_client.post(
+        "/api/v1/scheduler/offline/results/import",
+        files={
+            "file": (
+                "calculation.scheduler-result",
+                b"not a zip archive",
+                "application/octet-stream",
+            )
+        },
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_schedule_update_rejects_invalid_lesson_number(
     api_client: AsyncClient,
 ) -> None:

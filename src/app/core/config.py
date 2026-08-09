@@ -16,13 +16,15 @@ else:
 API_PREFIX = "/api"
 VERSION = "0.1.0"
 # Keep in sync with the single Alembic head; readiness fails closed on schema drift.
-DATABASE_SCHEMA_REVISION = "20260720_0006"
+DATABASE_SCHEMA_REVISION = "20260809_0007"
 DEBUG: bool = config("DEBUG", cast=bool, default=False)
 MEMOIZATION_FLAG: bool = config("MEMOIZATION_FLAG", cast=bool, default=True)
 AUTO_CREATE_TABLES: bool = config("AUTO_CREATE_TABLES", cast=bool, default=False)
-MAX_UPLOAD_BYTES: int = config(
-    "MAX_UPLOAD_BYTES", cast=int, default=10 * 1024 * 1024
+MAX_UPLOAD_BYTES: int = config("MAX_UPLOAD_BYTES", cast=int, default=10 * 1024 * 1024)
+MAX_CALCULATION_PACKAGE_BYTES: int = config(
+    "MAX_CALCULATION_PACKAGE_BYTES", cast=int, default=50 * 1024 * 1024
 )
+SERVER_SOLVER_ENABLED: bool = config("SERVER_SOLVER_ENABLED", cast=bool, default=True)
 
 HOST: str = config("HOST", cast=str, default="localhost")
 PORT: int = config("PORT", cast=int, default=8000)
