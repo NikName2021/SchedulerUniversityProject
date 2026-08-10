@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { MockAPI } from "../api/mockService";
 import type { Stream } from "../api/mockService";
-import { API_BASE_URL } from "../api/apiConfig";
+import { API_BASE_URL, apiFetch } from "../api/apiConfig";
 import {
   getSlotsForInterval,
   minutesToTime,
@@ -91,7 +91,7 @@ export const useAppStore = create<AppState>((set) => ({
   fetchInitialData: async () => {
     set({ isLoading: true, error: null });
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/scheduler/teachers`);
+      const res = await apiFetch(`${API_BASE_URL}/api/v1/scheduler/teachers`);
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }
@@ -305,7 +305,7 @@ export const useAppStore = create<AppState>((set) => ({
     if (!teacher) return;
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_BASE_URL}/api/v1/scheduler/teachers/${teacherId}/restrictions`,
         {
           method: "POST",

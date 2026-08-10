@@ -9,11 +9,12 @@ import {
   FolderInput,
   History,
   LayoutDashboard,
-  Settings2,
+  LogOut,
   Sparkles,
 } from "lucide-react";
 
 import siriusLogo from "../assets/sirius-logo.svg";
+import { useAuth } from "../auth/useAuth";
 import ErrorBoundary from "./ErrorBoundary";
 
 const pageMeta: Record<string, { title: string; description: string }> = {
@@ -59,12 +60,29 @@ const navItems = [
 
 export const Layout: React.FC = () => {
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [logoutError, setLogoutError] = useState(false);
+  const { user, logout } = useAuth();
   const location = useLocation();
   const currentPage =
     pageMeta[location.pathname] ??
     (location.pathname.startsWith("/schedule/")
       ? pageMeta["/schedule"]
       : pageMeta["/"]);
+  const userLabel = user?.display_name || user?.username || "Пользователь";
+  const userRole = user?.role === "admin" ? "Администратор" : "Оператор";
+
+  const handleLogout = async () => {
+    setLogoutError(false);
+    setIsLoggingOut(true);
+    try {
+      await logout();
+    } catch {
+      setLogoutError(true);
+    } finally {
+      setIsLoggingOut(false);
+    }
+  };
 
   return (
     <div className={`app-shell ${isCollapsed ? "app-shell--compact" : ""}`}>
@@ -121,21 +139,25 @@ export const Layout: React.FC = () => {
 
         <div className="app-sidebar__bottom">
           <div className="app-user">
-            <div className="app-user__avatar">О</div>
+            <div className="app-user__avatar">
+              {userLabel.charAt(0).toLocaleUpperCase("ru-RU")}
+            </div>
             {!isCollapsed && (
               <div className="app-user__meta">
-                <strong>Оператор</strong>
-                <span>Локальный контур</span>
+                <strong>{userLabel}</strong>
+                <span>{userRole}</span>
               </div>
             )}
           </div>
           <button
             type="button"
             className="app-sidebar__settings"
-            title="Настройки интерфейса"
-            aria-label="Настройки интерфейса"
+            title="Выйти"
+            aria-label="Выйти"
+            onClick={() => void handleLogout()}
+            disabled={isLoggingOut}
           >
-            <Settings2 size={17} />
+            <LogOut size={17} />
           </button>
         </div>
       </aside>
@@ -146,9 +168,26 @@ export const Layout: React.FC = () => {
             <div className="app-topbar__crumb">Рабочее место оператора</div>
             <h1>{currentPage.title}</h1>
           </div>
-          <div className="app-topbar__status">
-            <span className="app-topbar__status-dot" />
-            Система доступна
+          <div className="app-topbar__actions">
+            {logoutError && (
+              <span className="app-topbar__logout-error" role="alert">
+                Не удалось выйти
+              </span>
+            )}
+            <div className="app-topbar__status">
+              <span className="app-topbar__status-dot" />
+              Система доступна
+            </div>
+            <button
+              type="button"
+              className="app-topbar__logout"
+              onClick={() => void handleLogout()}
+              disabled={isLoggingOut}
+              title="Выйти из системы"
+            >
+              <LogOut size={15} />
+              <span>Выйти</span>
+            </button>
           </div>
         </header>
         <div className="app-content">

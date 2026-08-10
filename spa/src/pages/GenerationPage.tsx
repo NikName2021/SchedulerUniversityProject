@@ -18,7 +18,12 @@ import {
   RefreshCcw,
   RotateCcw,
 } from "lucide-react";
-import { API_BASE_URL, downloadResponse, openDownload } from "../api/apiConfig";
+import {
+  API_BASE_URL,
+  apiFetch,
+  downloadResponse,
+  openDownload,
+} from "../api/apiConfig";
 
 interface Stats {
   total_streams: number;
@@ -198,7 +203,7 @@ export const GenerationPage: React.FC = () => {
     try {
       const groupsParam = encodeURIComponent(selectedGroups.join(","));
       const typesParam = encodeURIComponent(enabledTypes.join(","));
-      const res = await fetch(
+      const res = await apiFetch(
         `${API_BASE_URL}/api/v1/scheduler/subjects-summary?groups=${groupsParam}&types=${typesParam}`,
       );
       if (!res.ok) {
@@ -222,11 +227,11 @@ export const GenerationPage: React.FC = () => {
     try {
       const [groupsRes, statsRes, profilesRes, periodsRes, capabilitiesRes] =
         await Promise.all([
-          fetch(`${API_BASE_URL}/api/v1/scheduler/groups`),
-          fetch(`${API_BASE_URL}/api/v1/scheduler/stats`),
-          fetch(`${API_BASE_URL}/api/v1/reference/rule-profiles`),
-          fetch(`${API_BASE_URL}/api/v1/planning/periods`),
-          fetch(`${API_BASE_URL}/api/v1/scheduler/capabilities`),
+          apiFetch(`${API_BASE_URL}/api/v1/scheduler/groups`),
+          apiFetch(`${API_BASE_URL}/api/v1/scheduler/stats`),
+          apiFetch(`${API_BASE_URL}/api/v1/reference/rule-profiles`),
+          apiFetch(`${API_BASE_URL}/api/v1/planning/periods`),
+          apiFetch(`${API_BASE_URL}/api/v1/scheduler/capabilities`),
         ]);
 
       const groupsData = await groupsRes.json();
@@ -299,7 +304,7 @@ export const GenerationPage: React.FC = () => {
     }
     const responses = await Promise.all(
       weeks.map(async (week) => {
-        const response = await fetch(
+        const response = await apiFetch(
           `${API_BASE_URL}/api/v1/planning/weeks/${week.id}/demands`,
         );
         if (!response.ok) return [week.id, 0] as const;
@@ -333,7 +338,7 @@ export const GenerationPage: React.FC = () => {
     );
     if (!active) return;
     const interval = window.setInterval(async () => {
-      const response = await fetch(`${API_BASE_URL}/api/v1/scheduler/tasks`);
+      const response = await apiFetch(`${API_BASE_URL}/api/v1/scheduler/tasks`);
       if (!response.ok) return;
       const tasks = (await response.json()) as Array<{
         id: number;
@@ -375,7 +380,7 @@ export const GenerationPage: React.FC = () => {
     setPreviewGroup(group);
     setIsPreviewLoading(true);
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `${API_BASE_URL}/api/v1/scheduler/streams?group_name=${encodeURIComponent(group)}`,
       );
       const data = await res.json();
@@ -403,7 +408,7 @@ export const GenerationPage: React.FC = () => {
 
   const createAcademicPeriod = async () => {
     if (!newPeriod.name || !newPeriod.starts_on || !newPeriod.ends_on) return;
-    const response = await fetch(`${API_BASE_URL}/api/v1/planning/periods`, {
+    const response = await apiFetch(`${API_BASE_URL}/api/v1/planning/periods`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -432,7 +437,7 @@ export const GenerationPage: React.FC = () => {
     setIsPreparingDemands(true);
     setStatus(null);
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_BASE_URL}/api/v1/planning/periods/${selectedPeriod.id}/demands/distribute`,
         {
           method: "POST",
@@ -536,7 +541,7 @@ export const GenerationPage: React.FC = () => {
     const results = await Promise.all(
       weeks.map(async (week): Promise<BatchWeekState> => {
         try {
-          const response = await fetch(
+          const response = await apiFetch(
             `${API_BASE_URL}/api/v1/scheduler/generate`,
             {
               method: "POST",
@@ -588,7 +593,7 @@ export const GenerationPage: React.FC = () => {
 
   const retryBatchWeek = async (item: BatchWeekState) => {
     if (!item.taskId) return;
-    const response = await fetch(
+    const response = await apiFetch(
       `${API_BASE_URL}/api/v1/scheduler/tasks/${item.taskId}/retry`,
       { method: "POST" },
     );
@@ -616,7 +621,7 @@ export const GenerationPage: React.FC = () => {
   };
 
   const openWeeklyDemandEditor = async (week: PlanningWeek) => {
-    const response = await fetch(
+    const response = await apiFetch(
       `${API_BASE_URL}/api/v1/planning/weeks/${week.id}/demands`,
     );
     if (!response.ok) {
@@ -635,7 +640,7 @@ export const GenerationPage: React.FC = () => {
   const saveWeeklyDemands = async () => {
     if (!editingWeek) return;
     setIsSavingDemands(true);
-    const response = await fetch(
+    const response = await apiFetch(
       `${API_BASE_URL}/api/v1/planning/weeks/${editingWeek.id}/demands`,
       {
         method: "PUT",
@@ -683,7 +688,7 @@ export const GenerationPage: React.FC = () => {
     setIsGenerating(true);
     setStatus(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/scheduler/generate`, {
+      const res = await apiFetch(`${API_BASE_URL}/api/v1/scheduler/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(buildCalculationPayload()),
@@ -748,7 +753,7 @@ export const GenerationPage: React.FC = () => {
     setIsExportingCalculation(true);
     setStatus(null);
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_BASE_URL}/api/v1/scheduler/offline/export`,
         {
           method: "POST",

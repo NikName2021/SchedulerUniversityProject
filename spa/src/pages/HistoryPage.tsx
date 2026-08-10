@@ -26,7 +26,7 @@ import {
   Users,
   XCircle,
 } from "lucide-react";
-import { API_BASE_URL, openDownload } from "../api/apiConfig";
+import { API_BASE_URL, apiFetch, openDownload } from "../api/apiConfig";
 
 interface PlanningWeekSummary {
   id: number;
@@ -130,7 +130,7 @@ const HistoryPage: React.FC = () => {
 
   const fetchTasks = useCallback(async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/scheduler/tasks`);
+      const response = await apiFetch(`${API_BASE_URL}/api/v1/scheduler/tasks`);
       if (!response.ok) throw new Error("Не удалось загрузить задачи");
       setTasks(await response.json());
     } catch (error) {
@@ -196,7 +196,7 @@ const HistoryPage: React.FC = () => {
     taskId: number,
     action: "cancel" | "retry" | "publish" | "archive",
   ) => {
-    const response = await fetch(
+    const response = await apiFetch(
       `${API_BASE_URL}/api/v1/scheduler/tasks/${taskId}/${action}`,
       { method: "POST" },
     );
@@ -218,7 +218,7 @@ const HistoryPage: React.FC = () => {
     try {
       const form = new FormData();
       form.append("file", file);
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_BASE_URL}/api/v1/scheduler/offline/results/import`,
         { method: "POST", body: form },
       );
@@ -243,7 +243,7 @@ const HistoryPage: React.FC = () => {
   };
 
   const showDiagnostics = async (taskId: number) => {
-    const response = await fetch(
+    const response = await apiFetch(
       `${API_BASE_URL}/api/v1/scheduler/tasks/${taskId}/diagnostics`,
     );
     const payload = (await response.json()) as {

@@ -25,6 +25,8 @@ from .all_models import (
     StreamGroup,
     StudentGroup,
     Teacher,
+    UserAccount,
+    UserSession,
     WeeklyLessonDemand,
     create_tables,
 )
@@ -56,6 +58,8 @@ __all__ = [
     "StreamGroup",
     "StudentGroup",
     "Teacher",
+    "UserAccount",
+    "UserSession",
     "WeeklyLessonDemand",
     "create_tables",
 ]
