@@ -9,17 +9,21 @@ from core.config import (
     CORS_ORIGINS,
     DATABASE_SCHEMA_REVISION,
     DEBUG,
+    DEFAULT_USERS_FILE,
     HOST,
     PORT,
     PROJECT_NAME,
     VERSION,
     async_get_db,
     engine,
+    logger,
+    sessionmaker,
 )
 from database import create_tables
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from middleware import LoggingMiddleware, SecurityHeadersMiddleware
+from services.default_users_service import bootstrap_default_users
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -44,6 +48,15 @@ def get_application() -> FastAPI:
             await create_tables(engine)
 
         application.add_event_handler("startup", create_tables_on_startup)
+
+    if DEFAULT_USERS_FILE:
+        async def bootstrap_users_on_startup() -> None:
+            async with sessionmaker() as db:
+                created = await bootstrap_default_users(DEFAULT_USERS_FILE, db)
+            if created:
+                logger.info("Created default user accounts: %s", ", ".join(created))
+
+        application.add_event_handler("startup", bootstrap_users_on_startup)
 
     @application.get("/health/live", include_in_schema=False)
     async def health_live() -> dict[str, str]:

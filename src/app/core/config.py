@@ -16,7 +16,7 @@ else:
 API_PREFIX = "/api"
 VERSION = "0.1.0"
 # Keep in sync with the single Alembic head; readiness fails closed on schema drift.
-DATABASE_SCHEMA_REVISION = "20260809_0007"
+DATABASE_SCHEMA_REVISION = "20260809_0008"
 DEBUG: bool = config("DEBUG", cast=bool, default=False)
 MEMOIZATION_FLAG: bool = config("MEMOIZATION_FLAG", cast=bool, default=True)
 AUTO_CREATE_TABLES: bool = config("AUTO_CREATE_TABLES", cast=bool, default=False)
@@ -25,6 +25,19 @@ MAX_CALCULATION_PACKAGE_BYTES: int = config(
     "MAX_CALCULATION_PACKAGE_BYTES", cast=int, default=50 * 1024 * 1024
 )
 SERVER_SOLVER_ENABLED: bool = config("SERVER_SOLVER_ENABLED", cast=bool, default=True)
+AUTH_COOKIE_NAME: str = config(
+    "AUTH_COOKIE_NAME", cast=str, default="scheduler_session"
+)
+AUTH_COOKIE_SECURE: bool = config("AUTH_COOKIE_SECURE", cast=bool, default=False)
+AUTH_SESSION_HOURS: int = config("AUTH_SESSION_HOURS", cast=int, default=8)
+AUTH_MAX_SESSIONS_PER_USER: int = config(
+    "AUTH_MAX_SESSIONS_PER_USER", cast=int, default=5
+)
+AUTH_MAX_FAILED_LOGINS: int = config("AUTH_MAX_FAILED_LOGINS", cast=int, default=5)
+AUTH_LOCKOUT_MINUTES: int = config("AUTH_LOCKOUT_MINUTES", cast=int, default=15)
+DEFAULT_USERS_FILE: str | None = (
+    config("DEFAULT_USERS_FILE", cast=str, default="").strip() or None
+)
 
 HOST: str = config("HOST", cast=str, default="localhost")
 PORT: int = config("PORT", cast=int, default=8000)

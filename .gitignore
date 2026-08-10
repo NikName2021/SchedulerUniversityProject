@@ -32,6 +32,7 @@
 *.scheduler-task
 *.scheduler-result
 /calculations/
+/secrets/default_users.json
 
 examle_doc
 tools/.sphinx-deps/

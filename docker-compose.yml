@@ -12,7 +12,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - ${POSTGRES_PORT}:5432
+      - "127.0.0.1:${POSTGRES_PORT}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DATABASE}"]
       interval: 5s
@@ -50,13 +50,23 @@ services:
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-10485760}
       MAX_CALCULATION_PACKAGE_BYTES: ${MAX_CALCULATION_PACKAGE_BYTES:-52428800}
       SERVER_SOLVER_ENABLED: ${SERVER_SOLVER_ENABLED:-false}
+      AUTH_COOKIE_NAME: ${AUTH_COOKIE_NAME:-scheduler_session}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
+      AUTH_SESSION_HOURS: ${AUTH_SESSION_HOURS:-8}
+      AUTH_MAX_SESSIONS_PER_USER: ${AUTH_MAX_SESSIONS_PER_USER:-5}
+      AUTH_MAX_FAILED_LOGINS: ${AUTH_MAX_FAILED_LOGINS:-5}
+      AUTH_LOCKOUT_MINUTES: ${AUTH_LOCKOUT_MINUTES:-15}
+      DEFAULT_USERS_FILE: /run/secrets/default_users.json
       RUN_MIGRATIONS: "true"
       TZ: Europe/Moscow
     volumes:
       - uploads:/app/app/uploads
       - backend_logs:/app/logs
+    secrets:
+      - source: default_users
+        target: default_users.json
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -144,3 +154,7 @@ volumes:
 networks:
   scheduler:
     driver: bridge
+
+secrets:
+  default_users:
+    file: ${DEFAULT_USERS_FILE:-./secrets/default_users.json}

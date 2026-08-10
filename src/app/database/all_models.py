@@ -448,6 +448,63 @@ class OfflineCalculation(DeclBase):
     task = relationship("GenerationTask", back_populates="offline_calculation")
 
 
+class UserAccount(DeclBase):
+    __tablename__ = "user_account"
+    __table_args__ = (
+        CheckConstraint(
+            "role IN ('admin', 'operator')",
+            name="ck_user_account_role",
+        ),
+        Index("ix_user_account_username", "username", unique=True),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    username = Column(String(64), nullable=False)
+    display_name = Column(String(120), nullable=False)
+    password_hash = Column(String(512), nullable=False)
+    role = Column(String(20), nullable=False, default="operator")
+    is_active = Column(Boolean, nullable=False, default=True)
+    failed_login_count = Column(Integer, nullable=False, default=0)
+    locked_until = Column(DateTime, nullable=True)
+    last_login_at = Column(DateTime, nullable=True)
+    password_changed_at = Column(
+        DateTime,
+        default=datetime.datetime.utcnow,
+        nullable=False,
+    )
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+    sessions = relationship(
+        "UserSession",
+        cascade="all,delete-orphan",
+        back_populates="user",
+    )
+
+
+class UserSession(DeclBase):
+    __tablename__ = "user_session"
+    __table_args__ = (
+        Index("ix_user_session_token_hash", "token_hash", unique=True),
+        Index("ix_user_session_user_id", "user_id"),
+        Index("ix_user_session_expires_at", "expires_at"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(
+        Integer,
+        ForeignKey("user_account.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    token_hash = Column(String(64), nullable=False)
+    csrf_token = Column(String(64), nullable=False)
+    user_agent_hash = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    last_seen_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+
+    user = relationship("UserAccount", back_populates="sessions")
+
+
 class GenerationLock(DeclBase):
     __tablename__ = "generation_lock"
     scope_key = Column(String, primary_key=True)
