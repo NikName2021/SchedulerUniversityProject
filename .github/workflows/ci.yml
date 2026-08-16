@@ -64,7 +64,6 @@ jobs:
     steps:
       - name: Check out the repo
         uses: actions/checkout@v6
-
       - name: Log in to Docker Hub
         uses: docker/login-action@v4
         with:
@@ -75,7 +74,7 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ./src
           push: true
           platforms: linux/amd64
           cache-from: type=registry,ref=${{ secrets.DOCKER_DOMEN }}/scheduler-project/smart-scheduler-backend:latest
@@ -86,7 +85,7 @@ jobs:
 
 
   docker-image-frontend-build:
-    name: Build and Push Docker Image Backend
+    name: Build and Push Docker Image Frontend
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     defaults:
@@ -110,7 +109,8 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
-          context: .Dockerfile_image
+          context: ./spa
+          file: ./spa/Dockerfile_image
           push: true
           platforms: linux/amd64
           cache-from: type=registry,ref=${{ secrets.DOCKER_DOMEN }}/scheduler-project/smart-scheduler-frontend:latest
