@@ -2,7 +2,11 @@ name: CI
 
 on:
   push:
+    branches:
+      - master
   pull_request:
+    branches:
+      - master
 
 jobs:
   backend:
@@ -22,25 +26,95 @@ jobs:
         run: python -m pytest
 
   frontend:
-    runs-on: ubuntu-latest
+    runs-on: Frontend checks
     defaults:
       run:
         working-directory: spa
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: spa/package-lock.json
-      - name: Install frontend dependencies
-        run: npm ci
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Run tests
+        run: npm test -- --ci --runInBand
+
+      - name: Run ESLint
+        run: npm run lint
+
       - name: Build frontend
         run: npm run build
 
-  compose:
+
+  docker-image-backend-build:
+    name: Build and Push Docker Image Backend
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src
+    needs:
+      - frontend
+      - backend
+
     steps:
-      - uses: actions/checkout@v4
-      - name: Validate Compose configuration
-        run: docker compose --env-file .env.example config --quiet
+      - name: Check out the repo
+        uses: actions/checkout@v6
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ secrets.DOCKER_DOMEN }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          cache-from: type=registry,ref=${{ secrets.DOCKER_DOMEN }}/scheduler-project/smart-scheduler-backend:latest
+          cache-to: type=inline
+          tags: |
+            ${{ secrets.DOCKER_DOMEN }}/scheduler-project/smart-scheduler-backend:latest    
+            ${{ secrets.DOCKER_DOMEN }}/scheduler-project/smart-scheduler-backend:${{ github.sha }}
+
+
+  docker-image-frontend-build:
+    name: Build and Push Docker Image Backend
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: spa
+    needs:
+      - frontend
+      - backend
+
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v6
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ secrets.DOCKER_DOMEN }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .Dockerfile_image
+          push: true
+          platforms: linux/amd64
+          cache-from: type=registry,ref=${{ secrets.DOCKER_DOMEN }}/scheduler-project/smart-scheduler-frontend:latest
+          cache-to: type=inline
+          tags: |
+            ${{ secrets.DOCKER_DOMEN }}/scheduler-project/smart-scheduler-frontend:latest    
+            ${{ secrets.DOCKER_DOMEN }}/scheduler-project/smart-scheduler-frontend:${{ github.sha }}
