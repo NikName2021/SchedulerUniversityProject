@@ -26,6 +26,10 @@
 /src/app/uploads/*
 /src/app/scheduler.db
 /src/.env
+/src/logs
+
+secrets
+
 *.xls
 *.xlsx
 
