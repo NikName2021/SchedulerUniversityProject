@@ -1,7 +1,8 @@
 import datetime
 
 import pytest_asyncio
-from core.config import AUTH_COOKIE_NAME, async_get_db
+from core.config import DATABASE_SCHEMA_REVISION, async_get_db
+from core.constants import AUTH_COOKIE_NAME
 from database import DeclBase, UserAccount, UserSession
 from httpx import ASGITransport, AsyncClient
 from main import app
@@ -34,7 +35,8 @@ async def db_session() -> AsyncSession:
             "(version_num VARCHAR(32) NOT NULL PRIMARY KEY)"
         )
         await conn.exec_driver_sql(
-            "INSERT INTO alembic_version (version_num) VALUES ('20260809_0008')"
+            "INSERT INTO alembic_version (version_num) VALUES "
+            f"('{DATABASE_SCHEMA_REVISION}')"
         )
 
     # Создаем сессию

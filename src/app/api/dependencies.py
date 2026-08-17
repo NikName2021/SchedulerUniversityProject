@@ -1,7 +1,8 @@
 import secrets
 from typing import Annotated
 
-from core.config import AUTH_COOKIE_NAME, async_get_db
+from core.config import async_get_db
+from core.constants import AUTH_COOKIE_NAME
 from fastapi import Depends, HTTPException, Request, status
 from services.auth_service import AuthenticatedContext, AuthService
 from sqlalchemy.ext.asyncio import AsyncSession

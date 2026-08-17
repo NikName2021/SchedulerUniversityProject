@@ -9,8 +9,7 @@
 - календарное планирование: учебные периоды, недели, праздники и правила доступности;
 - автоматическое формирование расписания с помощью Google OR-Tools CP-SAT;
 - ручная корректировка, фиксация занятий и проверка конфликтов до сохранения;
-- асинхронные или переносимые локальные расчёты, загрузка результата,
-  диагностика, версии, публикация и экспорт в Excel;
+- асинхронные расчёты, диагностика, версии, публикация и экспорт в Excel;
 - локальный и production-контур на Docker Compose.
 
 ## Роли
@@ -34,10 +33,7 @@ React + Vite + TypeScript
           ▼
 FastAPI + SQLAlchemy + Pydantic
      ├──────────────► PostgreSQL — данные, версии и публикации
-     ├──────────────► пакет .scheduler-task ──► локальный OR-Tools
-     │                                           │
-     │               пакет .scheduler-result ◄──┘
-     └──────────────► Redis + Celery — опциональный серверный расчёт
+     └──────────────► Redis + Celery + OR-Tools — фоновые расчёты
 ```
 
 ### Алгоритм формирования расписания
@@ -74,9 +70,8 @@ docker-compose.yml        production-контур
 
 ## Запуск в Docker
 
-По умолчанию запускается лёгкий контур: PostgreSQL, FastAPI и Nginx с
-собранным React-приложением. Redis и Celery worker не запускаются, а расчёты
-экспортируются для выполнения на рабочем компьютере.
+Контур запускает PostgreSQL, Redis, FastAPI, Celery worker и Nginx с собранным
+React-приложением. Расчёты выполняются фоновым worker-процессом.
 
 ```bash
 
@@ -139,50 +134,9 @@ docker compose exec backend python -m manage_users enable-user --username admin
 
 При старте backend применяет Alembic-миграции. Перед развёртыванием в
 production замените пароль PostgreSQL, задайте точные `CORS_ORIGINS` и
-`ALLOWED_HOSTS`. При публикации через HTTPS установите
-`AUTH_COOKIE_SECURE=true`; TLS следует завершать на reverse proxy или ingress.
+`ALLOWED_HOSTS`. TLS следует завершать на reverse proxy или ingress.
 Не публикуйте backend-порт `8000` во внешнюю сеть — браузер должен обращаться к
 API через Nginx по тому же origin, что и к интерфейсу.
-
-### Расчёт на рабочем компьютере
-
-1. Настройте неделю или семестр и нажмите «Скачать задачу для ноутбука».
-2. Поместите полученный файл в каталог `calculations`.
-3. Выполните расчёт контейнером:
-
-```bash
-mkdir -p calculations
-docker compose --profile local-solver run --rm solver-local \
-  solve /data/semester.scheduler-task \
-  --output /data/semester.scheduler-result \
-  --workers 4
-```
-
-4. В разделе «Реестр расчётов» нажмите «Загрузить результат» и выберите
-   `.scheduler-result`.
-
-Контейнеру локального решателя не нужны PostgreSQL, Redis или доступ к серверу.
-Пакет содержит неизменяемый снимок исходных данных; сервер принимает результат
-только при совпадении UUID и SHA-256 снимка и повторно проверяет слоты,
-конфликты ресурсов и аудитории.
-Файлы могут содержать ФИО преподавателей и параметры учебной нагрузки, поэтому
-их следует хранить и передавать как служебные данные.
-
-Без Docker локальный решатель запускается из установленного backend-окружения:
-
-```bash
-cd src/app
-python -m offline_solver solve ../../calculations/semester.scheduler-task \
-  --output ../../calculations/semester.scheduler-result \
-  --workers 4
-```
-
-Для включения прежнего серверного расчёта запустите профиль `solver` и явно
-разрешите эту возможность:
-
-```bash
-SERVER_SOLVER_ENABLED=true docker compose --profile solver up --build
-```
 
 ## Локальная разработка
 
@@ -211,7 +165,7 @@ Readiness endpoint возвращает `503`, если база недосту�
 При таком запуске backend прочитает `secrets/default_users.json` из корня
 проекта и автоматически создаст пользователей `admin` и `operator`.
 
-Для опциональных фоновых расчётов также запустите Redis и Celery worker:
+Для фоновых расчётов также запустите Redis и Celery worker:
 
 ```bash
 cd src/app

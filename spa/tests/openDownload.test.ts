@@ -27,9 +27,9 @@ test("downloads open without exposing window.opener", () => {
 test("download filenames cannot escape into a path", () => {
   assert.equal(
     getDownloadFilename(
-      'attachment; filename="../../result.scheduler-result"',
+      'attachment; filename="../../schedule.xlsx"',
       "x",
     ),
-    ".._.._result.scheduler-result",
+    ".._.._schedule.xlsx",
   );
 });

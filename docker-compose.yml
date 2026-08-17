@@ -12,7 +12,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "127.0.0.1:${POSTGRES_PORT}:5432"
+      - "${POSTGRES_PORT}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DATABASE}"]
       interval: 5s
@@ -23,7 +23,6 @@ services:
 
   redis:
     image: redis:8.0-alpine
-    profiles: ["solver"]
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
@@ -48,14 +47,6 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS}
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1}
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-10485760}
-      MAX_CALCULATION_PACKAGE_BYTES: ${MAX_CALCULATION_PACKAGE_BYTES:-52428800}
-      SERVER_SOLVER_ENABLED: ${SERVER_SOLVER_ENABLED:-false}
-      AUTH_COOKIE_NAME: ${AUTH_COOKIE_NAME:-scheduler_session}
-      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
-      AUTH_SESSION_HOURS: ${AUTH_SESSION_HOURS:-8}
-      AUTH_MAX_SESSIONS_PER_USER: ${AUTH_MAX_SESSIONS_PER_USER:-5}
-      AUTH_MAX_FAILED_LOGINS: ${AUTH_MAX_FAILED_LOGINS:-5}
-      AUTH_LOCKOUT_MINUTES: ${AUTH_LOCKOUT_MINUTES:-15}
       DEFAULT_USERS_FILE: /run/secrets/default_users.json
       RUN_MIGRATIONS: "true"
       TZ: Europe/Moscow
@@ -66,7 +57,7 @@ services:
       - source: default_users
         target: default_users.json
     ports:
-      - "127.0.0.1:8000:8000"
+      - "8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -86,7 +77,6 @@ services:
 
   worker:
     image: smart-scheduler-backend
-    profiles: ["solver"]
     restart: unless-stopped
     command:
       [
@@ -113,20 +103,6 @@ services:
         condition: service_healthy
     networks:
       - scheduler
-
-  solver-local:
-    image: smart-scheduler-backend
-    build:
-      context: src
-    profiles: ["local-solver"]
-    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
-    entrypoint: ["/app/docker-entrypoint.sh", "python", "-m", "offline_solver"]
-    command: ["--help"]
-    environment:
-      RUN_MIGRATIONS: "false"
-      TZ: Europe/Moscow
-    volumes:
-      - ./calculations:/data
 
   frontend:
     build:

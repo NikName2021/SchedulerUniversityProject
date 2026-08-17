@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
-from core.config import (
+from core.constants import (
     AUTH_LOCKOUT_MINUTES,
     AUTH_MAX_FAILED_LOGINS,
     AUTH_MAX_SESSIONS_PER_USER,

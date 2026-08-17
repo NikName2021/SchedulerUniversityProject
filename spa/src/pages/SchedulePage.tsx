@@ -70,6 +70,11 @@ interface ScheduleSource {
 }
 
 const DAYS = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"];
+const WEEK_DATE_FORMATTER = new Intl.DateTimeFormat("ru-RU", {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+});
 const PAIRS = [
   { num: 1, time: "08:45-10:05" },
   { num: 2, time: "10:20-11:40" },
@@ -541,7 +546,7 @@ export const SchedulePage: React.FC = () => {
         sunday.setDate(monday.getDate() + 6);
         weekMap.set(
           weekKey,
-          `${monday.toLocaleDateString()} — ${sunday.toLocaleDateString()}`,
+          `${WEEK_DATE_FORMATTER.format(monday)} — ${WEEK_DATE_FORMATTER.format(sunday)}`,
         );
       }
     });

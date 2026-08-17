@@ -1,11 +1,11 @@
 from typing import Annotated
 
 from api.dependencies import require_authenticated_request
-from core.config import (
+from core.config import async_get_db
+from core.constants import (
     AUTH_COOKIE_NAME,
     AUTH_COOKIE_SECURE,
     AUTH_SESSION_HOURS,
-    async_get_db,
 )
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from schemas.auth import AuthenticatedUser, AuthResponse, LoginRequest

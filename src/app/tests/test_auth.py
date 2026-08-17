@@ -1,7 +1,7 @@
 import datetime
 
 import pytest
-from core.config import AUTH_COOKIE_NAME, AUTH_MAX_FAILED_LOGINS
+from core.constants import AUTH_COOKIE_NAME, AUTH_MAX_FAILED_LOGINS
 from database import UserAccount, UserSession
 from httpx import AsyncClient
 from services.auth_service import hash_password, hash_session_token, verify_password
@@ -22,9 +22,7 @@ def test_passwords_use_salted_argon2id_hashes() -> None:
 async def test_protected_api_requires_authentication(
     unauthenticated_api_client: AsyncClient,
 ) -> None:
-    protected = await unauthenticated_api_client.get(
-        "/api/v1/scheduler/capabilities"
-    )
+    protected = await unauthenticated_api_client.get("/api/v1/scheduler/stats")
     health = await unauthenticated_api_client.get("/health/live")
 
     assert protected.status_code == 401
