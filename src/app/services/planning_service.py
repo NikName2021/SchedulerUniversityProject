@@ -1,5 +1,6 @@
 from collections import defaultdict
 from datetime import date, timedelta
+from fractions import Fraction
 
 from core.constants import LESSONS, STUDY_DAYS
 from database import (
@@ -283,6 +284,15 @@ class PlanningService:
             for stream in streams
             for week in weeks
         }
+        week_loads: dict[int, int] = {
+            week.id: sum(
+                published_counts[(stream.id, week.id)] for stream in streams
+            )
+            for week in weeks
+        }
+        week_slot_counts = {
+            week.id: len(week_dates[week.id]) * len(LESSONS) for week in weeks
+        }
 
         def week_overlaps_stream(stream: Stream, week: PlanningWeek) -> bool:
             return not (
@@ -300,6 +310,8 @@ class PlanningService:
             )
 
         shortages: list[str] = []
+        # Allocate the most constrained streams first. Hard availability must
+        # take precedence over balancing the total load between weeks.
         streams.sort(
             key=lambda stream: (
                 sum(1 for week in weeks if has_capacity(stream, week)),
@@ -329,10 +341,12 @@ class PlanningService:
                     candidates,
                     key=lambda item: (
                         allocations[(stream.id, item.id)],
+                        Fraction(week_loads[item.id], week_slot_counts[item.id]),
                         item.sequence_number,
                     ),
                 )
                 allocations[(stream.id, week.id)] += 1
+                week_loads[week.id] += 1
                 if stream.teacher:
                     teacher_capacity[(stream.teacher.name, week.id)] -= 1
                 for group_name in stream_groups[stream.id]:
