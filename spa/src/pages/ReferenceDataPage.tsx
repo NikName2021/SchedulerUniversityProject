@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Building2, Plus, RefreshCw, ShieldCheck } from "lucide-react";
-import { API_BASE_URL } from "../api/apiConfig";
+import { API_BASE_URL, apiFetch } from "../api/apiConfig";
 
 interface RoomFeature {
   id: number;
@@ -54,9 +54,9 @@ export const ReferenceDataPage: React.FC = () => {
     try {
       const [roomsResponse, typesResponse, profilesResponse] =
         await Promise.all([
-          fetch(`${API_BASE_URL}/api/v1/reference/rooms`),
-          fetch(`${API_BASE_URL}/api/v1/reference/activity-types`),
-          fetch(`${API_BASE_URL}/api/v1/reference/rule-profiles`),
+          apiFetch(`${API_BASE_URL}/api/v1/reference/rooms`),
+          apiFetch(`${API_BASE_URL}/api/v1/reference/activity-types`),
+          apiFetch(`${API_BASE_URL}/api/v1/reference/rule-profiles`),
         ]);
       if (!roomsResponse.ok || !typesResponse.ok || !profilesResponse.ok) {
         throw new Error("Не удалось загрузить справочники");
@@ -82,7 +82,7 @@ export const ReferenceDataPage: React.FC = () => {
   const createRoom = async (event: React.FormEvent) => {
     event.preventDefault();
     setError(null);
-    const response = await fetch(`${API_BASE_URL}/api/v1/reference/rooms`, {
+    const response = await apiFetch(`${API_BASE_URL}/api/v1/reference/rooms`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...form, is_active: true, feature_ids: [] }),

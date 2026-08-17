@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { openDownload } from "../src/utils/openDownload.js";
+import {
+  getDownloadFilename,
+  openDownload,
+} from "../src/utils/openDownload.js";
 
 test("downloads open without exposing window.opener", () => {
   const calls: unknown[][] = [];
@@ -19,4 +22,14 @@ test("downloads open without exposing window.opener", () => {
 
   assert.deepEqual(calls, [["/api/export", "_blank", "noopener,noreferrer"]]);
   Reflect.deleteProperty(globalThis, "window");
+});
+
+test("download filenames cannot escape into a path", () => {
+  assert.equal(
+    getDownloadFilename(
+      'attachment; filename="../../schedule.xlsx"',
+      "x",
+    ),
+    ".._.._schedule.xlsx",
+  );
 });

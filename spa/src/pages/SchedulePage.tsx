@@ -33,7 +33,7 @@ import {
 } from "@dnd-kit/core";
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { API_BASE_URL, openDownload } from "../api/apiConfig";
+import { API_BASE_URL, apiFetch, openDownload } from "../api/apiConfig";
 
 interface ScheduleEntry {
   id: number;
@@ -70,6 +70,11 @@ interface ScheduleSource {
 }
 
 const DAYS = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"];
+const WEEK_DATE_FORMATTER = new Intl.DateTimeFormat("ru-RU", {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+});
 const PAIRS = [
   { num: 1, time: "08:45-10:05" },
   { num: 2, time: "10:20-11:40" },
@@ -378,7 +383,7 @@ export const SchedulePage: React.FC = () => {
 
   const fetchTasks = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/scheduler/tasks`);
+      const res = await apiFetch(`${API_BASE_URL}/api/v1/scheduler/tasks`);
       const data = await res.json();
       const fetchedTasks = data as GenerationTaskSummary[];
       setTasks(fetchedTasks);
@@ -410,7 +415,7 @@ export const SchedulePage: React.FC = () => {
 
   const fetchGroups = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/scheduler/groups`);
+      const res = await apiFetch(`${API_BASE_URL}/api/v1/scheduler/groups`);
       const data = await res.json();
       const fetchedGroups = data.groups || [];
       setGroups(fetchedGroups);
@@ -424,7 +429,7 @@ export const SchedulePage: React.FC = () => {
 
   const fetchTeachersList = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/scheduler/teachers`);
+      const res = await apiFetch(`${API_BASE_URL}/api/v1/scheduler/teachers`);
       const data = await res.json();
       setTeachers(data);
       if (!selectedTeacherId && data.length > 0) {
@@ -450,7 +455,7 @@ export const SchedulePage: React.FC = () => {
         } else if (mode === "teacher" && filterId) {
           url += `&teacher_id=${filterId}`;
         }
-        const res = await fetch(url);
+        const res = await apiFetch(url);
         const data = await res.json();
         setEntries(data);
       } catch (e) {
@@ -509,7 +514,7 @@ export const SchedulePage: React.FC = () => {
     const fetchQuality = async () => {
       setQualityLoading(true);
       try {
-        const res = await fetch(
+        const res = await apiFetch(
           `${API_BASE_URL}/api/v1/scheduler/schedule/quality?task_id=${selectedTaskId}&group_name=${encodeURIComponent(selectedGroup)}`,
         );
         if (res.ok) {
@@ -541,7 +546,7 @@ export const SchedulePage: React.FC = () => {
         sunday.setDate(monday.getDate() + 6);
         weekMap.set(
           weekKey,
-          `${monday.toLocaleDateString()} — ${sunday.toLocaleDateString()}`,
+          `${WEEK_DATE_FORMATTER.format(monday)} — ${WEEK_DATE_FORMATTER.format(sunday)}`,
         );
       }
     });
@@ -644,7 +649,7 @@ export const SchedulePage: React.FC = () => {
       );
 
       try {
-        const res = await fetch(
+        const res = await apiFetch(
           `${API_BASE_URL}/api/v1/scheduler/schedule/${entryId}`,
           {
             method: "PATCH",
@@ -685,7 +690,7 @@ export const SchedulePage: React.FC = () => {
       setEntries((prev) => prev.filter((e) => e.id !== id));
 
       try {
-        const res = await fetch(
+        const res = await apiFetch(
           `${API_BASE_URL}/api/v1/scheduler/schedule/${id}`,
           {
             method: "DELETE",
@@ -720,7 +725,7 @@ export const SchedulePage: React.FC = () => {
       }
 
       try {
-        const res = await fetch(
+        const res = await apiFetch(
           `${API_BASE_URL}/api/v1/scheduler/schedule/${id}`,
           {
             method: "PATCH",
@@ -749,7 +754,7 @@ export const SchedulePage: React.FC = () => {
   );
 
   const toggleEntryLock = useCallback(async (id: number, locked: boolean) => {
-    const response = await fetch(
+    const response = await apiFetch(
       `${API_BASE_URL}/api/v1/scheduler/schedule/${id}`,
       {
         method: "PATCH",

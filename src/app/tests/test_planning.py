@@ -127,6 +127,43 @@ async def test_semester_demand_is_distributed_once_across_weeks(db_session) -> N
 
 
 @pytest.mark.asyncio
+async def test_semester_demand_balances_short_streams_across_weeks(
+    db_session,
+) -> None:
+    period = await PlanningService.create_period(
+        AcademicPeriodCreate(
+            name="Осенний семестр",
+            starts_on=datetime.date(2026, 9, 7),
+            ends_on=datetime.date(2026, 10, 4),
+        ),
+        db_session,
+    )
+    batch = ImportBatch(filename="streams.xlsx", file_type=FileType.STREAMS)
+    db_session.add(batch)
+    await db_session.flush()
+
+    for index in range(12):
+        stream = Stream(
+            import_batch_id=batch.id,
+            event_name=f"Дисциплина {index + 1}",
+            stream_type="Семинар",
+            lessons_count=1,
+        )
+        db_session.add(stream)
+        await db_session.flush()
+        db_session.add(
+            StreamGroup(stream_id=stream.id, group_name="МАТ-101", group_size=25)
+        )
+    await db_session.commit()
+
+    summary = await PlanningService.distribute_semester_demands(
+        period.id, ["МАТ-101"], ["Семинар"], set(), db_session
+    )
+
+    assert [week.lessons_count for week in summary.weeks] == [3, 3, 3, 3]
+
+
+@pytest.mark.asyncio
 async def test_visiting_teacher_load_uses_only_available_weeks(db_session) -> None:
     period = await PlanningService.create_period(
         AcademicPeriodCreate(
@@ -171,6 +208,89 @@ async def test_visiting_teacher_load_uses_only_available_weeks(db_session) -> No
     )
 
     assert [week.lessons_count for week in summary.weeks] == [0, 4, 4, 0]
+
+
+@pytest.mark.asyncio
+async def test_visiting_teacher_availability_overrides_week_load_balance(
+    db_session,
+) -> None:
+    period = await PlanningService.create_period(
+        AcademicPeriodCreate(
+            name="Осенний семестр",
+            starts_on=datetime.date(2026, 9, 7),
+            ends_on=datetime.date(2026, 10, 4),
+        ),
+        db_session,
+    )
+    batch = ImportBatch(filename="streams.xlsx", file_type=FileType.STREAMS)
+    visiting_teacher = Teacher(name="Приезжий преподаватель")
+    db_session.add_all([batch, visiting_teacher])
+    await db_session.flush()
+
+    visiting_stream = Stream(
+        import_batch_id=batch.id,
+        teacher_id=visiting_teacher.id,
+        event_name="Выездной интенсив",
+        stream_type="Семинар",
+        lessons_count=6,
+    )
+    db_session.add(visiting_stream)
+    await db_session.flush()
+    db_session.add(
+        StreamGroup(
+            stream_id=visiting_stream.id,
+            group_name="ИНТ-101",
+            group_size=20,
+        )
+    )
+
+    available_date = period.weeks[2].starts_on
+    db_session.add_all(
+        [
+            AvailabilityRule(
+                teacher_id=visiting_teacher.id,
+                rule_kind="available",
+                recurrence="specific",
+                specific_date=available_date,
+                lesson_start=lesson,
+                lesson_end=lesson,
+                is_hard=True,
+            )
+            for lesson in range(1, 7)
+        ]
+    )
+
+    for index in range(12):
+        stream = Stream(
+            import_batch_id=batch.id,
+            event_name=f"Обычная дисциплина {index + 1}",
+            stream_type="Семинар",
+            lessons_count=1,
+        )
+        db_session.add(stream)
+        await db_session.flush()
+        db_session.add(
+            StreamGroup(stream_id=stream.id, group_name="ИНТ-101", group_size=20)
+        )
+    await db_session.commit()
+
+    summary = await PlanningService.distribute_semester_demands(
+        period.id, ["ИНТ-101"], ["Семинар"], set(), db_session
+    )
+
+    demands_result = await db_session.execute(
+        select(WeeklyLessonDemand).where(
+            WeeklyLessonDemand.stream_id == visiting_stream.id
+        )
+    )
+    visiting_demands = {
+        demand.week_id: demand.lessons_count for demand in demands_result.scalars()
+    }
+
+    assert [
+        visiting_demands[week.id] for week in period.weeks
+    ] == [0, 0, 6, 0]
+    assert [week.lessons_count for week in summary.weeks] == [4, 4, 6, 4]
 
 
 @pytest.mark.asyncio

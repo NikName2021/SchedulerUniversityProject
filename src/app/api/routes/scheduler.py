@@ -196,6 +196,46 @@ class GenerationTaskModel(BaseModel):
         return value
 
 
+async def _resolve_generation_period(
+    task: GenerationTaskModel, db: AsyncSession
+) -> tuple[datetime | None, datetime | None]:
+    start_date = task.start_date
+    end_date = task.end_date
+    if task.planning_week_id is not None:
+        planning_week = await db.get(PlanningWeek, task.planning_week_id)
+        if planning_week is None:
+            raise HTTPException(status_code=404, detail="Planning week not found")
+        start_date = planning_week.starts_on.isoformat()
+        end_date = planning_week.ends_on.isoformat()
+
+    try:
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d") if start_date else None
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d") if end_date else None
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422, detail="Dates must use YYYY-MM-DD"
+        ) from exc
+    if start_dt and end_dt and end_dt < start_dt:
+        raise HTTPException(
+            status_code=422, detail="end_date must not precede start_date"
+        )
+    if (
+        task.planning_week_id is None
+        and start_dt
+        and end_dt
+        and (end_dt - start_dt).days + 1 > MAX_GENERATION_HORIZON_DAYS
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Период генерации не должен превышать "
+                f"{MAX_GENERATION_HORIZON_DAYS} дней. Для разных недель "
+                "создавайте отдельные недельные расчеты."
+            ),
+        )
+    return start_dt, end_dt
+
+
 class ScheduleUpdateModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -591,44 +631,9 @@ async def generate_schedule(
     task: GenerationTaskModel,
     db: Annotated[AsyncSession, Depends(async_get_db)] = None,
 ) -> JSONResponse:
-    if not task.groups:
-        raise HTTPException(status_code=422, detail="At least one group is required")
-
-    start_date = task.start_date
-    end_date = task.end_date
-    if task.planning_week_id is not None:
-        planning_week = await db.get(PlanningWeek, task.planning_week_id)
-        if planning_week is None:
-            raise HTTPException(status_code=404, detail="Planning week not found")
-        start_date = planning_week.starts_on.isoformat()
-        end_date = planning_week.ends_on.isoformat()
-
-    try:
-        start_dt = datetime.strptime(start_date, "%Y-%m-%d") if start_date else None
-        end_dt = datetime.strptime(end_date, "%Y-%m-%d") if end_date else None
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=422, detail="Dates must use YYYY-MM-DD"
-        ) from exc
-    if start_dt and end_dt and end_dt < start_dt:
-        raise HTTPException(
-            status_code=422, detail="end_date must not precede start_date"
-        )
-    if (
-        task.planning_week_id is None
-        and start_dt
-        and end_dt
-        and (end_dt - start_dt).days + 1 > MAX_GENERATION_HORIZON_DAYS
-    ):
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "Период генерации не должен превышать "
-                f"{MAX_GENERATION_HORIZON_DAYS} дней. Для разных недель "
-                "создавайте отдельные недельные расчеты."
-            ),
-        )
-
+    start_dt, end_dt = await _resolve_generation_period(task, db)
+    start_date = start_dt.date().isoformat() if start_dt else None
+    end_date = end_dt.date().isoformat() if end_dt else None
     settings = (
         task.settings.model_dump(mode="json", exclude_none=True)
         if task.settings is not None
@@ -696,13 +701,11 @@ async def export_schedule(
         raise HTTPException(status_code=404, detail="No schedule found to export")
 
     filename = (
-        (
-            f"schedule_export_semester_{semester_batch_id}.xlsx"
-            if semester_batch_id
-            else f"schedule_export_{task_id}.xlsx"
-            if task_id
-            else "schedule_export_all.xlsx"
-        )
+        f"schedule_export_semester_{semester_batch_id}.xlsx"
+        if semester_batch_id
+        else f"schedule_export_{task_id}.xlsx"
+        if task_id
+        else "schedule_export_all.xlsx"
     )
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
     return StreamingResponse(
@@ -721,7 +724,7 @@ async def get_generation_tasks(
         .options(
             selectinload(GenerationTask.planning_week).selectinload(
                 PlanningWeek.period
-            )
+            ),
         )
         .order_by(GenerationTask.created_at.desc())
     )

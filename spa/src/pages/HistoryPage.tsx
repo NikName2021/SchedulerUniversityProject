@@ -19,7 +19,7 @@ import {
   Users,
   XCircle,
 } from "lucide-react";
-import { API_BASE_URL, openDownload } from "../api/apiConfig";
+import { API_BASE_URL, apiFetch, openDownload } from "../api/apiConfig";
 
 interface PlanningWeekSummary {
   id: number;
@@ -107,7 +107,7 @@ const HistoryPage: React.FC = () => {
 
   const fetchTasks = useCallback(async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/scheduler/tasks`);
+      const response = await apiFetch(`${API_BASE_URL}/api/v1/scheduler/tasks`);
       if (!response.ok) throw new Error("Не удалось загрузить задачи");
       setTasks(await response.json());
     } catch (error) {
@@ -173,7 +173,7 @@ const HistoryPage: React.FC = () => {
     taskId: number,
     action: "cancel" | "retry" | "publish" | "archive",
   ) => {
-    const response = await fetch(
+    const response = await apiFetch(
       `${API_BASE_URL}/api/v1/scheduler/tasks/${taskId}/${action}`,
       { method: "POST" },
     );
@@ -186,7 +186,7 @@ const HistoryPage: React.FC = () => {
   };
 
   const showDiagnostics = async (taskId: number) => {
-    const response = await fetch(
+    const response = await apiFetch(
       `${API_BASE_URL}/api/v1/scheduler/tasks/${taskId}/diagnostics`,
     );
     const payload = (await response.json()) as {
@@ -341,13 +341,15 @@ const HistoryPage: React.FC = () => {
             неделям.
           </p>
         </div>
-        <button
-          type="button"
-          className="btn-secondary"
-          onClick={() => void fetchTasks()}
-        >
-          <RefreshCcw size={16} /> Обновить
-        </button>
+        <div style={{ display: "flex", gap: "0.75rem" }}>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => void fetchTasks()}
+          >
+            <RefreshCcw size={16} /> Обновить
+          </button>
+        </div>
       </section>
 
       {registryItems.length > 0 ? (

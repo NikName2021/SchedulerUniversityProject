@@ -657,6 +657,8 @@ class ScalableGenerationService:
         task_id: int,
         component_results: list[dict[str, Any]],
         context: dict[str, Any],
+        room_solution: tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]
+        | None = None,
     ) -> bool:
         successful_results = [
             result for result in component_results if result.get("status") == "success"
@@ -671,9 +673,12 @@ class ScalableGenerationService:
             for result in successful_results
             for item in result.get("unassigned", [])
         ]
-        room_assignments, room_warnings, room_metrics = assign_rooms_matching(
-            assignments, context
-        )
+        if room_solution is None:
+            room_assignments, room_warnings, room_metrics = assign_rooms_matching(
+                assignments, context
+            )
+        else:
+            room_assignments, room_warnings, room_metrics = room_solution
 
         async with sessionmaker() as session:
             task = await session.get(GenerationTask, task_id)

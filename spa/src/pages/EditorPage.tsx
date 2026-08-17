@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Users, Search, BookOpen, Filter } from "lucide-react";
-import { API_BASE_URL } from "../api/apiConfig";
+import { API_BASE_URL, apiFetch } from "../api/apiConfig";
 
 interface StreamItem {
   id: number;
@@ -31,7 +31,7 @@ export const EditorPage: React.FC = () => {
 
   const fetchGroups = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/scheduler/groups`);
+      const res = await apiFetch(`${API_BASE_URL}/api/v1/scheduler/groups`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setGroups(data.groups || []);
@@ -43,7 +43,7 @@ export const EditorPage: React.FC = () => {
   const fetchStreams = useCallback(async (group: string) => {
     setIsLoading(true);
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `${API_BASE_URL}/api/v1/scheduler/streams?group_name=${encodeURIComponent(group)}`,
       );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -66,7 +66,7 @@ export const EditorPage: React.FC = () => {
       );
 
       try {
-        const response = await fetch(
+        const response = await apiFetch(
           `${API_BASE_URL}/api/v1/scheduler/streams/${id}`,
           {
             method: "PATCH",

@@ -19,10 +19,11 @@
 | Оператор расписания | Загружает и проверяет данные, настраивает ограничения, запускает расчёты, корректирует и публикует расписание. |
 | Технический администратор | Развёртывает и обновляет сервисы, применяет миграции, следит за health-check, журналами и очередью задач. |
 
-> В текущей версии роли описывают зоны ответственности, но не являются
-> встроенной моделью доступа: активный API не выполняет аутентификацию и
-> авторизацию. До реализации RBAC размещайте систему только в закрытом контуре
-> за аутентифицирующим reverse proxy и не публикуйте backend-порт во внешнюю сеть.
+Доступ к интерфейсу и рабочим API-маршрутам закрыт локальной авторизацией.
+Пароли хранятся как Argon2id-хэши, сессии — на сервере, а браузер получает
+только `HttpOnly` cookie. Роль сохраняется в учётной записи и отображается в
+интерфейсе; детальное разграничение операций между администратором и оператором
+остаётся следующим этапом.
 
 ## Архитектура
 
@@ -32,10 +33,7 @@ React + Vite + TypeScript
           ▼
 FastAPI + SQLAlchemy + Pydantic
      ├──────────────► PostgreSQL — данные, версии и публикации
-     └──────────────► Redis + Celery — очередь и фоновые расчёты
-                              │
-                              ▼
-                    Google OR-Tools CP-SAT
+     └──────────────► Redis + Celery + OR-Tools — фоновые расчёты
 ```
 
 ### Алгоритм формирования расписания
@@ -72,7 +70,8 @@ docker-compose.yml        production-контур
 
 ## Запуск в Docker
 
-Контур включает PostgreSQL, Redis, FastAPI, отдельный Celery worker и Nginx с собранным React-приложением.
+Контур запускает PostgreSQL, Redis, FastAPI, Celery worker и Nginx с собранным
+React-приложением. Расчёты выполняются фоновым worker-процессом.
 
 ```bash
 
@@ -87,6 +86,45 @@ chmod +x ./deploy.sh
 ./deploy.sh
 ```
 
+`create_env.py` создаёт закрытый файл `secrets/default_users.json` с двумя
+учётными записями и случайными паролями:
+
+- `admin` — администратор;
+- `operator` — оператор расписания.
+
+Файл имеет права `0600`, исключён из Git и подключается к backend-контейнеру
+только для чтения. При запуске создаются только отсутствующие пользователи:
+существующие пароли, роли и имена никогда не перезаписываются содержимым JSON.
+Посмотреть формат без реальных паролей можно в
+[`secrets/default_users.example.json`](secrets/default_users.example.json).
+
+Если `.env` уже существует, а файла пользователей ещё нет, создайте только его:
+
+```bash
+python3 create_env.py --users-only
+```
+
+После первого запуска смените сгенерированные пароли интерактивной командой.
+JSON после этого не вернёт старые пароли, поскольку существующие записи не
+обновляются:
+
+```bash
+docker compose exec backend python -m manage_users set-password --username admin
+docker compose exec backend python -m manage_users set-password --username operator
+```
+
+Дополнительные команды управления учётными записями:
+
+```bash
+docker compose exec backend python -m manage_users create-user \
+  --username editor \
+  --display-name "Редактор расписания" \
+  --role operator
+docker compose exec backend python -m manage_users list-users
+docker compose exec backend python -m manage_users disable-user --username admin
+docker compose exec backend python -m manage_users enable-user --username admin
+```
+
 После запуска доступны:
 
 - интерфейс: `http://localhost`;
@@ -94,18 +132,21 @@ chmod +x ./deploy.sh
 - liveness: `http://localhost:8000/health/live`;
 - readiness с проверкой PostgreSQL: `http://localhost:8000/health/ready`.
 
-При старте backend применяет Alembic-миграции. Расчёты передаются в Redis и выполняются отдельным Celery worker. Перед развёртыванием в production замените пароль PostgreSQL, задайте точные `CORS_ORIGINS` и `ALLOWED_HOSTS`; TLS и аутентификацию следует завершать на внешнем reverse proxy или ingress.
+При старте backend применяет Alembic-миграции. Перед развёртыванием в
+production замените пароль PostgreSQL, задайте точные `CORS_ORIGINS` и
+`ALLOWED_HOSTS`. TLS следует завершать на reverse proxy или ingress.
+Не публикуйте backend-порт `8000` во внешнюю сеть — браузер должен обращаться к
+API через Nginx по тому же origin, что и к интерфейсу.
 
 ## Локальная разработка
 
 ### Backend
 
 ```bash
+python3 create_env.py
 pip install -r src/requirements-dev.txt
-cp .env.example .env
-cd src
-alembic upgrade head
-uvicorn main:app --app-dir app --reload
+alembic -c src/alembic.ini upgrade head
+uvicorn main:app --app-dir src/app --reload
 ```
 
 Если локальная SQLite-база была создана старой версией приложения до
@@ -120,6 +161,9 @@ alembic upgrade head
 
 Readiness endpoint возвращает `503`, если база недоступна или её ревизия
 отстаёт от текущей миграции.
+
+При таком запуске backend прочитает `secrets/default_users.json` из корня
+проекта и автоматически создаст пользователей `admin` и `operator`.
 
 Для фоновых расчётов также запустите Redis и Celery worker:
 
