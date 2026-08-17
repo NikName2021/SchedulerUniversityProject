@@ -12,6 +12,7 @@ from .all_models import (
     GenerationLock,
     GenerationTask,
     ImportBatch,
+    OfflineCalculation,
     PlanningWeek,
     Room,
     RoomFeature,
@@ -24,6 +25,8 @@ from .all_models import (
     StreamGroup,
     StudentGroup,
     Teacher,
+    UserAccount,
+    UserSession,
     WeeklyLessonDemand,
     create_tables,
 )
@@ -42,6 +45,7 @@ __all__ = [
     "GenerationLock",
     "GenerationTask",
     "ImportBatch",
+    "OfflineCalculation",
     "PlanningWeek",
     "Room",
     "RoomFeature",
@@ -54,6 +58,8 @@ __all__ = [
     "StreamGroup",
     "StudentGroup",
     "Teacher",
+    "UserAccount",
+    "UserSession",
     "WeeklyLessonDemand",
     "create_tables",
 ]

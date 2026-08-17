@@ -9,7 +9,8 @@
 - календарное планирование: учебные периоды, недели, праздники и правила доступности;
 - автоматическое формирование расписания с помощью Google OR-Tools CP-SAT;
 - ручная корректировка, фиксация занятий и проверка конфликтов до сохранения;
-- асинхронные расчёты, диагностика, версии, публикация и экспорт в Excel;
+- асинхронные или переносимые локальные расчёты, загрузка результата,
+  диагностика, версии, публикация и экспорт в Excel;
 - локальный и production-контур на Docker Compose.
 
 ## Роли
@@ -19,10 +20,11 @@
 | Оператор расписания | Загружает и проверяет данные, настраивает ограничения, запускает расчёты, корректирует и публикует расписание. |
 | Технический администратор | Развёртывает и обновляет сервисы, применяет миграции, следит за health-check, журналами и очередью задач. |
 
-> В текущей версии роли описывают зоны ответственности, но не являются
-> встроенной моделью доступа: активный API не выполняет аутентификацию и
-> авторизацию. До реализации RBAC размещайте систему только в закрытом контуре
-> за аутентифицирующим reverse proxy и не публикуйте backend-порт во внешнюю сеть.
+Доступ к интерфейсу и рабочим API-маршрутам закрыт локальной авторизацией.
+Пароли хранятся как Argon2id-хэши, сессии — на сервере, а браузер получает
+только `HttpOnly` cookie. Роль сохраняется в учётной записи и отображается в
+интерфейсе; детальное разграничение операций между администратором и оператором
+остаётся следующим этапом.
 
 ## Архитектура
 
@@ -32,10 +34,10 @@ React + Vite + TypeScript
           ▼
 FastAPI + SQLAlchemy + Pydantic
      ├──────────────► PostgreSQL — данные, версии и публикации
-     └──────────────► Redis + Celery — очередь и фоновые расчёты
-                              │
-                              ▼
-                    Google OR-Tools CP-SAT
+     ├──────────────► пакет .scheduler-task ──► локальный OR-Tools
+     │                                           │
+     │               пакет .scheduler-result ◄──┘
+     └──────────────► Redis + Celery — опциональный серверный расчёт
 ```
 
 ### Алгоритм формирования расписания
@@ -72,7 +74,9 @@ docker-compose.yml        production-контур
 
 ## Запуск в Docker
 
-Контур включает PostgreSQL, Redis, FastAPI, отдельный Celery worker и Nginx с собранным React-приложением.
+По умолчанию запускается лёгкий контур: PostgreSQL, FastAPI и Nginx с
+собранным React-приложением. Redis и Celery worker не запускаются, а расчёты
+экспортируются для выполнения на рабочем компьютере.
 
 ```bash
 
@@ -87,6 +91,45 @@ chmod +x ./deploy.sh
 ./deploy.sh
 ```
 
+`create_env.py` создаёт закрытый файл `secrets/default_users.json` с двумя
+учётными записями и случайными паролями:
+
+- `admin` — администратор;
+- `operator` — оператор расписания.
+
+Файл имеет права `0600`, исключён из Git и подключается к backend-контейнеру
+только для чтения. При запуске создаются только отсутствующие пользователи:
+существующие пароли, роли и имена никогда не перезаписываются содержимым JSON.
+Посмотреть формат без реальных паролей можно в
+[`secrets/default_users.example.json`](secrets/default_users.example.json).
+
+Если `.env` уже существует, а файла пользователей ещё нет, создайте только его:
+
+```bash
+python3 create_env.py --users-only
+```
+
+После первого запуска смените сгенерированные пароли интерактивной командой.
+JSON после этого не вернёт старые пароли, поскольку существующие записи не
+обновляются:
+
+```bash
+docker compose exec backend python -m manage_users set-password --username admin
+docker compose exec backend python -m manage_users set-password --username operator
+```
+
+Дополнительные команды управления учётными записями:
+
+```bash
+docker compose exec backend python -m manage_users create-user \
+  --username editor \
+  --display-name "Редактор расписания" \
+  --role operator
+docker compose exec backend python -m manage_users list-users
+docker compose exec backend python -m manage_users disable-user --username admin
+docker compose exec backend python -m manage_users enable-user --username admin
+```
+
 После запуска доступны:
 
 - интерфейс: `http://localhost`;
@@ -94,18 +137,62 @@ chmod +x ./deploy.sh
 - liveness: `http://localhost:8000/health/live`;
 - readiness с проверкой PostgreSQL: `http://localhost:8000/health/ready`.
 
-При старте backend применяет Alembic-миграции. Расчёты передаются в Redis и выполняются отдельным Celery worker. Перед развёртыванием в production замените пароль PostgreSQL, задайте точные `CORS_ORIGINS` и `ALLOWED_HOSTS`; TLS и аутентификацию следует завершать на внешнем reverse proxy или ingress.
+При старте backend применяет Alembic-миграции. Перед развёртыванием в
+production замените пароль PostgreSQL, задайте точные `CORS_ORIGINS` и
+`ALLOWED_HOSTS`. При публикации через HTTPS установите
+`AUTH_COOKIE_SECURE=true`; TLS следует завершать на reverse proxy или ingress.
+Не публикуйте backend-порт `8000` во внешнюю сеть — браузер должен обращаться к
+API через Nginx по тому же origin, что и к интерфейсу.
+
+### Расчёт на рабочем компьютере
+
+1. Настройте неделю или семестр и нажмите «Скачать задачу для ноутбука».
+2. Поместите полученный файл в каталог `calculations`.
+3. Выполните расчёт контейнером:
+
+```bash
+mkdir -p calculations
+docker compose --profile local-solver run --rm solver-local \
+  solve /data/semester.scheduler-task \
+  --output /data/semester.scheduler-result \
+  --workers 4
+```
+
+4. В разделе «Реестр расчётов» нажмите «Загрузить результат» и выберите
+   `.scheduler-result`.
+
+Контейнеру локального решателя не нужны PostgreSQL, Redis или доступ к серверу.
+Пакет содержит неизменяемый снимок исходных данных; сервер принимает результат
+только при совпадении UUID и SHA-256 снимка и повторно проверяет слоты,
+конфликты ресурсов и аудитории.
+Файлы могут содержать ФИО преподавателей и параметры учебной нагрузки, поэтому
+их следует хранить и передавать как служебные данные.
+
+Без Docker локальный решатель запускается из установленного backend-окружения:
+
+```bash
+cd src/app
+python -m offline_solver solve ../../calculations/semester.scheduler-task \
+  --output ../../calculations/semester.scheduler-result \
+  --workers 4
+```
+
+Для включения прежнего серверного расчёта запустите профиль `solver` и явно
+разрешите эту возможность:
+
+```bash
+SERVER_SOLVER_ENABLED=true docker compose --profile solver up --build
+```
 
 ## Локальная разработка
 
 ### Backend
 
 ```bash
+python3 create_env.py
 pip install -r src/requirements-dev.txt
-cp .env.example .env
-cd src
-alembic upgrade head
-uvicorn main:app --app-dir app --reload
+alembic -c src/alembic.ini upgrade head
+uvicorn main:app --app-dir src/app --reload
 ```
 
 Если локальная SQLite-база была создана старой версией приложения до
@@ -121,7 +208,10 @@ alembic upgrade head
 Readiness endpoint возвращает `503`, если база недоступна или её ревизия
 отстаёт от текущей миграции.
 
-Для фоновых расчётов также запустите Redis и Celery worker:
+При таком запуске backend прочитает `secrets/default_users.json` из корня
+проекта и автоматически создаст пользователей `admin` и `operator`.
+
+Для опциональных фоновых расчётов также запустите Redis и Celery worker:
 
 ```bash
 cd src/app

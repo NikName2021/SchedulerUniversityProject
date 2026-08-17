@@ -11,7 +11,7 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
-import { API_BASE_URL, openDownload } from "../api/apiConfig";
+import { API_BASE_URL, apiFetch, openDownload } from "../api/apiConfig";
 
 type FolderName =
   | "Учебные планы и потоки"
@@ -154,7 +154,7 @@ export const StoragePage: React.FC = () => {
 
   const fetchHistory = useCallback(async () => {
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_BASE_URL}/api/v1/scheduler/import/history`,
       );
       if (!response.ok) return;
@@ -194,7 +194,7 @@ export const StoragePage: React.FC = () => {
         : `${API_BASE_URL}/api/v1/scheduler/import/streams`;
 
       try {
-        const response = await fetch(endpoint, {
+        const response = await apiFetch(endpoint, {
           method: "POST",
           body: formData,
         });
@@ -229,7 +229,7 @@ export const StoragePage: React.FC = () => {
   const removeFile = async (index: number) => {
     const file = files[index];
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_BASE_URL}/api/v1/scheduler/import/history/${file.id}`,
         { method: "DELETE" },
       );

@@ -8,7 +8,11 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import pandas as pd
-from core.config import async_get_db
+from core.config import (
+    MAX_CALCULATION_PACKAGE_BYTES,
+    SERVER_SOLVER_ENABLED,
+    async_get_db,
+)
 from core.constants import (
     MAX_GENERATION_HORIZON_DAYS,
     MAX_TIME_SECONDS,
@@ -36,12 +40,17 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from services.calculation_package import PackageValidationError
 from services.export_service import escape_excel_formula, generate_excel_report
 from services.generation_lifecycle_service import (
     ACTIVE_STATUSES,
     GenerationLifecycleService,
 )
 from services.generation_service import GenerationService
+from services.offline_calculation_service import (
+    OfflineCalculationService,
+    OfflineTaskSpec,
+)
 from services.parser_service import parse_streams_content, read_tabular_content
 from services.quality_service import ScheduleQualityService
 from services.schedule_service import ScheduleService
@@ -194,6 +203,65 @@ class GenerationTaskModel(BaseModel):
         if value is not None and SEMESTER_BATCH_PATTERN.fullmatch(value) is None:
             raise ValueError("Invalid semester_batch_id")
         return value
+
+
+class OfflineCalculationExportModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    calculations: list[GenerationTaskModel] = Field(min_length=1, max_length=64)
+
+
+async def _resolve_generation_spec(
+    task: GenerationTaskModel, db: AsyncSession
+) -> OfflineTaskSpec:
+    start_date = task.start_date
+    end_date = task.end_date
+    if task.planning_week_id is not None:
+        planning_week = await db.get(PlanningWeek, task.planning_week_id)
+        if planning_week is None:
+            raise HTTPException(status_code=404, detail="Planning week not found")
+        start_date = planning_week.starts_on.isoformat()
+        end_date = planning_week.ends_on.isoformat()
+
+    try:
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d") if start_date else None
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d") if end_date else None
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422, detail="Dates must use YYYY-MM-DD"
+        ) from exc
+    if start_dt and end_dt and end_dt < start_dt:
+        raise HTTPException(
+            status_code=422, detail="end_date must not precede start_date"
+        )
+    if (
+        task.planning_week_id is None
+        and start_dt
+        and end_dt
+        and (end_dt - start_dt).days + 1 > MAX_GENERATION_HORIZON_DAYS
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Период генерации не должен превышать "
+                f"{MAX_GENERATION_HORIZON_DAYS} дней. Для разных недель "
+                "создавайте отдельные недельные расчеты."
+            ),
+        )
+    settings = (
+        task.settings.model_dump(mode="json", exclude_none=True)
+        if task.settings is not None
+        else {}
+    )
+    return OfflineTaskSpec(
+        groups=task.groups,
+        holidays=task.holidays,
+        settings=settings,
+        planning_week_id=task.planning_week_id,
+        start_date=start_dt,
+        end_date=end_dt,
+        semester_batch_id=task.semester_batch_id,
+    )
 
 
 class ScheduleUpdateModel(BaseModel):
@@ -586,64 +654,143 @@ async def import_teacher_availability(
     return {"status": "ok", "updated_teachers": updated_count}
 
 
+@router.get("/capabilities")
+async def get_scheduler_capabilities() -> dict[str, Any]:
+    return {
+        "server_solver_enabled": SERVER_SOLVER_ENABLED,
+        "offline_calculations_enabled": True,
+        "max_calculation_package_bytes": MAX_CALCULATION_PACKAGE_BYTES,
+        "task_extension": ".scheduler-task",
+        "result_extension": ".scheduler-result",
+    }
+
+
+@router.post("/offline/export")
+async def export_offline_calculation(
+    request: OfflineCalculationExportModel,
+    db: Annotated[AsyncSession, Depends(async_get_db)] = None,
+) -> StreamingResponse:
+    specs = [
+        await _resolve_generation_spec(calculation, db)
+        for calculation in request.calculations
+    ]
+    try:
+        archive, task_ids = await OfflineCalculationService.create_task_package(
+            specs, db
+        )
+    except (RuntimeError, IntegrityError) as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except PackageValidationError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    filename = (
+        f"semester_{specs[0].semester_batch_id}.scheduler-task"
+        if len(specs) > 1 and specs[0].semester_batch_id
+        else f"calculation_{task_ids[0]}.scheduler-task"
+    )
+    return StreamingResponse(
+        archive,
+        media_type="application/vnd.smart-scheduler.task+zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Generation-Task-Ids": ",".join(map(str, task_ids)),
+        },
+    )
+
+
+@router.get("/offline/tasks/{task_id}/task")
+async def download_offline_task(
+    task_id: int,
+    db: Annotated[AsyncSession, Depends(async_get_db)] = None,
+) -> StreamingResponse:
+    try:
+        archive = await OfflineCalculationService.get_task_package(task_id, db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PackageValidationError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return StreamingResponse(
+        archive,
+        media_type="application/vnd.smart-scheduler.task+zip",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="calculation_{task_id}.scheduler-task"'
+            )
+        },
+    )
+
+
+@router.get("/offline/tasks/{task_id}/result")
+async def download_offline_result(
+    task_id: int,
+    db: Annotated[AsyncSession, Depends(async_get_db)] = None,
+) -> StreamingResponse:
+    try:
+        archive = await OfflineCalculationService.get_result_package(task_id, db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PackageValidationError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return StreamingResponse(
+        archive,
+        media_type="application/vnd.smart-scheduler.result+zip",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="calculation_{task_id}.scheduler-result"'
+            )
+        },
+    )
+
+
+@router.post("/offline/results/import")
+async def import_offline_result(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(async_get_db),
+) -> dict[str, Any]:
+    content, _safe_filename = await read_upload_limited(
+        file,
+        allowed_extensions={".scheduler-result"},
+        max_bytes=MAX_CALCULATION_PACKAGE_BYTES,
+    )
+    try:
+        imported = await OfflineCalculationService.import_result_package(content, db)
+    except LookupError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PackageValidationError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"status": "ok", "imported": imported}
+
+
 @router.post("/generate")
 async def generate_schedule(
     task: GenerationTaskModel,
     db: Annotated[AsyncSession, Depends(async_get_db)] = None,
 ) -> JSONResponse:
-    if not task.groups:
-        raise HTTPException(status_code=422, detail="At least one group is required")
-
-    start_date = task.start_date
-    end_date = task.end_date
-    if task.planning_week_id is not None:
-        planning_week = await db.get(PlanningWeek, task.planning_week_id)
-        if planning_week is None:
-            raise HTTPException(status_code=404, detail="Planning week not found")
-        start_date = planning_week.starts_on.isoformat()
-        end_date = planning_week.ends_on.isoformat()
-
-    try:
-        start_dt = datetime.strptime(start_date, "%Y-%m-%d") if start_date else None
-        end_dt = datetime.strptime(end_date, "%Y-%m-%d") if end_date else None
-    except ValueError as exc:
+    if not SERVER_SOLVER_ENABLED:
         raise HTTPException(
-            status_code=422, detail="Dates must use YYYY-MM-DD"
-        ) from exc
-    if start_dt and end_dt and end_dt < start_dt:
-        raise HTTPException(
-            status_code=422, detail="end_date must not precede start_date"
-        )
-    if (
-        task.planning_week_id is None
-        and start_dt
-        and end_dt
-        and (end_dt - start_dt).days + 1 > MAX_GENERATION_HORIZON_DAYS
-    ):
-        raise HTTPException(
-            status_code=422,
+            status_code=503,
             detail=(
-                "Период генерации не должен превышать "
-                f"{MAX_GENERATION_HORIZON_DAYS} дней. Для разных недель "
-                "создавайте отдельные недельные расчеты."
+                "Server-side solver is disabled. Export the calculation and "
+                "run it locally."
             ),
         )
-
-    settings = (
-        task.settings.model_dump(mode="json", exclude_none=True)
-        if task.settings is not None
-        else {}
-    )
+    spec = await _resolve_generation_spec(task, db)
+    start_date = spec.start_date.date().isoformat() if spec.start_date else None
+    end_date = spec.end_date.date().isoformat() if spec.end_date else None
+    settings = spec.settings
     try:
         new_task = await GenerationLifecycleService.reserve_task(
             db,
-            groups=task.groups,
-            holidays=task.holidays,
+            groups=spec.groups,
+            holidays=spec.holidays,
             settings=settings,
-            planning_week_id=task.planning_week_id,
-            start_date=start_dt,
-            end_date=end_dt,
-            semester_batch_id=task.semester_batch_id,
+            planning_week_id=spec.planning_week_id,
+            start_date=spec.start_date,
+            end_date=spec.end_date,
+            semester_batch_id=spec.semester_batch_id,
         )
     except (RuntimeError, IntegrityError) as exc:
         await db.rollback()
@@ -653,12 +800,12 @@ async def generate_schedule(
     try:
         async_result = generate_schedule_task.delay(
             new_task.id,
-            task.groups,
-            task.holidays,
+            spec.groups,
+            spec.holidays,
             settings.get("enabled_types", []),
             start_date,
             end_date,
-            task.planning_week_id,
+            spec.planning_week_id,
         )
         new_task.celery_root_task_id = async_result.id
         await db.commit()
@@ -696,13 +843,11 @@ async def export_schedule(
         raise HTTPException(status_code=404, detail="No schedule found to export")
 
     filename = (
-        (
-            f"schedule_export_semester_{semester_batch_id}.xlsx"
-            if semester_batch_id
-            else f"schedule_export_{task_id}.xlsx"
-            if task_id
-            else "schedule_export_all.xlsx"
-        )
+        f"schedule_export_semester_{semester_batch_id}.xlsx"
+        if semester_batch_id
+        else f"schedule_export_{task_id}.xlsx"
+        if task_id
+        else "schedule_export_all.xlsx"
     )
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
     return StreamingResponse(
@@ -721,7 +866,8 @@ async def get_generation_tasks(
         .options(
             selectinload(GenerationTask.planning_week).selectinload(
                 PlanningWeek.period
-            )
+            ),
+            selectinload(GenerationTask.offline_calculation),
         )
         .order_by(GenerationTask.created_at.desc())
     )
@@ -772,6 +918,17 @@ async def get_generation_tasks(
             "published_at": t.published_at.isoformat() if t.published_at else None,
             "canceled_at": t.canceled_at.isoformat() if t.canceled_at else None,
             "edit_revision": t.edit_revision,
+            "execution_mode": (
+                "offline" if t.offline_calculation is not None else "server"
+            ),
+            "offline_job_uuid": (
+                t.offline_calculation.job_uuid
+                if t.offline_calculation is not None
+                else None
+            ),
+            "offline_result_available": bool(
+                t.offline_calculation and t.offline_calculation.result_payload_json
+            ),
         }
         for t in tasks
     ]
@@ -812,9 +969,20 @@ async def retry_generation_task(
     task_id: int,
     db: Annotated[AsyncSession, Depends(async_get_db)] = None,
 ) -> dict[str, Any]:
-    source = await db.get(GenerationTask, task_id)
+    source = await db.scalar(
+        select(GenerationTask)
+        .where(GenerationTask.id == task_id)
+        .options(selectinload(GenerationTask.offline_calculation))
+    )
     if source is None:
         raise HTTPException(status_code=404, detail="Generation task not found")
+    if source.offline_calculation is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Download this task and run it again on the local solver",
+        )
+    if not SERVER_SOLVER_ENABLED:
+        raise HTTPException(status_code=503, detail="Server-side solver is disabled")
     if source.status in ACTIVE_STATUSES:
         raise HTTPException(status_code=409, detail="Generation task is still active")
     groups = json.loads(source.groups_json or "[]")

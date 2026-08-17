@@ -6,7 +6,7 @@ if [ ! -f .env ]; then
   python3 create_env.py
 fi
 
-if [ ! -f ./spa/.env]; then
+if [ ! -f ./spa/.env ]; then
   cp ./spa/.env.example ./spa/.env
 fi
 
@@ -15,4 +15,3 @@ docker compose down --remove-orphans
 
 echo "[deploy] building and starting"
 docker compose up -d --build
-

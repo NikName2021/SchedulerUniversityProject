@@ -13,6 +13,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -414,6 +415,94 @@ class GenerationTask(DeclBase):
     issues = relationship(
         "GenerationIssue", cascade="all,delete-orphan", back_populates="task"
     )
+    offline_calculation = relationship(
+        "OfflineCalculation",
+        cascade="all,delete-orphan",
+        back_populates="task",
+        uselist=False,
+    )
+
+
+class OfflineCalculation(DeclBase):
+    __tablename__ = "offline_calculation"
+    __table_args__ = (
+        UniqueConstraint("task_id"),
+        UniqueConstraint("job_uuid"),
+        Index("ix_offline_calculation_job_uuid", "job_uuid"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(
+        Integer,
+        ForeignKey("generation_task.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    job_uuid = Column(String(36), nullable=False)
+    schema_version = Column(Integer, nullable=False, default=1)
+    input_sha256 = Column(String(64), nullable=False)
+    input_payload_json = Column(Text, nullable=False)
+    result_payload_json = Column(Text, nullable=True)
+    exported_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    imported_at = Column(DateTime, nullable=True)
+
+    task = relationship("GenerationTask", back_populates="offline_calculation")
+
+
+class UserAccount(DeclBase):
+    __tablename__ = "user_account"
+    __table_args__ = (
+        CheckConstraint(
+            "role IN ('admin', 'operator')",
+            name="ck_user_account_role",
+        ),
+        Index("ix_user_account_username", "username", unique=True),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    username = Column(String(64), nullable=False)
+    display_name = Column(String(120), nullable=False)
+    password_hash = Column(String(512), nullable=False)
+    role = Column(String(20), nullable=False, default="operator")
+    is_active = Column(Boolean, nullable=False, default=True)
+    failed_login_count = Column(Integer, nullable=False, default=0)
+    locked_until = Column(DateTime, nullable=True)
+    last_login_at = Column(DateTime, nullable=True)
+    password_changed_at = Column(
+        DateTime,
+        default=datetime.datetime.utcnow,
+        nullable=False,
+    )
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+    sessions = relationship(
+        "UserSession",
+        cascade="all,delete-orphan",
+        back_populates="user",
+    )
+
+
+class UserSession(DeclBase):
+    __tablename__ = "user_session"
+    __table_args__ = (
+        Index("ix_user_session_token_hash", "token_hash", unique=True),
+        Index("ix_user_session_user_id", "user_id"),
+        Index("ix_user_session_expires_at", "expires_at"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(
+        Integer,
+        ForeignKey("user_account.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    token_hash = Column(String(64), nullable=False)
+    csrf_token = Column(String(64), nullable=False)
+    user_agent_hash = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    last_seen_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+
+    user = relationship("UserAccount", back_populates="sessions")
 
 
 class GenerationLock(DeclBase):
