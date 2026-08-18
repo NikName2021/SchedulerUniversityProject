@@ -370,8 +370,9 @@ def solve_event_component(
                         * progression_rule["weight"]
                     )
 
-    # Penalize one-slot windows. Every event touching a group is in this component,
-    # so this objective remains correct after graph decomposition.
+    # Penalize every empty lesson between the first and last lesson of a group.
+    # Using any occupied slot before and after the empty slot also catches
+    # double and longer windows, not only occupied-empty-occupied patterns.
     component_groups = sorted({group for event in events for group in event["groups"]})
     windows_rule = _rule(context, "minimize_windows", weight=5)
     lunch_rule = _rule(context, "lunch_break", is_hard=True, weight=5)
@@ -391,15 +392,24 @@ def solve_event_component(
                 occupied.append(occupancy)
 
             for index in range(1, len(occupied) - 1):
+                occupied_before = model.NewBoolVar(
+                    f"occupied_before_{group}_{day.isoformat()}_"
+                    f"{ordered_slots[index][1]}"
+                )
+                occupied_after = model.NewBoolVar(
+                    f"occupied_after_{group}_{day.isoformat()}_"
+                    f"{ordered_slots[index][1]}"
+                )
+                model.AddMaxEquality(occupied_before, occupied[:index])
+                model.AddMaxEquality(occupied_after, occupied[index + 1 :])
                 window = model.NewBoolVar(
                     f"window_{group}_{day.isoformat()}_{ordered_slots[index][1]}"
                 )
-                model.Add(window <= occupied[index - 1])
-                model.Add(window <= occupied[index + 1])
+                model.Add(window <= occupied_before)
+                model.Add(window <= occupied_after)
                 model.Add(window <= 1 - occupied[index])
                 model.Add(
-                    window
-                    >= occupied[index - 1] + occupied[index + 1] - occupied[index] - 1
+                    window >= occupied_before + occupied_after - occupied[index] - 1
                 )
                 if windows_rule["enabled"]:
                     penalties.append(window * PENALTY_WINDOW * windows_rule["weight"])

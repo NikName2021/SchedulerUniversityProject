@@ -121,6 +121,7 @@ class ScheduleService:
         all_entries = res.scalars().all()
 
         by_slot: Dict[tuple[str, int], List[ScheduleEntry]] = {}
+        lessons_by_group_day: Dict[tuple[str, str], set[int]] = {}
         for e in all_entries:
             if e.date and e.lesson_number:
                 date_key = (
@@ -132,8 +133,17 @@ class ScheduleService:
                 if key not in by_slot:
                     by_slot[key] = []
                 by_slot[key].append(e)
+                lessons_by_group_day.setdefault(
+                    (e.group_name, date_key), set()
+                ).add(e.lesson_number)
             else:
                 e.warning = None
+
+        lunch_violations = {
+            key
+            for key, lesson_numbers in lessons_by_group_day.items()
+            if {3, 4}.issubset(lesson_numbers)
+        }
 
         for (_d, _l), slot_entries in by_slot.items():
             for e1 in slot_entries:
@@ -172,6 +182,14 @@ class ScheduleService:
                         slot_warnings.append(
                             f"Аудитория занята: {e2.event_name} ({e2.group_name})"
                         )
+
+                if (
+                    e1.lesson_number in {3, 4}
+                    and (e1.group_name, _d) in lunch_violations
+                ):
+                    slot_warnings.append(
+                        "Заняты 3-я и 4-я пары — нет свободного окна для обеда"
+                    )
 
                 # 2. Personal Teacher Availability
                 if e1.teacher and e1.teacher.restrictions_json:

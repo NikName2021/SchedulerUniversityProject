@@ -139,6 +139,23 @@ def test_lunch_break_prevents_third_and_fourth_pair_together() -> None:
     assert sum(item["missing_count"] for item in result["unassigned"]) == 1
 
 
+def test_double_window_is_penalized() -> None:
+    context = _context()
+    context["lessons"] = [1, 2, 3, 4]
+    first = _event("event-1", ["A"], 1)
+    first["fixed_slot"] = ["2026-09-07", 1]
+    second = _event("event-2", ["A"], 2)
+    second["time_preference"] = "evening"
+
+    result = solve_event_component([first, second], context)
+
+    lessons_by_event = {
+        assignment["id"]: assignment["slot"][1]
+        for assignment in result["assignments"]
+    }
+    assert lessons_by_event == {"event-1": 1, "event-2": 2}
+
+
 def test_lecture_is_scheduled_before_practical() -> None:
     context = _context()
     lecture = _event("event-1", ["A"], 1, event_type="lec")
