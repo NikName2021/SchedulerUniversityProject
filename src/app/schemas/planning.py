@@ -97,4 +97,5 @@ class SemesterDemandDistributionResult(BaseModel):
     planned_lessons: int
     published_lessons: int
     distributed_lessons: int
+    warnings: list[str] = Field(default_factory=list)
     weeks: list[SemesterWeekDistribution]

@@ -11,6 +11,8 @@ from core.constants import (
     PENALTY_SYNC_STREAM,
     PENALTY_UNASSIGNED,
     PENALTY_WINDOW,
+    ROOM_ASSIGNMENT_ENABLED,
+    ROOM_FUND_ENABLED,
 )
 from ortools.sat.python import cp_model
 
@@ -446,10 +448,12 @@ def solve_schedule(
         logger.info("=" * 40)
 
         # Phase 2: Rooms (Greedy)
-        final_schedule, room_warnings = assign_rooms(
-            schedule, SLOTS, rooms, group_sizes, subjects, unavailable_times
-        )
-        return final_schedule, SLOTS, unassigned_warnings + room_warnings
+        if ROOM_ASSIGNMENT_ENABLED and ROOM_FUND_ENABLED:
+            final_schedule, room_warnings = assign_rooms(
+                schedule, SLOTS, rooms, group_sizes, subjects, unavailable_times
+            )
+            return final_schedule, SLOTS, unassigned_warnings + room_warnings
+        return schedule, SLOTS, unassigned_warnings
     else:
         return None, SLOTS, ["Решение не найдено. Слишком жесткие ограничения."]
 

@@ -309,7 +309,8 @@ class PlanningService:
                 for group_name in stream_groups[stream.id]
             )
 
-        shortages: list[str] = []
+        warnings: list[str] = []
+        errors: list[str] = []
         # Allocate the most constrained streams first. Hard availability must
         # take precedence over balancing the total load between weeks.
         streams.sort(
@@ -325,17 +326,43 @@ class PlanningService:
                 published_counts[(stream.id, week.id)] for week in weeks
             )
             if published > planned:
-                shortages.append(
+                errors.append(
                     f"{stream.event_name}: published {published}, planned {planned}"
                 )
                 continue
             for _ in range(planned - published):
                 candidates = [week for week in weeks if has_capacity(stream, week)]
                 if not candidates:
-                    shortages.append(
-                        f"{stream.event_name} ({stream.teacher.name if stream.teacher else 'без преподавателя'}): "
-                        f"не помещается {planned - sum(allocations[(stream.id, week.id)] for week in weeks)} пар"
+                    missing = planned - sum(
+                        allocations[(stream.id, week.id)] for week in weeks
                     )
+                    warnings.append(
+                        f"{stream.event_name} ({stream.teacher.name if stream.teacher else 'без преподавателя'}): "
+                        "не удалось подобрать допустимые слоты для всех пар; "
+                        f"останутся не выставленными: {missing}"
+                    )
+                    # Keep the full workload in weekly demands. The scheduler
+                    # will create explicit unassigned entries for lessons that
+                    # it cannot place into real slots.
+                    fallback_weeks = [
+                        week for week in weeks if week_overlaps_stream(stream, week)
+                    ]
+                    if not fallback_weeks:
+                        fallback_weeks = weeks
+                    for _ in range(missing):
+                        week = min(
+                            fallback_weeks,
+                            key=lambda item: (
+                                allocations[(stream.id, item.id)],
+                                Fraction(
+                                    week_loads[item.id],
+                                    max(1, week_slot_counts[item.id]),
+                                ),
+                                item.sequence_number,
+                            ),
+                        )
+                        allocations[(stream.id, week.id)] += 1
+                        week_loads[week.id] += 1
                     break
                 week = min(
                     candidates,
@@ -352,10 +379,10 @@ class PlanningService:
                 for group_name in stream_groups[stream.id]:
                     group_capacity[(group_name, week.id)] -= 1
 
-        if shortages:
-            preview = "; ".join(shortages[:10])
-            if len(shortages) > 10:
-                preview += f"; и ещё {len(shortages) - 10}"
+        if errors:
+            preview = "; ".join(errors[:10])
+            if len(errors) > 10:
+                preview += f"; и ещё {len(errors) - 10}"
             raise ValueError(f"Semester workload cannot be distributed: {preview}")
 
         await db.execute(
@@ -397,5 +424,6 @@ class PlanningService:
             planned_lessons=planned_lessons,
             published_lessons=published_lessons,
             distributed_lessons=sum(item.lessons_count for item in week_summaries),
+            warnings=warnings,
             weeks=week_summaries,
         )

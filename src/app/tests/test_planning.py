@@ -294,7 +294,9 @@ async def test_visiting_teacher_availability_overrides_week_load_balance(
 
 
 @pytest.mark.asyncio
-async def test_distribution_rejects_teacher_capacity_shortage(db_session) -> None:
+async def test_distribution_saves_partial_teacher_capacity_shortage(
+    db_session,
+) -> None:
     period = await PlanningService.create_period(
         AcademicPeriodCreate(
             name="Короткий модуль",
@@ -332,13 +334,20 @@ async def test_distribution_rejects_teacher_capacity_shortage(db_session) -> Non
     )
     await db_session.commit()
 
-    with pytest.raises(ValueError, match="не помещается 1 пар"):
-        await PlanningService.distribute_semester_demands(
-            period.id, ["ДЕФ-101"], ["Лекция"], set(), db_session
-        )
+    summary = await PlanningService.distribute_semester_demands(
+        period.id, ["ДЕФ-101"], ["Лекция"], set(), db_session
+    )
 
     result = await db_session.execute(select(WeeklyLessonDemand))
-    assert result.scalars().all() == []
+    demands = result.scalars().all()
+    assert summary.planned_lessons == 2
+    assert summary.distributed_lessons == 2
+    assert summary.warnings == [
+        "Дефицит (Занятый преподаватель): не удалось подобрать допустимые "
+        "слоты для всех пар; останутся не выставленными: 1"
+    ]
+    assert len(demands) == 1
+    assert demands[0].lessons_count == 2
 
 
 @pytest.mark.asyncio

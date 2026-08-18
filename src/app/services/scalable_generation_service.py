@@ -15,6 +15,8 @@ from core.constants import (
     MAX_GENERATION_HORIZON_DAYS,
     MAX_TIME_SECONDS,
     NUM_WORKERS,
+    ROOM_ASSIGNMENT_ENABLED,
+    ROOM_FUND_ENABLED,
     STUDY_DAYS,
 )
 from core.constants import ROOMS as DEFAULT_ROOMS
@@ -261,31 +263,35 @@ class ScalableGenerationService:
                 await session.commit()
                 return None
 
-            room_result = await session.execute(
-                select(Room)
-                .where(Room.is_active.is_(True))
-                .options(
-                    selectinload(Room.feature_links).selectinload(
-                        RoomFeatureLink.feature
+            rooms: dict[str, dict[str, Any]] = {}
+            if ROOM_FUND_ENABLED:
+                room_result = await session.execute(
+                    select(Room)
+                    .where(Room.is_active.is_(True))
+                    .options(
+                        selectinload(Room.feature_links).selectinload(
+                            RoomFeatureLink.feature
+                        )
                     )
+                    .order_by(Room.code)
                 )
-                .order_by(Room.code)
-            )
-            db_rooms = list(room_result.scalars().unique())
-            rooms = {
-                room.code: {
-                    "id": room.id,
-                    "capacity": room.capacity,
-                    "type": room.room_type,
-                    "features": [link.feature.code for link in room.feature_links],
-                }
-                for room in db_rooms
-            }
-            if not rooms:
+                db_rooms = list(room_result.scalars().unique())
                 rooms = {
-                    code: {**details, "id": None, "features": []}
-                    for code, details in DEFAULT_ROOMS.items()
+                    room.code: {
+                        "id": room.id,
+                        "capacity": room.capacity,
+                        "type": room.room_type,
+                        "features": [
+                            link.feature.code for link in room.feature_links
+                        ],
+                    }
+                    for room in db_rooms
                 }
+                if not rooms:
+                    rooms = {
+                        code: {**details, "id": None, "features": []}
+                        for code, details in DEFAULT_ROOMS.items()
+                    }
 
             availability = await build_availability_context(
                 session, start_date, end_date
@@ -373,7 +379,11 @@ class ScalableGenerationService:
                     occupied_groups[entry.group_name].append(slot)
                     if entry.teacher:
                         occupied_teachers[entry.teacher.name].append(slot)
-                    if entry.room_id and entry.room_id in rooms:
+                    if (
+                        ROOM_FUND_ENABLED
+                        and entry.room_id
+                        and entry.room_id in rooms
+                    ):
                         occupied_rooms[entry.room_id].append(slot)
 
             priorities = settings.get("priorities", {})
@@ -437,13 +447,19 @@ class ScalableGenerationService:
                     "priority": weekly_priorities.get(stream.id, 5),
                     "time_preference": priorities.get(stream.event_name, "day"),
                     "required_room": (
-                        stream.required_room.code if stream.required_room else None
+                        stream.required_room.code
+                        if ROOM_FUND_ENABLED and stream.required_room
+                        else None
                     ),
-                    "required_features": [
-                        requirement.feature.code
-                        for requirement in stream.feature_requirements
-                        if requirement.is_hard
-                    ],
+                    "required_features": (
+                        [
+                            requirement.feature.code
+                            for requirement in stream.feature_requirements
+                            if requirement.is_hard
+                        ]
+                        if ROOM_FUND_ENABLED
+                        else []
+                    ),
                 }
                 is_shared = type_code == "lec" or bool(
                     stream.activity_type and stream.activity_type.is_shared_for_groups
@@ -673,7 +689,23 @@ class ScalableGenerationService:
             for result in successful_results
             for item in result.get("unassigned", [])
         ]
-        if room_solution is None:
+        if not ROOM_ASSIGNMENT_ENABLED or not ROOM_FUND_ENABLED:
+            room_assignments = [
+                {
+                    **assignment,
+                    "room": None,
+                    "room_ref_id": None,
+                }
+                for assignment in assignments
+            ]
+            room_warnings: list[dict[str, Any]] = []
+            room_metrics = {
+                "enabled": False,
+                "room_fund_enabled": ROOM_FUND_ENABLED,
+                "variables": 0,
+                "solve_seconds": 0,
+            }
+        elif room_solution is None:
             room_assignments, room_warnings, room_metrics = assign_rooms_matching(
                 assignments, context
             )
@@ -708,8 +740,16 @@ class ScalableGenerationService:
                         event_name=carried["event_name"],
                         stream_type=carried["stream_type"],
                         teacher_id=carried.get("teacher_id"),
-                        room_id=carried.get("room_id"),
-                        room_ref_id=carried.get("room_ref_id"),
+                        room_id=(
+                            carried.get("room_id")
+                            if ROOM_ASSIGNMENT_ENABLED and ROOM_FUND_ENABLED
+                            else None
+                        ),
+                        room_ref_id=(
+                            carried.get("room_ref_id")
+                            if ROOM_ASSIGNMENT_ENABLED and ROOM_FUND_ENABLED
+                            else None
+                        ),
                         date=datetime.fromisoformat(carried["date"]),
                         lesson_number=carried["lesson_number"],
                         warning=carried.get("warning"),
@@ -728,7 +768,7 @@ class ScalableGenerationService:
                             event_name=assignment["subject"],
                             stream_type=assignment["stream_type"],
                             teacher_id=assignment.get("teacher_id"),
-                            room_id=assignment["room"],
+                            room_id=assignment.get("room"),
                             room_ref_id=assignment.get("room_ref_id"),
                             date=slot_date,
                             lesson_number=int(assignment["slot"][1]),

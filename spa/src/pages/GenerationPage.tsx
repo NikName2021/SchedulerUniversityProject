@@ -19,6 +19,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { API_BASE_URL, apiFetch, openDownload } from "../api/apiConfig";
+import { getStandaloneGroups } from "../utils/groupSelection";
 
 interface Stats {
   total_streams: number;
@@ -92,6 +93,7 @@ interface SemesterDistributionResult {
   planned_lessons: number;
   published_lessons: number;
   distributed_lessons: number;
+  warnings: string[];
   weeks: Array<{
     week_id: number;
     sequence_number: number;
@@ -163,7 +165,7 @@ export const GenerationPage: React.FC = () => {
     ends_on: "",
   });
   const [status, setStatus] = useState<{
-    type: "success" | "error";
+    type: "success" | "warning" | "error";
     msg: string;
   } | null>(null);
 
@@ -451,10 +453,15 @@ export const GenerationPage: React.FC = () => {
           .filter((week) => week.lessons_count > 0)
           .map((week) => week.week_id),
       );
-      setStatus({
-        type: "success",
-        msg: `Распределено ${payload.distributed_lessons} пар по ${payload.weeks.filter((week) => week.lessons_count > 0).length} неделям`,
-      });
+      const resultMessage = `Распределено ${payload.distributed_lessons} из ${payload.planned_lessons} пар по ${payload.weeks.filter((week) => week.lessons_count > 0).length} неделям`;
+      setStatus(
+        payload.warnings.length > 0
+          ? {
+              type: "warning",
+              msg: `${resultMessage}. ${payload.warnings.join("; ")}`,
+            }
+          : { type: "success", msg: resultMessage },
+      );
     } catch (error) {
       setStatus({
         type: "error",
@@ -701,6 +708,15 @@ export const GenerationPage: React.FC = () => {
   const filteredGroups = groups.filter((g) =>
     g.toLowerCase().includes(searchQuery.toLowerCase()),
   );
+  const standaloneGroups = getStandaloneGroups(groups);
+  const onlyStandaloneGroupsSelected =
+    standaloneGroups.length > 0 &&
+    selectedGroups.length === standaloneGroups.length &&
+    standaloneGroups.every((group) => selectedGroups.includes(group));
+
+  const toggleStandaloneGroups = () => {
+    setSelectedGroups(onlyStandaloneGroupsSelected ? [] : standaloneGroups);
+  };
 
   // Apply type filter to preview
   const displayPreviewStreams = previewStreams.filter((s) =>
@@ -945,13 +961,11 @@ export const GenerationPage: React.FC = () => {
                   <Users size={18} style={{ color: "var(--brand)" }} /> Группы
                 </h3>
                 <button
-                  onClick={() =>
-                    setSelectedGroups(
-                      selectedGroups.length === groups.length
-                        ? []
-                        : [...groups],
-                    )
-                  }
+                  type="button"
+                  onClick={toggleStandaloneGroups}
+                  disabled={standaloneGroups.length === 0}
+                  aria-label="Выбрать только одиночные группы"
+                  title="Исключает подгруппы в скобках и объединения нескольких групп"
                   style={{
                     fontSize: "0.625rem",
                     fontWeight: 900,
@@ -961,9 +975,12 @@ export const GenerationPage: React.FC = () => {
                     cursor: "pointer",
                     border: "none",
                     background: "none",
+                    textAlign: "right",
                   }}
                 >
-                  {selectedGroups.length === groups.length ? "Сбросить" : "Все"}
+                  {onlyStandaloneGroupsSelected
+                    ? "Сбросить"
+                    : "Только одиночные"}
                 </button>
               </div>
               <div style={{ position: "relative" }}>
@@ -1872,15 +1889,16 @@ export const GenerationPage: React.FC = () => {
                         </div>
                         <div className="mt-1 text-xs font-semibold text-amber-700">
                           Можно выбрать нужные группы выше или сразу выбрать
-                          все.
+                          только одиночные группы.
                         </div>
                       </div>
                       <button
                         type="button"
-                        onClick={() => setSelectedGroups([...groups])}
+                        onClick={toggleStandaloneGroups}
+                        disabled={standaloneGroups.length === 0}
                         className="rounded-xl bg-amber-500 px-4 py-2.5 text-xs font-extrabold text-white shadow-sm hover:bg-amber-600"
                       >
-                        Выбрать все группы
+                        Выбрать только одиночные группы
                       </button>
                     </div>
                   )}
@@ -2313,8 +2331,15 @@ export const GenerationPage: React.FC = () => {
                       backgroundColor:
                         status.type === "success"
                           ? "rgba(34, 197, 94, 0.2)"
-                          : "rgba(239, 68, 68, 0.2)",
-                      color: status.type === "success" ? "#4ade80" : "#f87171",
+                          : status.type === "warning"
+                            ? "rgba(245, 158, 11, 0.2)"
+                            : "rgba(239, 68, 68, 0.2)",
+                      color:
+                        status.type === "success"
+                          ? "#4ade80"
+                          : status.type === "warning"
+                            ? "#fbbf24"
+                            : "#f87171",
                       display: "flex",
                       alignItems: "center",
                       gap: "0.5rem",

@@ -22,6 +22,9 @@ STUDY_DAYS = [0, 1, 2, 3, 4, 5]  # 0=Mon, 5=Sat
 LESSONS = [1, 2, 3, 4, 5, 6, 7]
 
 # Rooms Configuration
+ROOM_ASSIGNMENT_ENABLED = False
+ROOM_FUND_ENABLED = False
+
 ROOMS = {
     "101": {"capacity": 30, "type": "sem"},
     "102": {"capacity": 20, "type": "sem"},
