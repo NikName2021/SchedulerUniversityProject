@@ -29,6 +29,14 @@ HOST: str = config("HOST", cast=str, default="localhost")
 PORT: int = config("PORT", cast=int, default=8000)
 PROJECT_NAME: str = config("PROJECT_NAME", default="Умное Расписание")
 
+# Schedule generation
+MAX_TIME_SECONDS = 900
+DEFAULT_COMPONENT_TIME_SECONDS = 150
+MAX_LESSON_NUMBER = 6
+GENERATION_LESSONS = list(range(1, MAX_LESSON_NUMBER + 1))
+GROUP_LOAD_EARLY_PRIORITY_STEP = 6
+GROUP_LOAD_EARLY_PRIORITY_MULTIPLIER = 1
+
 POSTGRES_HOST: str = config("POSTGRES_HOST", cast=str, default="localhost")
 POSTGRES_PORT: int = config("POSTGRES_PORT", cast=int, default=5432)
 POSTGRES_USER: str = config("POSTGRES_USER", cast=str, default="postgres")

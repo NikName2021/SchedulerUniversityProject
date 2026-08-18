@@ -2,7 +2,7 @@ import datetime
 import io
 
 import pandas as pd
-from core.constants import LESSONS
+from core.constants import ALL_LESSONS
 from database.all_models import GenerationTask, ScheduleEntry
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from sqlalchemy import select
@@ -89,7 +89,7 @@ async def generate_excel_report(
     slots_tuples = []
     for d_str in all_dates:
         d_obj = datetime.datetime.strptime(d_str, "%Y-%m-%d")
-        for lesson_number in LESSONS:
+        for lesson_number in ALL_LESSONS:
             slots_tuples.append((d_str, WEEK[d_obj.weekday()], lesson_number))
 
     all_slots_idx = pd.MultiIndex.from_tuples(

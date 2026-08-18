@@ -1,7 +1,6 @@
 from datetime import date
 
 # Generation Settings
-MAX_TIME_SECONDS = 700
 NUM_WORKERS = 8
 MAX_GENERATION_HORIZON_DAYS = 14
 MAX_ESTIMATED_DECISION_VARIABLES = 50_000
@@ -19,7 +18,7 @@ AUTH_LOCKOUT_MINUTES = 15
 DEFAULT_START_DATE = date(2025, 9, 1)
 DEFAULT_END_DATE = date(2025, 9, 7)
 STUDY_DAYS = [0, 1, 2, 3, 4, 5]  # 0=Mon, 5=Sat
-LESSONS = [1, 2, 3, 4, 5, 6, 7]
+ALL_LESSONS = [1, 2, 3, 4, 5, 6, 7]
 
 # Rooms Configuration
 ROOM_ASSIGNMENT_ENABLED = False

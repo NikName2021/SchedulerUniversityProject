@@ -90,6 +90,24 @@ def test_shared_teacher_events_never_overlap() -> None:
     assert len({tuple(item["slot"]) for item in result["assignments"]}) == 2
 
 
+def test_heavily_loaded_group_gets_earlier_shared_teacher_slot() -> None:
+    context = _context()
+    context["lessons"] = [1, 6]
+    context["group_lesson_loads"] = {"HEAVY": 24, "LIGHT": 3}
+    events = [
+        _event("event-1", ["HEAVY"], 7),
+        _event("event-2", ["LIGHT"], 7),
+    ]
+
+    result = solve_event_component(events, context)
+
+    lessons_by_group = {
+        assignment["groups"][0]: assignment["slot"][1]
+        for assignment in result["assignments"]
+    }
+    assert lessons_by_group == {"HEAVY": 1, "LIGHT": 6}
+
+
 def test_room_matching_is_global_across_components() -> None:
     context = _context()
     context["rooms"] = {"101": {"capacity": 30, "type": "sem"}}

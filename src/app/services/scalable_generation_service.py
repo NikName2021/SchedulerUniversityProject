@@ -6,14 +6,17 @@ import logging
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from core.config import sessionmaker
+from core.config import (
+    DEFAULT_COMPONENT_TIME_SECONDS,
+    GENERATION_LESSONS,
+    MAX_TIME_SECONDS,
+    sessionmaker,
+)
 from core.constants import (
     DEFAULT_END_DATE,
     DEFAULT_START_DATE,
-    LESSONS,
     MAX_ESTIMATED_DECISION_VARIABLES,
     MAX_GENERATION_HORIZON_DAYS,
-    MAX_TIME_SECONDS,
     NUM_WORKERS,
     ROOM_ASSIGNMENT_ENABLED,
     ROOM_FUND_ENABLED,
@@ -120,7 +123,7 @@ def _teacher_unavailable(
     last_date = datetime.fromisoformat(end_date).date()
     while current <= last_date:
         if current.weekday() in STUDY_DAYS:
-            for lesson in LESSONS:
+            for lesson in GENERATION_LESSONS:
                 if (current.weekday(), lesson) not in allowed_recurring and (
                     current.isoformat(),
                     lesson,
@@ -494,6 +497,11 @@ class ScalableGenerationService:
                 await session.commit()
                 return None
 
+            group_lesson_loads: dict[str, int] = collections.defaultdict(int)
+            for event in events:
+                for group in event["groups"]:
+                    group_lesson_loads[group] += int(event["lessons_count"])
+
             components = build_conflict_components(events)
             planning_dates = sum(
                 1
@@ -505,7 +513,9 @@ class ScalableGenerationService:
                 ).isoformat()
                 not in holidays
             )
-            estimated_decision_variables = len(events) * planning_dates * len(LESSONS)
+            estimated_decision_variables = (
+                len(events) * planning_dates * len(GENERATION_LESSONS)
+            )
             if estimated_decision_variables > MAX_ESTIMATED_DECISION_VARIABLES:
                 task.status = "failed"
                 task.progress_percent = 100
@@ -544,7 +554,9 @@ class ScalableGenerationService:
                 await session.commit()
                 return None
             max_component_seconds = int(
-                settings.get("max_component_seconds", min(120, MAX_TIME_SECONDS))
+                settings.get(
+                    "max_component_seconds", DEFAULT_COMPONENT_TIME_SECONDS
+                )
             )
             max_component_seconds = max(5, min(max_component_seconds, MAX_TIME_SECONDS))
             solver_workers = max(
@@ -558,13 +570,14 @@ class ScalableGenerationService:
                 "end_date": end_date,
                 "holidays": holidays,
                 "study_days": STUDY_DAYS,
-                "lessons": LESSONS,
+                "lessons": GENERATION_LESSONS,
                 "rooms": rooms,
                 "unavailable": unavailable,
                 "preferred": availability["preferred"],
                 "discouraged": availability["discouraged"],
                 "rule_settings": rule_settings,
                 "group_sizes": group_sizes,
+                "group_lesson_loads": dict(group_lesson_loads),
                 "max_time_seconds": max_component_seconds,
                 "num_workers": solver_workers,
                 "room_assignment_max_seconds": room_assignment_max_seconds,

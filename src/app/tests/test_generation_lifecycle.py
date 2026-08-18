@@ -3,14 +3,18 @@ import datetime
 import pytest
 from database import (
     AcademicPeriod,
+    GenerationComponent,
     GenerationIssue,
+    GenerationLock,
     GenerationTask,
     PlanningWeek,
     ScheduleEntry,
     Teacher,
 )
+from httpx import AsyncClient
 from services.generation_lifecycle_service import GenerationLifecycleService
 from services.schedule_service import ScheduleService
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -63,6 +67,170 @@ async def test_generation_lock_and_version_lifecycle(db_session: AsyncSession) -
     assert second.version_number == first.version_number + 1
     assert second.publication_status == "published"
     assert first.publication_status == "archived"
+
+
+@pytest.mark.asyncio
+async def test_completed_generation_task_can_be_deleted(
+    api_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    task = GenerationTask(
+        groups_json='["A"]',
+        holidays_json="[]",
+        settings_json="{}",
+        status="success",
+    )
+    db_session.add(task)
+    await db_session.flush()
+    child = GenerationTask(
+        parent_task_id=task.id,
+        groups_json='["A"]',
+        holidays_json="[]",
+        settings_json="{}",
+        status="failed",
+    )
+    db_session.add_all(
+        [
+            child,
+            GenerationLock(scope_key="test-delete", task_id=task.id),
+            GenerationIssue(
+                task_id=task.id,
+                kind="unassigned",
+                message="Не размещено занятие",
+            ),
+            GenerationComponent(
+                task_id=task.id,
+                component_key="component-0001",
+            ),
+            ScheduleEntry(
+                task_id=task.id,
+                group_name="A",
+                event_name="Математика",
+                stream_type="Лекция",
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    response = await api_client.delete(f"/api/v1/scheduler/tasks/{task.id}")
+
+    assert response.status_code == 204
+    for model in (
+        GenerationTask,
+        GenerationLock,
+        GenerationIssue,
+        GenerationComponent,
+        ScheduleEntry,
+    ):
+        remaining = await db_session.scalar(
+            select(func.count()).select_from(model).where(
+                model.id == task.id
+                if model is GenerationTask
+                else model.task_id == task.id
+            )
+        )
+        assert remaining == 0
+    await db_session.refresh(child)
+    assert child.parent_task_id is None
+
+
+@pytest.mark.asyncio
+async def test_semester_batch_can_be_deleted(
+    api_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    batch_id = "semester-delete-2026"
+    tasks = [
+        GenerationTask(
+            semester_batch_id=batch_id,
+            groups_json='["A"]',
+            holidays_json="[]",
+            settings_json="{}",
+            status="success",
+        )
+        for _ in range(2)
+    ]
+    db_session.add_all(tasks)
+    await db_session.commit()
+
+    response = await api_client.delete(
+        f"/api/v1/scheduler/semester-batches/{batch_id}"
+    )
+
+    assert response.status_code == 204
+    remaining = await db_session.scalar(
+        select(func.count())
+        .select_from(GenerationTask)
+        .where(GenerationTask.semester_batch_id == batch_id)
+    )
+    assert remaining == 0
+
+
+@pytest.mark.asyncio
+async def test_manual_entry_can_move_to_another_semester_week(
+    api_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    period = AcademicPeriod(
+        name="Осенний семестр",
+        starts_on=datetime.date(2026, 9, 7),
+        ends_on=datetime.date(2026, 9, 20),
+    )
+    first_week = PlanningWeek(
+        period=period,
+        sequence_number=1,
+        starts_on=datetime.date(2026, 9, 7),
+        ends_on=datetime.date(2026, 9, 13),
+    )
+    second_week = PlanningWeek(
+        period=period,
+        sequence_number=2,
+        starts_on=datetime.date(2026, 9, 14),
+        ends_on=datetime.date(2026, 9, 20),
+    )
+    db_session.add(period)
+    await db_session.flush()
+    batch_id = "semester-manual-move"
+    first_task = GenerationTask(
+        planning_week_id=first_week.id,
+        semester_batch_id=batch_id,
+        groups_json='["A"]',
+        holidays_json="[]",
+        settings_json="{}",
+        status="success",
+        start_date=datetime.datetime(2026, 9, 7),
+        end_date=datetime.datetime(2026, 9, 13),
+    )
+    second_task = GenerationTask(
+        planning_week_id=second_week.id,
+        semester_batch_id=batch_id,
+        groups_json='["A"]',
+        holidays_json="[]",
+        settings_json="{}",
+        status="success",
+        start_date=datetime.datetime(2026, 9, 14),
+        end_date=datetime.datetime(2026, 9, 20),
+    )
+    db_session.add_all([first_task, second_task])
+    await db_session.flush()
+    entry = ScheduleEntry(
+        task_id=first_task.id,
+        planning_week_id=first_week.id,
+        group_name="A",
+        event_name="Математика",
+        stream_type="Семинар",
+    )
+    db_session.add(entry)
+    await db_session.commit()
+
+    response = await api_client.patch(
+        f"/api/v1/scheduler/schedule/{entry.id}",
+        json={"date": "2026-09-14", "lesson_number": 1},
+    )
+
+    assert response.status_code == 200
+    await db_session.refresh(entry)
+    assert entry.task_id == second_task.id
+    assert entry.planning_week_id == second_week.id
+    assert entry.date == datetime.datetime(2026, 9, 14)
+    assert any(item["id"] == entry.id for item in response.json()["entries"])
 
 
 @pytest.mark.asyncio
