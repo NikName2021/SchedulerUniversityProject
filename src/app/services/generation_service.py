@@ -11,6 +11,7 @@ from core.constants import (
     DEFAULT_START_DATE,
     LESSONS,
     MAX_TIME_SECONDS,
+    ROOM_FUND_ENABLED,
     STUDY_DAYS,
 )
 from core.constants import ROOMS as DEFAULT_ROOMS
@@ -335,7 +336,7 @@ class GenerationService:
                     group_sizes_engine,
                     subjects_engine,
                     streams_map_engine,
-                    DEFAULT_ROOMS,
+                    DEFAULT_ROOMS if ROOM_FUND_ENABLED else {},
                     unavailable_times,
                     None,
                     MAX_TIME_SECONDS,

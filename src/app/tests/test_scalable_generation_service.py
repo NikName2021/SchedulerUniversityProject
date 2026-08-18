@@ -156,6 +156,8 @@ async def test_scalable_pipeline_saves_parallel_components(
 
     assert len(entries) == 3
     assert {entry.group_name for entry in entries} == {"A", "B", "C"}
+    assert all(entry.room_id is None for entry in entries)
+    assert all(entry.room_ref_id is None for entry in entries)
     assert refreshed_task is not None
     assert refreshed_task.status == "success"
     assert refreshed_task.progress_percent == 100
