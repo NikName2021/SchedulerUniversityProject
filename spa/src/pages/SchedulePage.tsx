@@ -436,18 +436,34 @@ export const SchedulePage: React.FC = () => {
   }, [requestedSemesterBatchId, taskId]);
 
   const fetchGroups = useCallback(async () => {
+    if (!selectedTaskId) {
+      setGroups([]);
+      setSelectedGroup("");
+      return;
+    }
     try {
-      const res = await apiFetch(`${API_BASE_URL}/api/v1/scheduler/groups`);
+      const semesterBatchId = selectedTaskId.startsWith("semester:")
+        ? selectedTaskId.slice("semester:".length)
+        : null;
+      const query = semesterBatchId
+        ? `semester_batch_id=${encodeURIComponent(semesterBatchId)}`
+        : `task_id=${encodeURIComponent(selectedTaskId)}`;
+      const res = await apiFetch(
+        `${API_BASE_URL}/api/v1/scheduler/groups?${query}`,
+      );
+      if (!res.ok) throw new Error("Failed to fetch calculation groups");
       const data = await res.json();
-      const fetchedGroups = data.groups || [];
+      const fetchedGroups: string[] = data.groups || [];
       setGroups(fetchedGroups);
-      if (!selectedGroup) {
-        setSelectedGroup(fetchedGroups[0] || "");
-      }
+      setSelectedGroup((current) =>
+        current === "Все" || fetchedGroups.includes(current)
+          ? current
+          : fetchedGroups[0] || "",
+      );
     } catch {
       console.error("Failed to fetch groups");
     }
-  }, [selectedGroup]);
+  }, [selectedTaskId]);
 
   const fetchTeachersList = useCallback(async () => {
     try {
@@ -504,9 +520,12 @@ export const SchedulePage: React.FC = () => {
 
   useEffect(() => {
     fetchTasks();
-    fetchGroups();
     fetchTeachersList();
-  }, [fetchTasks, fetchGroups, fetchTeachersList]);
+  }, [fetchTasks, fetchTeachersList]);
+
+  useEffect(() => {
+    void fetchGroups();
+  }, [fetchGroups]);
 
   useEffect(() => {
     if (selectedTaskId) {

@@ -165,6 +165,83 @@ async def test_semester_batch_can_be_deleted(
 
 
 @pytest.mark.asyncio
+async def test_groups_endpoint_only_returns_scheduled_groups_for_calculation(
+    api_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    batch_id = "semester-groups-2026"
+    first_task = GenerationTask(
+        semester_batch_id=batch_id,
+        groups_json='["A", "B", "C"]',
+        holidays_json="[]",
+        settings_json="{}",
+        status="success",
+    )
+    second_task = GenerationTask(
+        semester_batch_id=batch_id,
+        groups_json='["D"]',
+        holidays_json="[]",
+        settings_json="{}",
+        status="success",
+    )
+    unrelated_task = GenerationTask(
+        groups_json='["OTHER"]',
+        holidays_json="[]",
+        settings_json="{}",
+        status="success",
+    )
+    db_session.add_all([first_task, second_task, unrelated_task])
+    await db_session.flush()
+    scheduled_on = datetime.datetime(2026, 9, 7)
+    db_session.add_all(
+        [
+            ScheduleEntry(
+                task_id=first_task.id,
+                group_name="A",
+                event_name="Математика",
+                stream_type="Лекция",
+                date=scheduled_on,
+                lesson_number=1,
+            ),
+            ScheduleEntry(
+                task_id=first_task.id,
+                group_name="B",
+                event_name="Физика",
+                stream_type="Семинар",
+            ),
+            ScheduleEntry(
+                task_id=second_task.id,
+                group_name="D",
+                event_name="Информатика",
+                stream_type="Семинар",
+                date=scheduled_on,
+                lesson_number=2,
+            ),
+            ScheduleEntry(
+                task_id=unrelated_task.id,
+                group_name="OTHER",
+                event_name="История",
+                stream_type="Лекция",
+                date=scheduled_on,
+                lesson_number=3,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    task_response = await api_client.get(
+        f"/api/v1/scheduler/groups?task_id={first_task.id}"
+    )
+    semester_response = await api_client.get(
+        f"/api/v1/scheduler/groups?semester_batch_id={batch_id}"
+    )
+
+    assert task_response.status_code == 200
+    assert task_response.json() == {"groups": ["A"]}
+    assert semester_response.status_code == 200
+    assert semester_response.json() == {"groups": ["A", "D"]}
+
+
+@pytest.mark.asyncio
 async def test_manual_entry_can_move_to_another_semester_week(
     api_client: AsyncClient, db_session: AsyncSession
 ) -> None:
@@ -231,6 +308,53 @@ async def test_manual_entry_can_move_to_another_semester_week(
     assert entry.planning_week_id == second_week.id
     assert entry.date == datetime.datetime(2026, 9, 14)
     assert any(item["id"] == entry.id for item in response.json()["entries"])
+
+
+@pytest.mark.asyncio
+async def test_manual_lunch_violation_is_saved_with_warning(
+    api_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    task = GenerationTask(
+        groups_json='["A"]',
+        holidays_json="[]",
+        settings_json="{}",
+        status="success",
+    )
+    db_session.add(task)
+    await db_session.flush()
+    scheduled_on = datetime.datetime(2026, 9, 7)
+    third = ScheduleEntry(
+        task_id=task.id,
+        group_name="A",
+        event_name="Математика",
+        stream_type="Лекция",
+        date=scheduled_on,
+        lesson_number=3,
+    )
+    moved = ScheduleEntry(
+        task_id=task.id,
+        group_name="A",
+        event_name="Физика",
+        stream_type="Семинар",
+        date=scheduled_on,
+        lesson_number=5,
+    )
+    db_session.add_all([third, moved])
+    await db_session.commit()
+
+    response = await api_client.patch(
+        f"/api/v1/scheduler/schedule/{moved.id}",
+        json={"date": "2026-09-07", "lesson_number": 4},
+    )
+
+    assert response.status_code == 200
+    await db_session.refresh(moved)
+    assert moved.lesson_number == 4
+    warnings = {
+        item["id"]: item["warning"] for item in response.json()["entries"]
+    }
+    assert "нет свободного окна для обеда" in warnings[third.id]
+    assert "нет свободного окна для обеда" in warnings[moved.id]
 
 
 @pytest.mark.asyncio

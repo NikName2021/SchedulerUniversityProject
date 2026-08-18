@@ -400,9 +400,39 @@ async def delete_import_batch(batch_id: int, db: AsyncSession = Depends(async_ge
 
 @router.get("/groups")
 async def get_groups(
+    task_id: int | None = None,
+    semester_batch_id: str | None = None,
     db: Annotated[AsyncSession, Depends(async_get_db)] = None,
 ) -> dict[str, Any]:
-    stmt = select(distinct(StreamGroup.group_name)).order_by(StreamGroup.group_name)
+    if task_id is not None and semester_batch_id is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="Specify either task_id or semester_batch_id, not both",
+        )
+
+    if task_id is not None:
+        stmt = (
+            select(distinct(ScheduleEntry.group_name))
+            .where(
+                ScheduleEntry.task_id == task_id,
+                ScheduleEntry.date.is_not(None),
+            )
+            .order_by(ScheduleEntry.group_name)
+        )
+    elif semester_batch_id is not None:
+        stmt = (
+            select(distinct(ScheduleEntry.group_name))
+            .join(GenerationTask, GenerationTask.id == ScheduleEntry.task_id)
+            .where(
+                GenerationTask.semester_batch_id == semester_batch_id,
+                ScheduleEntry.date.is_not(None),
+            )
+            .order_by(ScheduleEntry.group_name)
+        )
+    else:
+        stmt = select(distinct(StreamGroup.group_name)).order_by(
+            StreamGroup.group_name
+        )
     result = await db.execute(stmt)
     groups = result.scalars().all()
     return {"groups": groups}
