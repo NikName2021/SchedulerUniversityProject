@@ -2,7 +2,7 @@ import datetime
 from collections import defaultdict
 from typing import Any
 
-from core.constants import LESSONS, STUDY_DAYS
+from core.constants import ALL_LESSONS, STUDY_DAYS
 from database import AvailabilityRule
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -60,7 +60,7 @@ async def build_availability_context(
     rules = list(result.scalars())
     dates = _period_dates(start_date, end_date)
     all_slots = {
-        (current.isoformat(), lesson) for current in dates for lesson in LESSONS
+        (current.isoformat(), lesson) for current in dates for lesson in ALL_LESSONS
     }
 
     unavailable: dict[str, dict[str, list[list[Any]]]] = {

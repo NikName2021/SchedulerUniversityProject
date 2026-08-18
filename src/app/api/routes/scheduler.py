@@ -8,16 +8,21 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import pandas as pd
-from core.config import async_get_db
+from core.config import (
+    DEFAULT_COMPONENT_TIME_SECONDS,
+    MAX_TIME_SECONDS,
+    async_get_db,
+)
 from core.constants import (
     MAX_GENERATION_HORIZON_DAYS,
-    MAX_TIME_SECONDS,
     NUM_WORKERS,
 )
 from database.all_models import (
     AvailabilityRule,
     FileType,
     GenerationComponent,
+    GenerationIssue,
+    GenerationLock,
     GenerationTask,
     ImportBatch,
     PlanningWeek,
@@ -32,6 +37,7 @@ from fastapi import (
     File,
     HTTPException,
     Query,
+    Response,
     UploadFile,
 )
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -46,7 +52,7 @@ from services.parser_service import parse_streams_content, read_tabular_content
 from services.quality_service import ScheduleQualityService
 from services.schedule_service import ScheduleService
 from services.upload_service import read_upload_limited
-from sqlalchemy import delete, distinct, func
+from sqlalchemy import delete, distinct, func, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -59,6 +65,49 @@ router = APIRouter(prefix="/scheduler", tags=["Scheduler"])
 UPLOAD_DIR = Path(__file__).resolve().parents[2] / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 SEMESTER_BATCH_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$")
+
+
+def _revoke_generation_workflow(task: GenerationTask) -> None:
+    component_ids = json.loads(task.celery_component_ids_json or "[]")
+    for celery_id in (
+        task.celery_root_task_id,
+        task.celery_workflow_id,
+        *component_ids,
+    ):
+        if celery_id:
+            try:
+                celery_app.control.revoke(celery_id, terminate=True, signal="SIGTERM")
+            except Exception:
+                logger.exception("Failed to revoke Celery task %s", celery_id)
+
+
+async def _delete_generation_tasks(
+    tasks: list[GenerationTask], db: AsyncSession
+) -> None:
+    task_ids = [task.id for task in tasks]
+    if not task_ids:
+        return
+    for task in tasks:
+        if task.status in ACTIVE_STATUSES:
+            _revoke_generation_workflow(task)
+
+    await db.execute(
+        update(GenerationTask)
+        .where(GenerationTask.parent_task_id.in_(task_ids))
+        .values(parent_task_id=None)
+    )
+    await db.execute(delete(ScheduleEntry).where(ScheduleEntry.task_id.in_(task_ids)))
+    await db.execute(
+        delete(GenerationIssue).where(GenerationIssue.task_id.in_(task_ids))
+    )
+    await db.execute(
+        delete(GenerationComponent).where(GenerationComponent.task_id.in_(task_ids))
+    )
+    await db.execute(
+        delete(GenerationLock).where(GenerationLock.task_id.in_(task_ids))
+    )
+    await db.execute(delete(GenerationTask).where(GenerationTask.id.in_(task_ids)))
+    await db.commit()
 
 
 class StreamUpdateModel(BaseModel):
@@ -151,7 +200,7 @@ class GenerationSettingsModel(BaseModel):
     max_total_events: int = Field(default=20_000, ge=1, le=20_000)
     max_component_events: int = Field(default=2_000, ge=1, le=2_000)
     max_component_seconds: int = Field(
-        default=min(120, MAX_TIME_SECONDS), ge=5, le=MAX_TIME_SECONDS
+        default=DEFAULT_COMPONENT_TIME_SECONDS, ge=5, le=MAX_TIME_SECONDS
     )
     solver_workers: int = Field(default=1, ge=1, le=NUM_WORKERS)
     room_assignment_max_seconds: int = Field(default=5, ge=1, le=60)
@@ -780,6 +829,37 @@ async def get_generation_tasks(
     ]
 
 
+@router.delete("/tasks/{task_id}", status_code=204)
+async def delete_generation_task(
+    task_id: int,
+    db: Annotated[AsyncSession, Depends(async_get_db)] = None,
+) -> Response:
+    task = await db.get(GenerationTask, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Generation task not found")
+    await _delete_generation_tasks([task], db)
+    return Response(status_code=204)
+
+
+@router.delete("/semester-batches/{semester_batch_id}", status_code=204)
+async def delete_semester_batch(
+    semester_batch_id: str,
+    db: Annotated[AsyncSession, Depends(async_get_db)] = None,
+) -> Response:
+    if SEMESTER_BATCH_PATTERN.fullmatch(semester_batch_id) is None:
+        raise HTTPException(status_code=422, detail="Invalid semester_batch_id")
+    result = await db.execute(
+        select(GenerationTask).where(
+            GenerationTask.semester_batch_id == semester_batch_id
+        )
+    )
+    tasks = list(result.scalars())
+    if not tasks:
+        raise HTTPException(status_code=404, detail="Semester batch not found")
+    await _delete_generation_tasks(tasks, db)
+    return Response(status_code=204)
+
+
 @router.post("/tasks/{task_id}/cancel")
 async def cancel_generation_task(
     task_id: int,
@@ -790,17 +870,7 @@ async def cancel_generation_task(
         raise HTTPException(status_code=404, detail="Generation task not found")
     if task.status not in ACTIVE_STATUSES:
         raise HTTPException(status_code=409, detail="Generation task is not active")
-    component_ids = json.loads(task.celery_component_ids_json or "[]")
-    for celery_id in (
-        task.celery_root_task_id,
-        task.celery_workflow_id,
-        *component_ids,
-    ):
-        if celery_id:
-            try:
-                celery_app.control.revoke(celery_id, terminate=True, signal="SIGTERM")
-            except Exception:
-                logger.exception("Failed to revoke Celery task %s", celery_id)
+    _revoke_generation_workflow(task)
     task.status = "canceled"
     task.canceled_at = datetime.utcnow()
     task.error_message = "Generation canceled by operator"
@@ -998,6 +1068,55 @@ async def update_schedule_entry(
     if task and task.publication_status == "published":
         raise HTTPException(status_code=409, detail="Published schedules are read-only")
 
+    source_task = task
+    target_task = task
+    target_date: datetime | None = None
+    if payload.date is not None:
+        try:
+            target_date = datetime.strptime(payload.date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(
+                status_code=400, detail="Invalid date format. Use YYYY-MM-DD"
+            ) from None
+
+        outside_source_period = bool(
+            task
+            and (
+                (task.start_date and target_date < task.start_date)
+                or (task.end_date and target_date > task.end_date)
+            )
+        )
+        if outside_source_period:
+            if not task or not task.semester_batch_id:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Дата занятия находится за пределами периода расчёта",
+                )
+            target_task = await db.scalar(
+                select(GenerationTask)
+                .where(
+                    GenerationTask.semester_batch_id == task.semester_batch_id,
+                    GenerationTask.start_date <= target_date,
+                    GenerationTask.end_date >= target_date,
+                    GenerationTask.status.in_(["success", "partial"]),
+                    GenerationTask.publication_status != "archived",
+                )
+                .order_by(
+                    GenerationTask.version_number.desc(),
+                    GenerationTask.created_at.desc(),
+                )
+                .limit(1)
+            )
+            if target_task is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Для выбранной недели нет завершённого расчёта",
+                )
+            if target_task.publication_status == "published":
+                raise HTTPException(
+                    status_code=409, detail="Published schedules are read-only"
+                )
+
     entries_to_update = [entry]
 
     is_lecture = entry.stream_type and "лекция" in entry.stream_type.lower()
@@ -1045,12 +1164,10 @@ async def update_schedule_entry(
             e.lesson_number = None
 
         if payload.date is not None:
-            try:
-                e.date = datetime.strptime(payload.date, "%Y-%m-%d")
-            except ValueError:
-                raise HTTPException(
-                    status_code=400, detail="Invalid date format. Use YYYY-MM-DD"
-                ) from None
+            e.date = target_date
+            if target_task and target_task.id != e.task_id:
+                e.task_id = target_task.id
+                e.planning_week_id = target_task.planning_week_id
         elif "date" in payload.model_fields_set:
             e.date = None
 
@@ -1075,19 +1192,11 @@ async def update_schedule_entry(
         if payload.is_locked is not None:
             e.is_locked = payload.is_locked
 
-        if task and e.date:
-            if task.start_date and e.date < task.start_date:
-                raise HTTPException(
-                    status_code=422, detail="Entry date precedes schedule period"
-                )
-            if task.end_date and e.date > task.end_date:
-                raise HTTPException(
-                    status_code=422, detail="Entry date exceeds schedule period"
-                )
-
     await db.flush()
     conflicts = await ScheduleService.validate_manual_changes(
-        entry.task_id, {item.id for item in entries_to_update}, db
+        target_task.id if target_task else entry.task_id,
+        {item.id for item in entries_to_update},
+        db,
     )
     if conflicts:
         await db.rollback()
@@ -1097,14 +1206,34 @@ async def update_schedule_entry(
         )
 
     # --- Conflict Detection & Warning Refresh ---
-    await ScheduleService.refresh_task_warnings(entry.task_id, db)
-    if task:
-        task.edit_revision += 1
+    affected_task_ids = {
+        task_id
+        for task_id in (
+            source_task.id if source_task else None,
+            target_task.id if target_task else None,
+        )
+        if task_id is not None
+    }
+    for affected_task_id in affected_task_ids:
+        await ScheduleService.refresh_task_warnings(affected_task_id, db)
+    if source_task:
+        source_task.edit_revision += 1
+    if target_task and target_task is not source_task:
+        target_task.edit_revision += 1
     await db.commit()
 
+    if source_task and source_task.semester_batch_id:
+        updated_entries = await get_schedule(
+            semester_batch_id=source_task.semester_batch_id,
+            db=db,
+        )
+    else:
+        updated_entries = await ScheduleService.get_task_entries_json(
+            entry.task_id, db
+        )
     return {
         "detail": "Entry updated successfully",
-        "entries": await ScheduleService.get_task_entries_json(entry.task_id, db),
+        "entries": updated_entries,
     }
 
 

@@ -12,10 +12,12 @@ import {
   Download,
   History as HistoryIcon,
   Layers3,
+  Link2,
   LayoutDashboard,
   RefreshCcw,
   RotateCcw,
   Send,
+  Trash2,
   Users,
   XCircle,
 } from "lucide-react";
@@ -60,6 +62,9 @@ interface SemesterBatch {
 
 const hasScheduleResult = (status: string) =>
   status === "success" || status === "partial";
+
+const formatSemesterBatchId = (batchId: string) =>
+  batchId.replace(/-/g, "").slice(0, 8).toUpperCase();
 
 const statusMeta = (status: string) => {
   if (status === "success")
@@ -229,6 +234,76 @@ const HistoryPage: React.FC = () => {
     navigate(`/schedule?${params.toString()}`);
   };
 
+  const semesterSchedulePath = (
+    batchId: string,
+    week?: PlanningWeekSummary | null,
+  ) => {
+    const params = new URLSearchParams({ semester_batch_id: batchId });
+    if (week) params.set("week", week.starts_on);
+    return `/schedule?${params.toString()}`;
+  };
+
+  const shareSchedule = async (path: string, title: string) => {
+    const url = new URL(path, window.location.origin).toString();
+    try {
+      if (navigator.share) {
+        await navigator.share({ title, url });
+      } else {
+        await navigator.clipboard.writeText(url);
+        alert("Ссылка на расчёт скопирована");
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      window.prompt("Скопируйте ссылку на расчёт", url);
+    }
+  };
+
+  const deleteTask = async (task: GenerationTask) => {
+    if (
+      !window.confirm(
+        `Удалить расчёт #${task.id} и всё связанное расписание? Это действие нельзя отменить.`,
+      )
+    ) {
+      return;
+    }
+    const response = await apiFetch(
+      `${API_BASE_URL}/api/v1/scheduler/tasks/${task.id}`,
+      { method: "DELETE" },
+    );
+    if (!response.ok) {
+      const payload = (await response.json()) as { detail?: string };
+      alert(payload.detail || "Не удалось удалить расчёт");
+      return;
+    }
+    await fetchTasks();
+  };
+
+  const deleteSemesterBatch = async (batch: SemesterBatch) => {
+    const displayId = formatSemesterBatchId(batch.id);
+    if (
+      !window.confirm(
+        `Удалить семестровый расчёт #${displayId} и все ${batch.tasks.length} недель? Это действие нельзя отменить.`,
+      )
+    ) {
+      return;
+    }
+    const response = await apiFetch(
+      `${API_BASE_URL}/api/v1/scheduler/semester-batches/${encodeURIComponent(batch.id)}`,
+      { method: "DELETE" },
+    );
+    if (!response.ok) {
+      const payload = (await response.json()) as { detail?: string };
+      alert(payload.detail || "Не удалось удалить семестровый расчёт");
+      return;
+    }
+    setExpandedBatches((current) => {
+      const next = new Set(current);
+      next.delete(batch.id);
+      return next;
+    });
+    await fetchTasks();
+  };
+
   const renderTaskActions = (
     task: GenerationTask,
     semesterBatchId?: string,
@@ -321,6 +396,31 @@ const HistoryPage: React.FC = () => {
           <LayoutDashboard size={16} />
         </button>
       )}
+      {hasScheduleResult(task.status) && (
+        <button
+          type="button"
+          className="button-icon task-action--primary"
+          title="Поделиться ссылкой"
+          onClick={() =>
+            void shareSchedule(
+              semesterBatchId
+                ? semesterSchedulePath(semesterBatchId, task.planning_week)
+                : `/schedule/${task.id}`,
+              `Расписание #${task.id}`,
+            )
+          }
+        >
+          <Link2 size={16} />
+        </button>
+      )}
+      <button
+        type="button"
+        className="button-icon button-danger"
+        title="Удалить расчёт"
+        onClick={() => void deleteTask(task)}
+      >
+        <Trash2 size={16} />
+      </button>
     </div>
   );
 
@@ -434,6 +534,7 @@ const HistoryPage: React.FC = () => {
                 (sum, task) => sum + task.result_count,
                 0,
               );
+              const displayId = formatSemesterBatchId(batch.id);
               return (
                 <article className="semester-task" key={batch.id}>
                   <div className="task-row task-row--semester">
@@ -465,7 +566,9 @@ const HistoryPage: React.FC = () => {
                         <Layers3 size={18} />
                       </div>
                       <div>
-                        <strong>Семестровый расчёт</strong>
+                        <strong title={`Полный ID: ${batch.id}`}>
+                          Семестровый расчёт #{displayId}
+                        </strong>
                         <span>
                           {batch.periodName} · {formatDate(batch.createdAt)}
                         </span>
@@ -515,6 +618,27 @@ const HistoryPage: React.FC = () => {
                       >
                         <Download size={16} />
                       </button>
+                      <button
+                        type="button"
+                        className="button-icon task-action--primary"
+                        title="Поделиться ссылкой на семестровый расчёт"
+                        onClick={() =>
+                          void shareSchedule(
+                            semesterSchedulePath(batch.id),
+                            `Семестровое расписание #${displayId} · ${batch.periodName}`,
+                          )
+                        }
+                      >
+                        <Link2 size={16} />
+                      </button>
+                      <button
+                        type="button"
+                        className="button-icon button-danger"
+                        title="Удалить семестровый расчёт"
+                        onClick={() => void deleteSemesterBatch(batch)}
+                      >
+                        <Trash2 size={16} />
+                      </button>
                     </div>
                   </div>
                   {expanded && (
@@ -527,7 +651,8 @@ const HistoryPage: React.FC = () => {
                             <div className="semester-week-row__title">
                               <span>
                                 Неделя{" "}
-                                {task.planning_week?.sequence_number || "—"}
+                                {task.planning_week?.sequence_number || "—"} ·
+                                расчёт #{task.id}
                               </span>
                               <small>
                                 {task.planning_week

@@ -5,12 +5,10 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 import anyio
-from core.config import sessionmaker
+from core.config import GENERATION_LESSONS, MAX_TIME_SECONDS, sessionmaker
 from core.constants import (
     DEFAULT_END_DATE,
     DEFAULT_START_DATE,
-    LESSONS,
-    MAX_TIME_SECONDS,
     ROOM_FUND_ENABLED,
     STUDY_DAYS,
 )
@@ -330,7 +328,7 @@ class GenerationService:
                     START_DATE,
                     END_DATE,
                     STUDY_DAYS,
-                    LESSONS,
+                    GENERATION_LESSONS,
                     holidays,
                     selected_groups,
                     group_sizes_engine,

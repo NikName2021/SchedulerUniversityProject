@@ -5,6 +5,10 @@ import datetime
 import time
 from typing import Any
 
+from core.config import (
+    GROUP_LOAD_EARLY_PRIORITY_MULTIPLIER,
+    GROUP_LOAD_EARLY_PRIORITY_STEP,
+)
 from core.constants import (
     NUM_WORKERS,
     PENALTY_LATE_LESSON,
@@ -196,6 +200,7 @@ def solve_event_component(
     deficits: dict[str, tuple[cp_model.IntVar, int]] = {}
     late_rule = _rule(context, "late_lessons", weight=5)
     preference_rule = _rule(context, "teacher_preferences", weight=5)
+    group_lesson_loads = context.get("group_lesson_loads", {})
 
     for event in events:
         event_id = event["id"]
@@ -216,12 +221,24 @@ def solve_event_component(
 
             participant_weight = max(1, len(event["groups"]))
             if late_rule["enabled"]:
+                event_group_load = max(
+                    (
+                        int(group_lesson_loads.get(group, 1))
+                        for group in event["groups"]
+                    ),
+                    default=1,
+                )
+                load_priority = 1 + (
+                    max(1, event_group_load) - 1
+                ) // GROUP_LOAD_EARLY_PRIORITY_STEP
                 penalties.append(
                     variable
                     * slot[1]
                     * PENALTY_LATE_LESSON
                     * participant_weight
                     * late_rule["weight"]
+                    * load_priority
+                    * GROUP_LOAD_EARLY_PRIORITY_MULTIPLIER
                 )
             preference = event.get("time_preference", "day")
             if preference == "morning" and slot[1] > 2:

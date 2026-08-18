@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 import services.scalable_generation_service as scalable_module
+from core.config import MAX_LESSON_NUMBER
 from database import (
     FileType,
     GenerationTask,
@@ -130,6 +131,7 @@ async def test_scalable_pipeline_saves_parallel_components(
     )
 
     assert payload is not None
+    assert payload["context"]["lessons"][-1] == MAX_LESSON_NUMBER == 6
     assert payload["context"]["immutable_before"] == "2026-09-07"
     monkeypatch.setattr(scalable_module, "date", datetime.date)
     assert len(payload["components"]) == 2

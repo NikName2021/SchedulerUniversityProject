@@ -2,7 +2,8 @@ from collections import defaultdict
 from datetime import date, timedelta
 from fractions import Fraction
 
-from core.constants import LESSONS, STUDY_DAYS
+from core.config import GENERATION_LESSONS
+from core.constants import STUDY_DAYS
 from database import (
     AcademicPeriod,
     GenerationTask,
@@ -258,7 +259,7 @@ class PlanningService:
             slots = {
                 (current.isoformat(), lesson)
                 for current in week_dates[week.id]
-                for lesson in LESSONS
+                for lesson in GENERATION_LESSONS
             }
             for teacher_name in teacher_names:
                 teacher_capacity[(teacher_name, week.id)] = len(
@@ -291,7 +292,8 @@ class PlanningService:
             for week in weeks
         }
         week_slot_counts = {
-            week.id: len(week_dates[week.id]) * len(LESSONS) for week in weeks
+            week.id: len(week_dates[week.id]) * len(GENERATION_LESSONS)
+            for week in weeks
         }
 
         def week_overlaps_stream(stream: Stream, week: PlanningWeek) -> bool:

@@ -37,6 +37,7 @@ import { API_BASE_URL, apiFetch, openDownload } from "../api/apiConfig";
 
 interface ScheduleEntry {
   id: number;
+  task_id: number | null;
   group_name: string;
   event_name: string;
   stream_type: string;
@@ -75,6 +76,27 @@ const WEEK_DATE_FORMATTER = new Intl.DateTimeFormat("ru-RU", {
   month: "2-digit",
   year: "numeric",
 });
+
+const parseLocalDate = (value: string) => {
+  const [year, month, day] = value.slice(0, 10).split("-").map(Number);
+  return new Date(year, month - 1, day);
+};
+
+const formatDateKey = (value: Date) =>
+  `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+
+const getWeekKey = (value: string) => {
+  const date = parseLocalDate(value);
+  date.setDate(date.getDate() - ((date.getDay() + 6) % 7));
+  return formatDateKey(date);
+};
+
+const getWeekDayDate = (weekKey: string, dayIndex: number) => {
+  const date = parseLocalDate(weekKey);
+  date.setDate(date.getDate() + dayIndex);
+  return formatDateKey(date);
+};
+
 const PAIRS = [
   { num: 1, time: "08:45-10:05" },
   { num: 2, time: "10:20-11:40" },
@@ -532,14 +554,24 @@ export const SchedulePage: React.FC = () => {
   // Derive weeks from entries
   const availableWeeks = React.useMemo(() => {
     const weekMap = new Map<string, string>();
-    entries.forEach((e) => {
-      if (!e.date) return;
-      const d = new Date(e.date);
-      if (isNaN(d.getTime())) return;
+    const semesterBatchId = selectedTaskId?.startsWith("semester:")
+      ? selectedTaskId.slice("semester:".length)
+      : null;
+    const planningWeeks = semesterBatchId
+      ? tasks
+          .filter((task) => task.semester_batch_id === semesterBatchId)
+          .map((task) => task.planning_week)
+          .filter((week) => week !== null)
+      : [];
 
-      const monday = new Date(d);
-      monday.setDate(d.getDate() - ((d.getDay() + 6) % 7));
-      const weekKey = `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, "0")}-${String(monday.getDate()).padStart(2, "0")}`;
+    const dates =
+      planningWeeks.length > 0
+        ? planningWeeks.map((week) => week.starts_on)
+        : entries.filter((entry) => entry.date).map((entry) => entry.date);
+
+    dates.forEach((dateValue) => {
+      const weekKey = getWeekKey(dateValue);
+      const monday = parseLocalDate(weekKey);
 
       if (!weekMap.has(weekKey)) {
         const sunday = new Date(monday);
@@ -553,7 +585,7 @@ export const SchedulePage: React.FC = () => {
     return Array.from(weekMap.entries()).sort((a, b) =>
       a[0].localeCompare(b[0]),
     );
-  }, [entries]);
+  }, [entries, selectedTaskId, tasks]);
 
   useEffect(() => {
     if (availableWeeks.length === 0) return;
@@ -629,14 +661,7 @@ export const SchedulePage: React.FC = () => {
       if (dayIdx === undefined || pairNum === undefined || !selectedWeek)
         return;
 
-      // Parse selectedWeek as local date to avoid timezone shift
-      const [year, month, day] = selectedWeek.split("-").map(Number);
-      const mondayDate = new Date(year, month - 1, day);
-
-      const targetDate = new Date(mondayDate);
-      targetDate.setDate(mondayDate.getDate() + dayIdx);
-
-      const dateStr = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, "0")}-${String(targetDate.getDate()).padStart(2, "0")}`;
+      const dateStr = getWeekDayDate(selectedWeek, dayIdx);
 
       const previousEntries = entries;
       // Optimistic update

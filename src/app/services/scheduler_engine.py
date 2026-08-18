@@ -2,6 +2,10 @@ import collections
 import datetime
 import logging
 
+from core.config import (
+    GROUP_LOAD_EARLY_PRIORITY_MULTIPLIER,
+    GROUP_LOAD_EARLY_PRIORITY_STEP,
+)
 from core.constants import (
     LOGGING_ENABLED,
     NUM_WORKERS,
@@ -129,6 +133,12 @@ def solve_schedule(
 
     # Index for quick lookup: (group, slot) -> list of x-vars
     vars_by_group_slot = collections.defaultdict(list)
+    group_lesson_loads: dict[str, int] = collections.defaultdict(int)
+    for subj, subj_data in subjects.items():
+        total_lessons = sum(_get_target(subj_data, lesson_type) for lesson_type in LESSON_TYPES)
+        for group in streams_map.get(subj, []):
+            if group in groups:
+                group_lesson_loads[group] += total_lessons
 
     # --- Variable creation with pre-filtering ---
     for subj, subj_data in subjects.items():
@@ -150,8 +160,18 @@ def solve_schedule(
                     x[(g, subj, t, s)] = var
                     vars_by_group_slot[(g, s)].append(var)
 
-                    # Глобальный штраф за поздние пары
-                    penalties.append(var * s[1] * PENALTY_LATE_LESSON)
+                    # Группы с большой недельной нагрузкой получают более
+                    # высокий приоритет на ранние пары.
+                    load_priority = 1 + (
+                        max(1, group_lesson_loads.get(g, 1)) - 1
+                    ) // GROUP_LOAD_EARLY_PRIORITY_STEP
+                    penalties.append(
+                        var
+                        * s[1]
+                        * PENALTY_LATE_LESSON
+                        * load_priority
+                        * GROUP_LOAD_EARLY_PRIORITY_MULTIPLIER
+                    )
 
                     # Штраф за приоритет (Утро / День / Вечер)
                     pref = priorities.get(subj, "day")
