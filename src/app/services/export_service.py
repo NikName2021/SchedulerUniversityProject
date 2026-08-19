@@ -1,5 +1,6 @@
 import datetime
 import io
+import re
 
 import pandas as pd
 from core.constants import ALL_LESSONS
@@ -25,6 +26,22 @@ COLORS = {
     "yellow": "FFD966",
     "red": "FF0000",
 }
+
+RAW_COLUMNS = ["date", "weekday", "lesson", "group", "subject", "type", "warning"]
+UNASSIGNED_COLUMNS = [
+    "task_id",
+    "planning_week_id",
+    "stream_id",
+    "group",
+    "subject",
+    "type",
+    "teacher",
+    "missing_lessons",
+    "target_lessons",
+    "scheduled_lessons",
+    "warning",
+]
+UNASSIGNED_WARNING = re.compile(r"Не выставлено\s+(\d+)\s+из\s+(\d+)\s+занятий")
 
 
 def escape_excel_formula(value: str) -> str:
@@ -58,8 +75,43 @@ async def generate_excel_report(
         return None
 
     rows = []
+    unassigned: dict[tuple, dict] = {}
     for ev in entries:
         if ev.date is None:
+            warning = escape_excel_formula(ev.warning or "")
+            key = (
+                ev.task_id,
+                ev.planning_week_id,
+                ev.source_stream_id,
+                ev.group_name,
+                ev.event_name,
+                ev.stream_type,
+                ev.teacher.name if ev.teacher else "",
+                warning,
+            )
+            if key not in unassigned:
+                match = UNASSIGNED_WARNING.search(ev.warning or "")
+                missing = int(match.group(1)) if match else 0
+                target = int(match.group(2)) if match else None
+                unassigned[key] = {
+                    "task_id": ev.task_id,
+                    "planning_week_id": ev.planning_week_id,
+                    "stream_id": ev.source_stream_id,
+                    "group": escape_excel_formula(ev.group_name),
+                    "subject": escape_excel_formula(ev.event_name),
+                    "type": escape_excel_formula(ev.stream_type),
+                    "teacher": escape_excel_formula(
+                        ev.teacher.name if ev.teacher else ""
+                    ),
+                    "missing_lessons": missing,
+                    "target_lessons": target,
+                    "scheduled_lessons": (
+                        target - missing if target is not None else None
+                    ),
+                    "warning": warning,
+                    "occurrences": 0,
+                }
+            unassigned[key]["occurrences"] += 1
             continue
         wd = ev.date.weekday()
         subject_str = escape_excel_formula(
@@ -79,12 +131,27 @@ async def generate_excel_report(
             }
         )
 
-    if not rows:
+    if not rows and not unassigned:
         return None
 
-    df = pd.DataFrame(rows)
+    df = pd.DataFrame(rows, columns=RAW_COLUMNS)
+    unassigned_rows = []
+    for item in unassigned.values():
+        if not item["missing_lessons"]:
+            item["missing_lessons"] = item["occurrences"]
+        item.pop("occurrences")
+        unassigned_rows.append(item)
+    unassigned_rows.sort(
+        key=lambda item: (
+            item["task_id"] or 0,
+            item["planning_week_id"] or 0,
+            str(item["group"]),
+            str(item["subject"]),
+        )
+    )
+    unassigned_df = pd.DataFrame(unassigned_rows, columns=UNASSIGNED_COLUMNS)
 
-    all_dates = sorted(df["date"].unique())
+    all_dates = sorted(df["date"].unique()) if rows else []
 
     slots_tuples = []
     for d_str in all_dates:
@@ -96,40 +163,47 @@ async def generate_excel_report(
         slots_tuples, names=["date", "weekday", "lesson"]
     )
 
-    pivot_subject = (
-        df.pivot_table(
-            index=["date", "weekday", "lesson"],
-            columns="group",
-            values="subject",
-            aggfunc="first",
+    if rows:
+        pivot_subject = (
+            df.pivot_table(
+                index=["date", "weekday", "lesson"],
+                columns="group",
+                values="subject",
+                aggfunc="first",
+            )
+            .reindex(all_slots_idx)
+            .reset_index()
         )
-        .reindex(all_slots_idx)
-        .reset_index()
-    )
-    pivot_type = (
-        df.pivot_table(
-            index=["date", "weekday", "lesson"],
-            columns="group",
-            values="type",
-            aggfunc="first",
+        pivot_type = (
+            df.pivot_table(
+                index=["date", "weekday", "lesson"],
+                columns="group",
+                values="type",
+                aggfunc="first",
+            )
+            .reindex(all_slots_idx)
+            .reset_index()
         )
-        .reindex(all_slots_idx)
-        .reset_index()
-    )
-    pivot_warning = (
-        df.pivot_table(
-            index=["date", "weekday", "lesson"],
-            columns="group",
-            values="warning",
-            aggfunc="first",
+        pivot_warning = (
+            df.pivot_table(
+                index=["date", "weekday", "lesson"],
+                columns="group",
+                values="warning",
+                aggfunc="first",
+            )
+            .reindex(all_slots_idx)
+            .reset_index()
         )
-        .reindex(all_slots_idx)
-        .reset_index()
-    )
+    else:
+        empty_columns = ["date", "weekday", "lesson"]
+        pivot_subject = pd.DataFrame(columns=empty_columns)
+        pivot_type = pd.DataFrame(columns=empty_columns)
+        pivot_warning = pd.DataFrame(columns=empty_columns)
 
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df.to_excel(writer, sheet_name="raw", index=False)
+        unassigned_df.to_excel(writer, sheet_name="Невыставленные", index=False)
         ws = writer.book.create_sheet("Расписание")
 
         thin_border = Border(
@@ -228,6 +302,36 @@ async def generate_excel_report(
         ws.column_dimensions["A"].width = 14
         ws.column_dimensions["B"].width = 14
         ws.column_dimensions["C"].width = 8
+
+        unassigned_ws = writer.book["Невыставленные"]
+        unassigned_ws.freeze_panes = "A2"
+        unassigned_ws.auto_filter.ref = unassigned_ws.dimensions
+        for cell in unassigned_ws[1]:
+            cell.fill = PatternFill(
+                start_color="C00000", end_color="C00000", fill_type="solid"
+            )
+            cell.font = Font(color="FFFFFF", bold=True)
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = thin_border
+        unassigned_widths = {
+            "A": 12,
+            "B": 18,
+            "C": 12,
+            "D": 24,
+            "E": 52,
+            "F": 16,
+            "G": 34,
+            "H": 18,
+            "I": 16,
+            "J": 20,
+            "K": 36,
+        }
+        for column, width in unassigned_widths.items():
+            unassigned_ws.column_dimensions[column].width = width
+        for row in unassigned_ws.iter_rows(min_row=2):
+            for cell in row:
+                cell.alignment = Alignment(vertical="top", wrap_text=True)
+                cell.border = thin_border
 
     output.seek(0)
     return output

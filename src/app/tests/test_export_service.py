@@ -50,21 +50,56 @@ async def test_excel_export_contains_seventh_lesson_and_escapes_formulas(
 
 
 @pytest.mark.asyncio
-async def test_excel_export_with_only_unassigned_entries_returns_none(
+async def test_excel_export_with_only_unassigned_entries_adds_summary_sheet(
     db_session,
 ) -> None:
     task = GenerationTask(status="partial")
     db_session.add(task)
     await db_session.flush()
-    db_session.add(
-        ScheduleEntry(
-            task_id=task.id,
-            group_name="ГР-1",
-            event_name="Физика",
-            stream_type="Семинар",
-            warning="Не выставлено",
-        )
+    db_session.add_all(
+        [
+            ScheduleEntry(
+                task_id=task.id,
+                group_name="ГР-1",
+                event_name="Физика",
+                stream_type="Семинар",
+                warning="Не выставлено 2 из 4 занятий",
+            ),
+            ScheduleEntry(
+                task_id=task.id,
+                group_name="ГР-1",
+                event_name="Физика",
+                stream_type="Семинар",
+                warning="Не выставлено 2 из 4 занятий",
+            ),
+        ]
     )
     await db_session.commit()
 
-    assert await generate_excel_report(db_session, task_id=task.id) is None
+    output = await generate_excel_report(db_session, task_id=task.id)
+
+    assert output is not None
+    workbook = load_workbook(io.BytesIO(output.getvalue()), data_only=False)
+    assert workbook.sheetnames == ["raw", "Невыставленные", "Расписание"]
+    headers = [cell.value for cell in workbook["Невыставленные"][1]]
+    values = [cell.value for cell in workbook["Невыставленные"][2]]
+    unassigned = dict(zip(headers, values))
+    assert unassigned == {
+        "task_id": task.id,
+        "planning_week_id": None,
+        "stream_id": None,
+        "group": "ГР-1",
+        "subject": "Физика",
+        "type": "Семинар",
+        "teacher": None,
+        "missing_lessons": 2,
+        "target_lessons": 4,
+        "scheduled_lessons": 2,
+        "warning": "Не выставлено 2 из 4 занятий",
+    }
+    assert all(
+        cell.data_type != "f"
+        for worksheet in workbook.worksheets
+        for row in worksheet.iter_rows()
+        for cell in row
+    )
