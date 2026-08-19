@@ -30,15 +30,21 @@ import {
   useDroppable,
   useDraggable,
   type DragEndEvent,
+  type DragStartEvent,
 } from "@dnd-kit/core";
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { API_BASE_URL, apiFetch, openDownload } from "../api/apiConfig";
-import { groupLabelIncludesBase } from "../utils/groupSelection";
+import {
+  collectKnownSubgroups,
+  groupLabelIncludesBase,
+  groupLabelsOverlap,
+} from "../utils/groupSelection";
 
 interface ScheduleEntry {
   id: number;
   task_id: number | null;
+  source_stream_id: number | null;
   group_name: string;
   event_name: string;
   stream_type: string;
@@ -95,6 +101,16 @@ interface ScheduleSource {
   kind: "task" | "semester";
 }
 
+type UnavailableSlot = [string, number];
+
+interface ScheduleAvailability {
+  unavailable: {
+    teacher: Record<string, UnavailableSlot[]>;
+    group: Record<string, UnavailableSlot[]>;
+    global: Record<string, UnavailableSlot[]>;
+  };
+}
+
 const DAYS = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"];
 const WEEK_DATE_FORMATTER = new Intl.DateTimeFormat("ru-RU", {
   day: "2-digit",
@@ -121,6 +137,9 @@ const getWeekDayDate = (weekKey: string, dayIndex: number) => {
   date.setDate(date.getDate() + dayIndex);
   return formatDateKey(date);
 };
+
+const getSlotKey = (date: string, lessonNumber: number) =>
+  `${date}:${lessonNumber}`;
 
 const PAIRS = [
   { num: 1, time: "08:45-10:05" },
@@ -204,15 +223,10 @@ const DraggableCard: React.FC<{
           {count}
         </div>
       )}
-      <div className="flex justify-between items-start mb-1">
-        <div className="flex items-center gap-1">
-          <div className="p-0.5 hover:bg-black/5 rounded">
-            <GripVertical size={10} className="text-text-tertiary" />
-          </div>
-          <span className={`text-[9px] font-bold uppercase ${styles.text}`}>
-            {entry.stream_type}
-          </span>
-        </div>
+      <div className="absolute left-1.5 top-2 p-0.5 hover:bg-black/5 rounded">
+        <GripVertical size={10} className="text-text-tertiary" />
+      </div>
+      <div className="absolute right-1 top-1">
         <div className="flex gap-1 opacity-0 group-hover/card:opacity-100 transition-opacity">
           <button
             onPointerDown={(e) => e.stopPropagation()}
@@ -265,7 +279,7 @@ const DraggableCard: React.FC<{
           <Lock size={10} />
         </div>
       )}
-      <div className="text-[11px] font-bold text-text-primary leading-tight mb-2 line-clamp-2">
+      <div className="pl-3 pr-5 text-[11px] font-bold text-text-primary leading-tight mb-2 line-clamp-2">
         {entry.event_name}
       </div>
       <div className="space-y-1">
@@ -457,7 +471,9 @@ const DroppableCell: React.FC<{
   dayIdx: number;
   pairNum: number;
   children: React.ReactNode;
-}> = ({ dayIdx, pairNum, children }) => {
+  showAvailability: boolean;
+  isAvailable: boolean;
+}> = ({ dayIdx, pairNum, children, showAvailability, isAvailable }) => {
   const { isOver, setNodeRef } = useDroppable({
     id: `cell-${dayIdx}-${pairNum}`,
     data: { dayIdx, pairNum },
@@ -466,7 +482,26 @@ const DroppableCell: React.FC<{
   return (
     <td
       ref={setNodeRef}
-      className={`p-2 border-l border-border-light align-top min-h-[140px] transition-colors relative ${isOver ? "bg-brand/5" : "bg-white hover:bg-gray-50/30"}`}
+      title={
+        showAvailability
+          ? isAvailable
+            ? "Свободно для группы и преподавателя"
+            : "Слот занят группой или преподавателем"
+          : undefined
+      }
+      className={`p-1.5 border-l border-border-light align-top min-h-[140px] transition-colors relative ${
+        showAvailability
+          ? isAvailable
+            ? isOver
+              ? "bg-amber-200 ring-2 ring-amber-400 ring-inset"
+              : "bg-amber-50 ring-1 ring-amber-300 ring-inset"
+            : isOver
+              ? "bg-red-50 ring-2 ring-red-200 ring-inset"
+              : "bg-slate-50/70"
+          : isOver
+            ? "bg-brand/5"
+            : "bg-white hover:bg-gray-50/30"
+      }`}
     >
       <div className="flex flex-col gap-2 min-h-[100px]">{children}</div>
     </td>
@@ -484,7 +519,7 @@ const SidebarDroppable: React.FC<{ children: React.ReactNode }> = ({
   return (
     <div
       ref={setNodeRef}
-      className={`flex-1 overflow-y-auto p-4 transition-colors ${isOver ? "bg-brand/5 ring-2 ring-brand ring-inset" : ""}`}
+      className={`flex-1 overflow-y-auto p-3 transition-colors ${isOver ? "bg-brand/5 ring-2 ring-brand ring-inset" : ""}`}
     >
       <div className="grid grid-cols-1 gap-3">{children}</div>
     </div>
@@ -506,7 +541,6 @@ export const SchedulePage: React.FC = () => {
   );
   const [selectedGroup, setSelectedGroup] = useState<string>("");
   const [groups, setGroups] = useState<string[]>([]);
-  const [teachers, setTeachers] = useState<{ id: string; name: string }[]>([]);
   const [selectedTeacherId, setSelectedTeacherId] = useState<string>("");
   const [viewMode, setViewMode] = useState<"group" | "teacher">("group");
   const [selectedWeek, setSelectedWeek] = useState<string | null>(null);
@@ -535,10 +569,40 @@ export const SchedulePage: React.FC = () => {
     null,
   );
   const [detailsLoading, setDetailsLoading] = useState(false);
+  const [activeEntryId, setActiveEntryId] = useState<number | null>(null);
+  const [scheduleAvailability, setScheduleAvailability] =
+    useState<ScheduleAvailability | null>(null);
+
+  const calculationTeachers = React.useMemo(() => {
+    const teachers = new Map<string, string>();
+    entries.forEach((entry) => {
+      if (entry.teacher_id && entry.teacher) {
+        teachers.set(entry.teacher_id.toString(), entry.teacher);
+      }
+    });
+    return Array.from(teachers, ([id, name]) => ({ id, name })).sort((a, b) =>
+      a.name.localeCompare(b.name, "ru"),
+    );
+  }, [entries]);
+
+  useEffect(() => {
+    setSelectedTeacherId((current) =>
+      calculationTeachers.some((teacher) => teacher.id === current)
+        ? current
+        : calculationTeachers[0]?.id || "",
+    );
+  }, [calculationTeachers]);
 
   const conflictedEntries = React.useMemo(() => {
-    return entries.filter((e) => e.warning);
-  }, [entries]);
+    return entries.filter(
+      (entry) =>
+        entry.warning &&
+        (viewMode === "group"
+          ? selectedGroup === "Все" ||
+            groupLabelIncludesBase(entry.group_name, selectedGroup)
+          : entry.teacher_id?.toString() === selectedTeacherId),
+    );
+  }, [entries, selectedGroup, selectedTeacherId, viewMode]);
 
   const getEntryDayName = (dateStr: string) => {
     const d = new Date(dateStr);
@@ -691,45 +755,24 @@ export const SchedulePage: React.FC = () => {
     }
   }, [selectedTaskId]);
 
-  const fetchTeachersList = useCallback(async () => {
+  const fetchSchedule = useCallback(async (id: string) => {
+    setIsLoading(true);
     try {
-      const res = await apiFetch(`${API_BASE_URL}/api/v1/scheduler/teachers`);
+      const semesterBatchId = id.startsWith("semester:")
+        ? id.slice("semester:".length)
+        : null;
+      const url = semesterBatchId
+        ? `${API_BASE_URL}/api/v1/scheduler/schedule?semester_batch_id=${encodeURIComponent(semesterBatchId)}`
+        : `${API_BASE_URL}/api/v1/scheduler/schedule?task_id=${id}`;
+      const res = await apiFetch(url);
       const data = await res.json();
-      setTeachers(data);
-      if (!selectedTeacherId && data.length > 0) {
-        setSelectedTeacherId(data[0].id);
-      }
-    } catch {
-      console.error("Failed to fetch teachers");
+      setEntries(data);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsLoading(false);
     }
-  }, [selectedTeacherId]);
-
-  const fetchSchedule = useCallback(
-    async (id: string, mode: "group" | "teacher", filterId: string) => {
-      setIsLoading(true);
-      try {
-        const semesterBatchId = id.startsWith("semester:")
-          ? id.slice("semester:".length)
-          : null;
-        let url = semesterBatchId
-          ? `${API_BASE_URL}/api/v1/scheduler/schedule?semester_batch_id=${encodeURIComponent(semesterBatchId)}`
-          : `${API_BASE_URL}/api/v1/scheduler/schedule?task_id=${id}`;
-        if (mode === "group" && filterId) {
-          url += `&group_name=${encodeURIComponent(filterId)}`;
-        } else if (mode === "teacher" && filterId) {
-          url += `&teacher_id=${filterId}`;
-        }
-        const res = await apiFetch(url);
-        const data = await res.json();
-        setEntries(data);
-      } catch (e) {
-        console.error(e);
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [setEntries],
-  );
+  }, []);
 
   const handleExport = () => {
     if (selectedTaskId) {
@@ -746,8 +789,7 @@ export const SchedulePage: React.FC = () => {
 
   useEffect(() => {
     fetchTasks();
-    fetchTeachersList();
-  }, [fetchTasks, fetchTeachersList]);
+  }, [fetchTasks]);
 
   useEffect(() => {
     void fetchGroups();
@@ -755,16 +797,9 @@ export const SchedulePage: React.FC = () => {
 
   useEffect(() => {
     if (selectedTaskId) {
-      const filterId = viewMode === "group" ? selectedGroup : selectedTeacherId;
-      fetchSchedule(selectedTaskId, viewMode, filterId);
+      fetchSchedule(selectedTaskId);
     }
-  }, [
-    selectedTaskId,
-    viewMode,
-    selectedGroup,
-    selectedTeacherId,
-    fetchSchedule,
-  ]);
+  }, [selectedTaskId, fetchSchedule]);
 
   // Fetch quality when group/task changes
   useEffect(() => {
@@ -847,6 +882,32 @@ export const SchedulePage: React.FC = () => {
     });
   }, [availableWeeks, requestedWeek]);
 
+  useEffect(() => {
+    if (!selectedWeek) {
+      setScheduleAvailability(null);
+      return;
+    }
+    let cancelled = false;
+    const loadAvailability = async () => {
+      try {
+        const endDate = getWeekDayDate(selectedWeek, DAYS.length - 1);
+        const response = await apiFetch(
+          `${API_BASE_URL}/api/v1/scheduler/schedule/availability?start_date=${selectedWeek}&end_date=${endDate}`,
+        );
+        if (!response.ok) throw new Error("Availability request failed");
+        const data = (await response.json()) as ScheduleAvailability;
+        if (!cancelled) setScheduleAvailability(data);
+      } catch (error) {
+        console.error(error);
+        if (!cancelled) setScheduleAvailability(null);
+      }
+    };
+    void loadAvailability();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedWeek]);
+
   const scheduleSources = React.useMemo<ScheduleSource[]>(() => {
     const semesterBatches = new Map<string, GenerationTaskSummary[]>();
     const standaloneTasks: GenerationTaskSummary[] = [];
@@ -878,14 +939,26 @@ export const SchedulePage: React.FC = () => {
       ...semesters,
       ...standaloneTasks.map((task) => ({
         id: task.id.toString(),
-        label: `Расчёт #${task.id} · ${new Date(task.created_at).toLocaleDateString("ru-RU")}`,
+        label: `Расчёт #${task.id} · ${new Date(task.created_at).toLocaleDateString("ru-RU", { timeZone: "Europe/Moscow" })}`,
         kind: "task" as const,
       })),
     ];
   }, [tasks]);
 
+  const handleDragStart = (event: DragStartEvent) => {
+    const activeId = event.active.id.toString();
+    setActiveEntryId(
+      activeId.startsWith("card-")
+        ? Number(activeId.replace("card-", ""))
+        : null,
+    );
+  };
+
+  const handleDragCancel = () => setActiveEntryId(null);
+
   const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
+    setActiveEntryId(null);
 
     if (over) {
       const activeId = active.id.toString();
@@ -907,6 +980,10 @@ export const SchedulePage: React.FC = () => {
         return;
 
       const dateStr = getWeekDayDate(selectedWeek, dayIdx);
+      if (!availableSlotKeys.has(getSlotKey(dateStr, pairNum))) {
+        alert("Этот слот занят группой или преподавателем");
+        return;
+      }
 
       const previousEntries = entries;
       // Optimistic update
@@ -1059,6 +1136,73 @@ export const SchedulePage: React.FC = () => {
 
   const assignedEntries = entries.filter((e) => e.date);
   const unassignedEntries = entries.filter((e) => !e.date);
+  const knownSubgroups = React.useMemo(
+    () => collectKnownSubgroups(entries.map((entry) => entry.group_name)),
+    [entries],
+  );
+  const activeEntry = React.useMemo(
+    () => entries.find((entry) => entry.id === activeEntryId) || null,
+    [activeEntryId, entries],
+  );
+  const availableSlotKeys = React.useMemo(() => {
+    const available = new Set<string>();
+    if (!activeEntry || !selectedWeek) return available;
+
+    DAYS.forEach((_day, dayIdx) => {
+      const date = getWeekDayDate(selectedWeek, dayIdx);
+      PAIRS.forEach((pair) => {
+        const slotIsListed = (slots: UnavailableSlot[] | undefined) =>
+          slots?.some(
+            ([blockedDate, blockedLesson]) =>
+              blockedDate === date && blockedLesson === pair.num,
+          ) || false;
+        const hardUnavailable = scheduleAvailability?.unavailable;
+        const violatesAvailability = Boolean(
+          hardUnavailable &&
+          (slotIsListed(hardUnavailable.global["*"]) ||
+            (activeEntry.teacher &&
+              slotIsListed(hardUnavailable.teacher[activeEntry.teacher])) ||
+            slotIsListed(hardUnavailable.group[activeEntry.group_name])),
+        );
+        const hasConflict = assignedEntries.some((other) => {
+          if (
+            other.id === activeEntry.id ||
+            other.date !== date ||
+            other.lesson_number !== pair.num
+          ) {
+            return false;
+          }
+          const sameStream = Boolean(
+            activeEntry.source_stream_id &&
+            activeEntry.source_stream_id === other.source_stream_id,
+          );
+          if (sameStream) return false;
+
+          const teacherIsBusy = Boolean(
+            activeEntry.teacher_id &&
+            activeEntry.teacher_id === other.teacher_id,
+          );
+          const groupIsBusy = groupLabelsOverlap(
+            activeEntry.group_name,
+            other.group_name,
+            knownSubgroups,
+          );
+          return teacherIsBusy || groupIsBusy;
+        });
+        if (!hasConflict && !violatesAvailability) {
+          available.add(getSlotKey(date, pair.num));
+        }
+      });
+    });
+
+    return available;
+  }, [
+    activeEntry,
+    assignedEntries,
+    knownSubgroups,
+    scheduleAvailability,
+    selectedWeek,
+  ]);
   const filteredUnassigned = unassignedEntries.filter((e) => {
     if (viewMode === "group") {
       return (
@@ -1173,7 +1317,10 @@ export const SchedulePage: React.FC = () => {
                 onChange={(e) => setSelectedTeacherId(e.target.value)}
                 className="bg-transparent border-none font-semibold text-text-primary focus:ring-0 cursor-pointer"
               >
-                {teachers.map((t) => (
+                {calculationTeachers.length === 0 && (
+                  <option value="">В расчёте нет педагогов</option>
+                )}
+                {calculationTeachers.map((t) => (
                   <option key={t.id} value={t.id}>
                     {t.name}
                   </option>
@@ -1400,12 +1547,14 @@ export const SchedulePage: React.FC = () => {
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}
+          onDragStart={handleDragStart}
+          onDragCancel={handleDragCancel}
           onDragEnd={handleDragEnd}
         >
-          <div className="flex gap-6 items-start">
+          <div className="flex gap-4 items-start">
             {/* Grid Area */}
-            <div className="flex-1 overflow-x-auto bg-white rounded-2xl border border-border-light shadow-sm">
-              <table className="w-full border-collapse min-w-[800px] table-fixed">
+            <div className="flex-1 min-w-0 overflow-x-auto bg-white rounded-2xl border border-border-light shadow-sm">
+              <table className="w-full border-collapse min-w-[900px] table-fixed">
                 <thead>
                   <tr className="border-b border-border-light bg-bg-base/30">
                     <th className="p-4 text-left text-xs font-bold text-text-tertiary uppercase w-24">
@@ -1467,6 +1616,16 @@ export const SchedulePage: React.FC = () => {
                             key={day}
                             dayIdx={dayIdx}
                             pairNum={pair.num}
+                            showAvailability={activeEntry !== null}
+                            isAvailable={Boolean(
+                              selectedWeek &&
+                              availableSlotKeys.has(
+                                getSlotKey(
+                                  getWeekDayDate(selectedWeek, dayIdx),
+                                  pair.num,
+                                ),
+                              ),
+                            )}
                           >
                             {dayEntries.map((entry) => (
                               <DraggableCard
@@ -1490,8 +1649,8 @@ export const SchedulePage: React.FC = () => {
 
             {/* Collapsible Conflicts Sidebar */}
             {conflictsOpen && (
-              <div className="w-80 bg-white rounded-2xl border border-border-light shadow-sm flex flex-col h-[800px] sticky top-6 animate-fade-in shrink-0">
-                <div className="p-4 border-b border-border-light bg-red-50/50 flex items-center justify-between">
+              <div className="w-72 bg-white rounded-2xl border border-border-light shadow-sm flex flex-col h-[800px] sticky top-6 animate-fade-in shrink-0">
+                <div className="p-3 border-b border-border-light bg-red-50/50 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <AlertCircle size={18} className="text-red-500" />
                     <h2 className="font-bold text-text-primary text-sm">
@@ -1506,7 +1665,7 @@ export const SchedulePage: React.FC = () => {
                   </button>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                <div className="flex-1 overflow-y-auto p-3 space-y-3">
                   {conflictedEntries.length === 0 ? (
                     <div className="h-full flex flex-col items-center justify-center text-text-tertiary gap-2 py-20 text-center">
                       <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-500 flex items-center justify-center font-bold text-lg">
@@ -1572,7 +1731,7 @@ export const SchedulePage: React.FC = () => {
                   )}
                 </div>
 
-                <div className="p-4 bg-red-50/40 border-t border-red-100 rounded-b-2xl">
+                <div className="p-3 bg-red-50/40 border-t border-red-100 rounded-b-2xl">
                   <p className="text-[10px] text-red-700 leading-relaxed font-semibold">
                     Нажмите на конфликт, чтобы автоматически сфокусироваться и
                     подсветить занятие в сетке.
@@ -1582,8 +1741,8 @@ export const SchedulePage: React.FC = () => {
             )}
 
             {/* Unassigned Sidebar */}
-            <div className="w-80 bg-white rounded-2xl border border-border-light shadow-sm flex flex-col h-[800px] sticky top-6">
-              <div className="p-4 border-b border-border-light bg-bg-base/20 flex items-center justify-between">
+            <div className="w-72 bg-white rounded-2xl border border-border-light shadow-sm flex flex-col h-[800px] sticky top-6 shrink-0">
+              <div className="p-3 border-b border-border-light bg-bg-base/20 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Layers size={18} className="text-brand" />
                   <h2 className="font-bold text-text-primary">
@@ -1653,10 +1812,11 @@ export const SchedulePage: React.FC = () => {
                 )}
               </SidebarDroppable>
 
-              <div className="p-4 bg-orange-50 border-t border-orange-100 rounded-b-2xl">
+              <div className="p-3 bg-orange-50 border-t border-orange-100 rounded-b-2xl">
                 <p className="text-[10px] text-orange-700 leading-relaxed font-medium">
-                  Перетащите карточки отсюда в сетку расписания, чтобы назначить
-                  им время и день.
+                  {activeEntry
+                    ? "Жёлтым отмечены свободные слоты для группы и преподавателя."
+                    : "Перетащите карточки отсюда в сетку расписания, чтобы назначить им время и день."}
                 </p>
               </div>
             </div>

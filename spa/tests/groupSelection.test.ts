@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  collectKnownSubgroups,
   getBaseGroupNames,
   getStandaloneGroups,
   groupLabelIncludesBase,
+  groupLabelsOverlap,
   isStandaloneGroupName,
 } from "../src/utils/groupSelection.js";
 
@@ -39,5 +41,33 @@ test("bulk selection keeps only standalone groups", () => {
       "К0409-25/2",
     ]),
     ["К0409-25/1", "К0409-25/2"],
+  );
+});
+
+test("whole groups overlap language subgroups but L1 and L2 can run together", () => {
+  const labels = ["К0109-23", "К0109-23 (L1)", "К0109-23 (L2)"];
+  const knownSubgroups = collectKnownSubgroups(labels);
+
+  assert.equal(
+    groupLabelsOverlap("К0109-23", "К0109-23 (L1)", knownSubgroups),
+    true,
+  );
+  assert.equal(
+    groupLabelsOverlap("К0109-23", "К0109-23 (L2)", knownSubgroups),
+    true,
+  );
+  assert.equal(
+    groupLabelsOverlap("К0109-23 (L1)", "К0109-23 (L2)", knownSubgroups),
+    false,
+  );
+});
+
+test("joint labels occupy every base group in the stream", () => {
+  const labels = ["К0109-23", "К0609-23", "К0109-23, К0609-23 (L1)"];
+  const knownSubgroups = collectKnownSubgroups(labels);
+
+  assert.equal(
+    groupLabelsOverlap("К0109-23, К0609-23 (L1)", "К0609-23", knownSubgroups),
+    true,
   );
 });

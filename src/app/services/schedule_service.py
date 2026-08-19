@@ -310,6 +310,7 @@ class ScheduleService:
             {
                 "id": e.id,
                 "task_id": e.task_id,
+                "source_stream_id": e.source_stream_id,
                 "group_name": e.group_name,
                 "event_name": e.event_name,
                 "stream_type": e.stream_type,

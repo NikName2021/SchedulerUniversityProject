@@ -169,6 +169,31 @@ async def test_semester_batch_can_be_deleted(
 
 
 @pytest.mark.asyncio
+async def test_generation_task_timestamps_are_serialized_as_utc(
+    api_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    task = GenerationTask(
+        groups_json='["A"]',
+        holidays_json="[]",
+        settings_json="{}",
+        status="success",
+        created_at=datetime.datetime(2026, 8, 19, 9, 15),
+        published_at=datetime.datetime(2026, 8, 19, 9, 20),
+        canceled_at=datetime.datetime(2026, 8, 19, 9, 25),
+    )
+    db_session.add(task)
+    await db_session.commit()
+
+    response = await api_client.get("/api/v1/scheduler/tasks")
+
+    assert response.status_code == 200
+    payload = next(item for item in response.json() if item["id"] == task.id)
+    assert payload["created_at"] == "2026-08-19T09:15:00Z"
+    assert payload["published_at"] == "2026-08-19T09:20:00Z"
+    assert payload["canceled_at"] == "2026-08-19T09:25:00Z"
+
+
+@pytest.mark.asyncio
 async def test_groups_endpoint_only_returns_scheduled_groups_for_calculation(
     api_client: AsyncClient, db_session: AsyncSession
 ) -> None:

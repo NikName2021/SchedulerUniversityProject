@@ -11,6 +11,8 @@ from core.config import (
     PLACEMENT_STAGE_MIN_SECONDS,
     PLACEMENT_STAGE_TIME_RATIO,
     QUALITY_STAGE_MIN_SECONDS,
+    WINDOW_STAGE_MIN_SECONDS,
+    WINDOW_STAGE_TIME_RATIO,
 )
 from core.constants import (
     NUM_WORKERS,
@@ -176,7 +178,7 @@ def _preference_penalty(
 def solve_event_component(
     events: list[dict[str, Any]], context: dict[str, Any]
 ) -> dict[str, Any]:
-    """Solve one conflict component in placement and quality stages."""
+    """Solve one conflict component in placement, window, and quality stages."""
     started_at = time.perf_counter()
     slots = _generate_slots(context)
     if not slots:
@@ -368,10 +370,17 @@ def solve_event_component(
             "solver_status": placement_stage["status"],
             "objective": None,
             "placement_objective": None,
+            "window_objective": None,
             "quality_objective": None,
             "unassigned_count": None,
             "stages": {
                 "placement": placement_stage,
+                "windows": {
+                    "status": "skipped",
+                    "solve_seconds": 0.0,
+                    "objective": None,
+                    "reason": "placement_stage_has_no_feasible_solution",
+                },
                 "quality": {
                     "status": "skipped",
                     "solve_seconds": 0.0,
@@ -413,21 +422,29 @@ def solve_event_component(
     selected_values = placement_values
     selected_deficits = deficit_values
     selected_status = placement_stage["status"]
+    window_objective: int | None = None
     quality_objective: float | None = None
+    window_stage: dict[str, Any] = {
+        "status": "skipped",
+        "solve_seconds": 0.0,
+        "objective": None,
+        "reason": None,
+    }
     quality_stage: dict[str, Any] = {
         "status": "skipped",
         "solve_seconds": 0.0,
         "objective": None,
         "reason": None,
     }
-    remaining_for_quality = total_budget - (time.perf_counter() - started_at)
+    remaining_for_windows = total_budget - (time.perf_counter() - started_at)
 
-    if remaining_for_quality < float(QUALITY_STAGE_MIN_SECONDS):
+    if remaining_for_windows < float(QUALITY_STAGE_MIN_SECONDS):
+        window_stage["reason"] = "time_budget_exhausted"
         quality_stage["reason"] = "time_budget_exhausted"
     else:
         # Preserve the best placement found even when the time-limited first
-        # stage could not prove optimality. Fixing every deficit guarantees
-        # that quality optimization cannot remove already placed lessons.
+        # stage could not prove optimality. Every later stage keeps the exact
+        # per-event deficit, so no quality criterion can remove placed lessons.
         model.Add(sum(placement_terms) == placement_value)
         for key, variable in variables.items():
             model.AddHint(variable, placement_values[key])
@@ -435,81 +452,9 @@ def solve_event_component(
             model.Add(deficit == deficit_values[event_id])
             model.AddHint(deficit, deficit_values[event_id])
 
-        progression_rule = _rule(context, "lecture_before_practice", weight=5)
-        # Keep practical and laboratory progress behind lectures for the same
-        # group and subject. These auxiliary variables are intentionally added
-        # only after the maximum placement count has been established.
-        for group in (
-            sorted({group for event in events for group in event["groups"]})
-            if progression_rule["enabled"]
-            else []
-        ):
-            subjects = {
-                event["subject"] for event in events if group in event["groups"]
-            }
-            for subject in subjects:
-                lecture_events = [
-                    event
-                    for event in events
-                    if event["subject"] == subject
-                    and event["type"] == "lec"
-                    and group in event["groups"]
-                ]
-                practical_events = [
-                    event
-                    for event in events
-                    if event["subject"] == subject
-                    and event["type"] in {"sem", "lab"}
-                    and group in event["groups"]
-                ]
-                if not lecture_events or not practical_events:
-                    continue
-                total_lectures = sum(
-                    int(event["lessons_count"]) for event in lecture_events
-                )
-                total_practicals = sum(
-                    int(event["lessons_count"]) for event in practical_events
-                )
-                cumulative_lectures: Any = 0
-                cumulative_practicals: Any = 0
-                for day in sorted(by_day):
-                    for slot in sorted(by_day[day], key=lambda value: value[1]):
-                        cumulative_lectures += sum(
-                            variables[(event["id"], slot)]
-                            for event in lecture_events
-                            if (event["id"], slot) in variables
-                        )
-                        cumulative_practicals += sum(
-                            variables[(event["id"], slot)]
-                            for event in practical_events
-                            if (event["id"], slot) in variables
-                        )
-                        violation = model.NewIntVar(
-                            -total_lectures * total_practicals,
-                            total_lectures * total_practicals,
-                            "progress_"
-                            f"{group}_{subject}_{day.isoformat()}_{slot[1]}",
-                        )
-                        model.Add(
-                            violation
-                            == cumulative_practicals * total_lectures
-                            - cumulative_lectures * total_practicals
-                        )
-                        positive_violation = model.NewIntVar(
-                            0,
-                            total_lectures * total_practicals,
-                            "progress_positive_"
-                            f"{group}_{subject}_{day.isoformat()}_{slot[1]}",
-                        )
-                        model.AddMaxEquality(positive_violation, [0, violation])
-                        quality_penalties.append(
-                            positive_violation
-                            * PENALTY_PROGRESS_VIOLATION
-                            * progression_rule["weight"]
-                        )
-
-        # Penalize every empty lesson between the first and last lesson of a
-        # group. Occupancy auxiliaries also support the soft lunch rule.
+        window_penalties: list[Any] = []
+        # Build occupancy before the window stage. It is also reused by the
+        # soft lunch criterion during final quality optimization.
         if windows_rule["enabled"] or (
             lunch_rule["enabled"] and not lunch_rule["is_hard"]
         ):
@@ -556,7 +501,7 @@ def solve_event_component(
                                 - occupied[index]
                                 - 1
                             )
-                            quality_penalties.append(
+                            window_penalties.append(
                                 window * PENALTY_WINDOW * windows_rule["weight"]
                             )
 
@@ -591,45 +536,199 @@ def solve_event_component(
                             lunch_violation * 100 * lunch_rule["weight"]
                         )
 
-        remaining_for_quality = total_budget - (time.perf_counter() - started_at)
-        if not quality_penalties:
-            quality_stage["reason"] = "no_quality_terms"
-        elif remaining_for_quality < float(QUALITY_STAGE_MIN_SECONDS):
-            quality_stage["reason"] = "time_budget_exhausted_during_model_build"
+        remaining_for_windows = total_budget - (time.perf_counter() - started_at)
+        window_result_locked = False
+        if not window_penalties:
+            window_stage["reason"] = "no_window_terms"
+            window_result_locked = True
+        elif remaining_for_windows < float(QUALITY_STAGE_MIN_SECONDS):
+            window_stage["reason"] = "time_budget_exhausted_during_model_build"
+            quality_stage["reason"] = "time_budget_exhausted"
         else:
-            model.Minimize(sum(quality_penalties))
-            quality_solver = cp_model.CpSolver()
-            quality_solver.parameters.max_time_in_seconds = remaining_for_quality
-            quality_solver.parameters.num_search_workers = num_workers
-            quality_started_at = time.perf_counter()
-            quality_status = quality_solver.Solve(model)
-            quality_seconds = time.perf_counter() - quality_started_at
-            quality_stage = {
-                "status": quality_solver.StatusName(quality_status),
-                "solve_seconds": round(quality_seconds, 4),
+            window_budget = min(
+                remaining_for_windows,
+                max(
+                    min(float(WINDOW_STAGE_MIN_SECONDS), remaining_for_windows),
+                    total_budget * float(WINDOW_STAGE_TIME_RATIO),
+                ),
+            )
+            model.Minimize(sum(window_penalties))
+            window_solver = cp_model.CpSolver()
+            window_solver.parameters.max_time_in_seconds = window_budget
+            window_solver.parameters.num_search_workers = num_workers
+            window_started_at = time.perf_counter()
+            window_status = window_solver.Solve(model)
+            window_seconds = time.perf_counter() - window_started_at
+            window_stage = {
+                "status": window_solver.StatusName(window_status),
+                "solve_seconds": round(window_seconds, 4),
                 "objective": None,
                 "best_bound": None,
-                "conflicts": quality_solver.NumConflicts(),
-                "branches": quality_solver.NumBranches(),
+                "conflicts": window_solver.NumConflicts(),
+                "branches": window_solver.NumBranches(),
                 "reason": None,
             }
-            if quality_status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            if window_status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
                 selected_values = {
-                    key: int(quality_solver.Value(variable))
+                    key: int(window_solver.Value(variable))
                     for key, variable in variables.items()
                 }
                 selected_deficits = {
-                    event_id: int(quality_solver.Value(deficit))
+                    event_id: int(window_solver.Value(deficit))
                     for event_id, (deficit, _target) in deficits.items()
                 }
-                selected_status = quality_stage["status"]
-                quality_objective = round(quality_solver.ObjectiveValue(), 2)
-                quality_stage["objective"] = quality_objective
-                quality_stage["best_bound"] = round(
-                    quality_solver.BestObjectiveBound(), 2
+                selected_status = window_stage["status"]
+                window_objective = int(round(window_solver.ObjectiveValue()))
+                window_stage["objective"] = window_objective
+                window_stage["best_bound"] = round(
+                    window_solver.BestObjectiveBound(), 2
+                )
+                window_stage["optimality_proven"] = (
+                    window_status == cp_model.OPTIMAL or window_objective == 0
+                )
+                model.Add(sum(window_penalties) == window_objective)
+                model.ClearHints()
+                for key, variable in variables.items():
+                    model.AddHint(variable, selected_values[key])
+                for event_id, (deficit, _target) in deficits.items():
+                    model.AddHint(deficit, selected_deficits[event_id])
+                window_result_locked = True
+            else:
+                window_stage["reason"] = "window_stage_has_no_feasible_solution"
+                quality_stage["reason"] = "window_result_not_available"
+
+        if window_result_locked:
+            progression_rule = _rule(
+                context, "lecture_before_practice", weight=5
+            )
+            # Add progression auxiliaries only after the achieved window result
+            # has been fixed. The last stage therefore cannot trade windows for
+            # lecture order, preferences, or earlier lesson numbers.
+            for group in (
+                sorted({group for event in events for group in event["groups"]})
+                if progression_rule["enabled"]
+                else []
+            ):
+                subjects = {
+                    event["subject"]
+                    for event in events
+                    if group in event["groups"]
+                }
+                for subject in subjects:
+                    lecture_events = [
+                        event
+                        for event in events
+                        if event["subject"] == subject
+                        and event["type"] == "lec"
+                        and group in event["groups"]
+                    ]
+                    practical_events = [
+                        event
+                        for event in events
+                        if event["subject"] == subject
+                        and event["type"] in {"sem", "lab"}
+                        and group in event["groups"]
+                    ]
+                    if not lecture_events or not practical_events:
+                        continue
+                    total_lectures = sum(
+                        int(event["lessons_count"]) for event in lecture_events
+                    )
+                    total_practicals = sum(
+                        int(event["lessons_count"])
+                        for event in practical_events
+                    )
+                    cumulative_lectures: Any = 0
+                    cumulative_practicals: Any = 0
+                    for day in sorted(by_day):
+                        for slot in sorted(
+                            by_day[day], key=lambda value: value[1]
+                        ):
+                            cumulative_lectures += sum(
+                                variables[(event["id"], slot)]
+                                for event in lecture_events
+                                if (event["id"], slot) in variables
+                            )
+                            cumulative_practicals += sum(
+                                variables[(event["id"], slot)]
+                                for event in practical_events
+                                if (event["id"], slot) in variables
+                            )
+                            violation = model.NewIntVar(
+                                -total_lectures * total_practicals,
+                                total_lectures * total_practicals,
+                                "progress_"
+                                f"{group}_{subject}_{day.isoformat()}_{slot[1]}",
+                            )
+                            model.Add(
+                                violation
+                                == cumulative_practicals * total_lectures
+                                - cumulative_lectures * total_practicals
+                            )
+                            positive_violation = model.NewIntVar(
+                                0,
+                                total_lectures * total_practicals,
+                                "progress_positive_"
+                                f"{group}_{subject}_{day.isoformat()}_{slot[1]}",
+                            )
+                            model.AddMaxEquality(
+                                positive_violation, [0, violation]
+                            )
+                            quality_penalties.append(
+                                positive_violation
+                                * PENALTY_PROGRESS_VIOLATION
+                                * progression_rule["weight"]
+                            )
+
+            remaining_for_quality = total_budget - (
+                time.perf_counter() - started_at
+            )
+            if not quality_penalties:
+                quality_stage["reason"] = "no_quality_terms"
+            elif remaining_for_quality < float(QUALITY_STAGE_MIN_SECONDS):
+                quality_stage["reason"] = (
+                    "time_budget_exhausted_during_model_build"
                 )
             else:
-                quality_stage["reason"] = "quality_stage_has_no_feasible_solution"
+                model.Minimize(sum(quality_penalties))
+                quality_solver = cp_model.CpSolver()
+                quality_solver.parameters.max_time_in_seconds = (
+                    remaining_for_quality
+                )
+                quality_solver.parameters.num_search_workers = num_workers
+                quality_started_at = time.perf_counter()
+                quality_status = quality_solver.Solve(model)
+                quality_seconds = time.perf_counter() - quality_started_at
+                quality_stage = {
+                    "status": quality_solver.StatusName(quality_status),
+                    "solve_seconds": round(quality_seconds, 4),
+                    "objective": None,
+                    "best_bound": None,
+                    "conflicts": quality_solver.NumConflicts(),
+                    "branches": quality_solver.NumBranches(),
+                    "reason": None,
+                }
+                if quality_status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+                    selected_values = {
+                        key: int(quality_solver.Value(variable))
+                        for key, variable in variables.items()
+                    }
+                    selected_deficits = {
+                        event_id: int(quality_solver.Value(deficit))
+                        for event_id, (deficit, _target) in deficits.items()
+                    }
+                    selected_status = quality_stage["status"]
+                    quality_objective = round(
+                        quality_solver.ObjectiveValue(), 2
+                    )
+                    quality_stage["objective"] = quality_objective
+                    quality_stage["best_bound"] = round(
+                        quality_solver.BestObjectiveBound(), 2
+                    )
+                else:
+                    quality_stage["reason"] = (
+                        "quality_stage_has_no_feasible_solution"
+                    )
 
     elapsed = time.perf_counter() - started_at
     metrics = {
@@ -642,13 +741,19 @@ def solve_event_component(
         "solve_seconds": round(elapsed, 4),
         "solver_status": selected_status,
         "objective": (
-            quality_objective if quality_objective is not None else placement_value
+            quality_objective
+            if quality_objective is not None
+            else window_objective
+            if window_objective is not None
+            else placement_value
         ),
         "placement_objective": placement_value,
+        "window_objective": window_objective,
         "quality_objective": quality_objective,
         "unassigned_count": sum(selected_deficits.values()),
         "stages": {
             "placement": placement_stage,
+            "windows": window_stage,
             "quality": quality_stage,
         },
     }

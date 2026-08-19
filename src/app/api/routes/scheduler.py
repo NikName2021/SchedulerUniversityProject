@@ -3,7 +3,7 @@ import json
 import logging
 import re
 import uuid
-from datetime import datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -42,6 +42,7 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from services.availability_service import build_availability_context
 from services.export_service import escape_excel_formula, generate_excel_report
 from services.generation_lifecycle_service import (
     ACTIVE_STATUSES,
@@ -66,6 +67,17 @@ router = APIRouter(prefix="/scheduler", tags=["Scheduler"])
 UPLOAD_DIR = Path(__file__).resolve().parents[2] / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 SEMESTER_BATCH_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$")
+
+
+def _utc_isoformat(value: datetime | None) -> str | None:
+    """Serialize legacy naive timestamps as the UTC values they contain."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    else:
+        value = value.astimezone(timezone.utc)
+    return value.isoformat().replace("+00:00", "Z")
 
 
 def _revoke_generation_workflow(task: GenerationTask) -> None:
@@ -862,7 +874,7 @@ async def get_generation_tasks(
         {
             "id": t.id,
             "status": t.status,
-            "created_at": t.created_at.isoformat() if t.created_at else None,
+            "created_at": _utc_isoformat(t.created_at),
             "start_date": t.start_date.isoformat() if t.start_date else None,
             "end_date": t.end_date.isoformat() if t.end_date else None,
             "groups": json.loads(t.groups_json) if t.groups_json else [],
@@ -900,8 +912,8 @@ async def get_generation_tasks(
             "parent_task_id": t.parent_task_id,
             "version_number": t.version_number,
             "publication_status": t.publication_status,
-            "published_at": t.published_at.isoformat() if t.published_at else None,
-            "canceled_at": t.canceled_at.isoformat() if t.canceled_at else None,
+            "published_at": _utc_isoformat(t.published_at),
+            "canceled_at": _utc_isoformat(t.canceled_at),
             "edit_revision": t.edit_revision,
         }
         for t in tasks
@@ -1087,6 +1099,24 @@ async def get_schedule_quality(
     return await ScheduleQualityService.analyze(task_id, group_name, db)
 
 
+@router.get("/schedule/availability")
+async def get_schedule_availability(
+    start_date: Annotated[date, Query(...)],
+    end_date: Annotated[date, Query(...)],
+    db: Annotated[AsyncSession, Depends(async_get_db)] = None,
+) -> dict[str, Any]:
+    if end_date < start_date:
+        raise HTTPException(status_code=422, detail="end_date precedes start_date")
+    if (end_date - start_date).days > MAX_GENERATION_HORIZON_DAYS:
+        raise HTTPException(status_code=422, detail="Availability period is too long")
+    context = await build_availability_context(
+        db,
+        start_date.isoformat(),
+        end_date.isoformat(),
+    )
+    return {"unavailable": context["unavailable"]}
+
+
 @router.get("/schedule")
 async def get_schedule(
     task_id: int | None = None,
@@ -1120,6 +1150,7 @@ async def get_schedule(
         {
             "id": e.id,
             "task_id": e.task_id,
+            "source_stream_id": e.source_stream_id,
             "group_name": e.group_name,
             "event_name": e.event_name,
             "stream_type": e.stream_type,
