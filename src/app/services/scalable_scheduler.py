@@ -406,6 +406,9 @@ def solve_event_component(
     placement_stage["best_bound"] = round(
         placement_solver.BestObjectiveBound(), 2
     )
+    placement_stage["optimality_proven"] = (
+        placement_status == cp_model.OPTIMAL or placement_value == 0
+    )
 
     selected_values = placement_values
     selected_deficits = deficit_values
@@ -417,16 +420,14 @@ def solve_event_component(
         "objective": None,
         "reason": None,
     }
-    placement_is_proven = (
-        placement_status == cp_model.OPTIMAL or placement_value == 0
-    )
     remaining_for_quality = total_budget - (time.perf_counter() - started_at)
 
-    if not placement_is_proven:
-        quality_stage["reason"] = "placement_optimum_not_proven"
-    elif remaining_for_quality < float(QUALITY_STAGE_MIN_SECONDS):
+    if remaining_for_quality < float(QUALITY_STAGE_MIN_SECONDS):
         quality_stage["reason"] = "time_budget_exhausted"
     else:
+        # Preserve the best placement found even when the time-limited first
+        # stage could not prove optimality. Fixing every deficit guarantees
+        # that quality optimization cannot remove already placed lessons.
         model.Add(sum(placement_terms) == placement_value)
         for key, variable in variables.items():
             model.AddHint(variable, placement_values[key])
