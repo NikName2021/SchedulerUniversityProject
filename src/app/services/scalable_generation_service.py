@@ -41,6 +41,11 @@ from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import selectinload
 
 from services.availability_service import build_availability_context
+from services.group_relation_service import (
+    collect_known_subgroups,
+    group_resource_keys,
+    parse_group_label,
+)
 from services.scalable_scheduler import assign_rooms_matching, build_conflict_components
 
 logger = logging.getLogger(__name__)
@@ -266,6 +271,14 @@ class ScalableGenerationService:
                 await session.commit()
                 return None
 
+            selected_group_labels = {
+                group.group_name
+                for stream in streams
+                for group in stream.groups
+                if group.group_name in selected_groups
+            }
+            known_subgroups = collect_known_subgroups(selected_group_labels)
+
             rooms: dict[str, dict[str, Any]] = {}
             if ROOM_FUND_ENABLED:
                 room_result = await session.execute(
@@ -413,6 +426,20 @@ class ScalableGenerationService:
                 )
                 if not groups:
                     continue
+                base_groups = sorted(
+                    {
+                        base_group
+                        for group in groups
+                        for base_group in parse_group_label(group).base_groups
+                    }
+                )
+                group_resources = sorted(
+                    {
+                        resource
+                        for group in groups
+                        for resource in group_resource_keys(group, known_subgroups)
+                    }
+                )
                 for group in stream.groups:
                     if group.group_name in groups:
                         group_sizes[group.group_name] = max(
@@ -449,6 +476,8 @@ class ScalableGenerationService:
                     "lessons_count": count,
                     "priority": weekly_priorities.get(stream.id, 5),
                     "time_preference": priorities.get(stream.event_name, "day"),
+                    "base_groups": base_groups,
+                    "group_resources": group_resources,
                     "required_room": (
                         stream.required_room.code
                         if ROOM_FUND_ENABLED and stream.required_room
@@ -478,10 +507,15 @@ class ScalableGenerationService:
                     events.append(event)
                 else:
                     for group in groups:
+                        parsed_group = parse_group_label(group)
                         event = {
                             **base_event,
                             "id": f"stream:{stream.id}:group:{group}",
                             "groups": [group],
+                            "base_groups": list(parsed_group.base_groups),
+                            "group_resources": sorted(
+                                group_resource_keys(group, known_subgroups)
+                            ),
                         }
                         fixed_slot = fixed_by_stream_group.get((stream.id, group))
                         if fixed_slot:
@@ -499,8 +533,8 @@ class ScalableGenerationService:
 
             group_lesson_loads: dict[str, int] = collections.defaultdict(int)
             for event in events:
-                for group in event["groups"]:
-                    group_lesson_loads[group] += int(event["lessons_count"])
+                for resource in event.get("group_resources", event["groups"]):
+                    group_lesson_loads[resource] += int(event["lessons_count"])
 
             components = build_conflict_components(events)
             planning_dates = sum(

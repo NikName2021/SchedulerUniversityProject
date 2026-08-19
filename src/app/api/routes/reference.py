@@ -31,6 +31,7 @@ from schemas.reference import (
     RoomRead,
     RoomUpdate,
     RuleProfileCreate,
+    RuleProfileDetailsRead,
     RuleProfileRead,
     RuleSettingsUpdate,
     StreamRequirementsRead,
@@ -41,6 +42,7 @@ from schemas.reference import (
     TeacherProfileUpdate,
 )
 from services.reference_service import ReferenceService
+from services.rule_catalog_service import describe_rule_profile
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -255,6 +257,22 @@ async def list_rule_profiles(
 ) -> list[RuleProfileRead]:
     profiles = await ReferenceService.list_rule_profiles(db)
     return [RuleProfileRead.model_validate(profile) for profile in profiles]
+
+
+@router.get(
+    "/rule-profiles/{profile_id}/details", response_model=RuleProfileDetailsRead
+)
+async def get_rule_profile_details(
+    profile_id: int,
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+) -> RuleProfileDetailsRead:
+    profile = await ReferenceService.get_rule_profile(profile_id, db)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Rule profile not found")
+    return RuleProfileDetailsRead(
+        profile=RuleProfileRead.model_validate(profile),
+        rules=describe_rule_profile(profile.settings),
+    )
 
 
 @router.post(

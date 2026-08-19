@@ -90,6 +90,35 @@ def test_shared_teacher_events_never_overlap() -> None:
     assert len({tuple(item["slot"]) for item in result["assignments"]}) == 2
 
 
+def test_language_subgroups_can_run_in_parallel() -> None:
+    context = _context()
+    context["lessons"] = [1]
+    first = _event("event-1", ["A (L1)"], 1)
+    first["group_resources"] = ["A::L1"]
+    second = _event("event-2", ["A (L2)"], 2)
+    second["group_resources"] = ["A::L2"]
+
+    result = solve_event_component([first, second], context)
+
+    assert len(result["assignments"]) == 2
+    assert {tuple(item["slot"]) for item in result["assignments"]} == {
+        ("2026-09-07", 1)
+    }
+
+
+def test_full_group_conflicts_with_language_subgroup() -> None:
+    context = _context()
+    full_group = _event("event-1", ["A"], 1)
+    full_group["group_resources"] = ["A::L1", "A::L2"]
+    subgroup = _event("event-2", ["A (L1)"], 2)
+    subgroup["group_resources"] = ["A::L1"]
+
+    result = solve_event_component([full_group, subgroup], context)
+
+    assert len(result["assignments"]) == 2
+    assert len({tuple(item["slot"]) for item in result["assignments"]}) == 2
+
+
 def test_heavily_loaded_group_gets_earlier_shared_teacher_slot() -> None:
     context = _context()
     context["lessons"] = [1, 6]

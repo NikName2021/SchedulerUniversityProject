@@ -1,7 +1,8 @@
 import datetime
 
 import pytest
-from database import AvailabilityRule, Room, StudentGroup
+from database import AvailabilityRule, Room, RuleProfile, RuleSetting, StudentGroup
+from httpx import AsyncClient
 from schemas.reference import AvailabilityRuleCreate, RoomCreate
 from services.availability_service import build_availability_context
 from services.reference_service import ReferenceService
@@ -41,3 +42,65 @@ async def test_room_crud_and_structured_availability(
         ["2026-09-07", 2],
     ]
     assert await db_session.get(AvailabilityRule, 1) is not None
+
+
+@pytest.mark.asyncio
+async def test_rule_profile_details_describe_actual_generator_state(
+    db_session: AsyncSession,
+    api_client: AsyncClient,
+) -> None:
+    profile = RuleProfile(
+        name="Стандартный",
+        description="Базовый профиль",
+        is_default=True,
+        is_active=True,
+    )
+    db_session.add(profile)
+    await db_session.flush()
+    db_session.add_all(
+        [
+            RuleSetting(
+                profile_id=profile.id,
+                rule_code="double_booking",
+                enabled=True,
+                is_hard=True,
+                weight=10,
+            ),
+            RuleSetting(
+                profile_id=profile.id,
+                rule_code="minimize_windows",
+                enabled=False,
+                is_hard=False,
+                weight=7,
+            ),
+            RuleSetting(
+                profile_id=profile.id,
+                rule_code="room_capacity",
+                enabled=True,
+                is_hard=False,
+                weight=5,
+            ),
+            RuleSetting(
+                profile_id=profile.id,
+                rule_code="load_balance",
+                enabled=True,
+                is_hard=False,
+                weight=5,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    response = await api_client.get(
+        f"/api/v1/reference/rule-profiles/{profile.id}/details"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["profile"]["name"] == "Стандартный"
+    rules = {rule["code"]: rule for rule in payload["rules"]}
+    assert rules["double_booking"]["runtime_state"] == "active"
+    assert rules["double_booking"]["configurable"] is False
+    assert rules["minimize_windows"]["runtime_state"] == "disabled"
+    assert rules["room_capacity"]["runtime_state"] == "temporarily_disabled"
+    assert rules["load_balance"]["runtime_state"] == "not_implemented"

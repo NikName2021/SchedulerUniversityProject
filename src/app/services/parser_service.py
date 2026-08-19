@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from services.group_relation_service import parse_group_label
+
 MAX_TABLE_ROWS = 50_000
 MAX_TABLE_COLUMNS = 200
 MAX_WORKBOOK_FILES = 10_000
@@ -135,11 +137,26 @@ def parse_streams_content(file_bytes: bytes, filename: str = "streams.xlsx") -> 
         groups_raw = str(row.get("Группа", "")).strip()
         groups_parsed = []
         if groups_raw and groups_raw != "nan":
-            matches = re.finditer(r"([А-Яа-яA-Za-z0-9\-\/]+)\s*\[(\d+)\]", groups_raw)
-            for m in matches:
-                groups_parsed.append(
-                    {"name": m.group(1).strip(), "size": int(m.group(2))}
-                )
+            matches = list(
+                re.finditer(r"([А-Яа-яA-Za-z0-9\-\/]+)\s*\[(\d+)\]", groups_raw)
+            )
+            label_without_sizes = re.sub(r"\s*\[\d+\]", "", groups_raw).strip()
+            parsed_label = parse_group_label(label_without_sizes)
+            if matches and (parsed_label.is_joint or parsed_label.subgroup):
+                groups_parsed = [
+                    {
+                        "name": label_without_sizes,
+                        "size": sum(int(match.group(2)) for match in matches),
+                    }
+                ]
+            else:
+                for match in matches:
+                    groups_parsed.append(
+                        {
+                            "name": match.group(1).strip(),
+                            "size": int(match.group(2)),
+                        }
+                    )
 
         if not groups_parsed and groups_raw and groups_raw != "nan":
             groups_parsed = [{"name": groups_raw, "size": 0}]

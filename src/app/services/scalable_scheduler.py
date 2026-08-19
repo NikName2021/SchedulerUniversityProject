@@ -67,7 +67,10 @@ def build_conflict_components(
 
     resource_owner: dict[str, int] = {}
     for index, event in enumerate(events):
-        resources = [f"group:{group}" for group in event["groups"]]
+        resources = [
+            f"group:{group}"
+            for group in event.get("group_resources", event["groups"])
+        ]
         if event.get("teacher_id") is not None:
             resources.append(f"teacher-id:{event['teacher_id']}")
         elif event.get("teacher"):
@@ -140,7 +143,7 @@ def _event_slot_is_blocked(
     if recurring in teacher_slots or specific in teacher_slots:
         return True
 
-    for group in event["groups"]:
+    for group in event.get("base_groups", event["groups"]):
         group_slots = unavailable.get("group", {}).get(str(group), set())
         if recurring in group_slots or specific in group_slots:
             return True
@@ -213,18 +216,19 @@ def solve_event_component(
             )
             variables[(event_id, slot)] = variable
             event_variables.append(variable)
-            for group in event["groups"]:
-                by_group_slot[(group, slot)].append(variable)
+            for resource in event.get("group_resources", event["groups"]):
+                by_group_slot[(resource, slot)].append(variable)
             teacher_key = str(event.get("teacher_id") or event.get("teacher") or "")
             if teacher_key:
                 by_teacher_slot[(teacher_key, slot)].append(variable)
 
-            participant_weight = max(1, len(event["groups"]))
+            group_resources = event.get("group_resources", event["groups"])
+            participant_weight = max(1, len(group_resources))
             if late_rule["enabled"]:
                 event_group_load = max(
                     (
                         int(group_lesson_loads.get(group, 1))
-                        for group in event["groups"]
+                        for group in group_resources
                     ),
                     default=1,
                 )
@@ -373,7 +377,13 @@ def solve_event_component(
     # Penalize every empty lesson between the first and last lesson of a group.
     # Using any occupied slot before and after the empty slot also catches
     # double and longer windows, not only occupied-empty-occupied patterns.
-    component_groups = sorted({group for event in events for group in event["groups"]})
+    component_groups = sorted(
+        {
+            group
+            for event in events
+            for group in event.get("group_resources", event["groups"])
+        }
+    )
     windows_rule = _rule(context, "minimize_windows", weight=5)
     lunch_rule = _rule(context, "lunch_break", is_hard=True, weight=5)
     for group in component_groups:

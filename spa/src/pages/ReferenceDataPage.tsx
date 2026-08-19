@@ -1,5 +1,18 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Building2, Plus, RefreshCw, ShieldCheck } from "lucide-react";
+import {
+  Building2,
+  CheckCircle2,
+  ChevronRight,
+  CircleOff,
+  Loader2,
+  LockKeyhole,
+  Plus,
+  RefreshCw,
+  ShieldCheck,
+  SlidersHorizontal,
+  TriangleAlert,
+  X,
+} from "lucide-react";
 import { API_BASE_URL, apiFetch } from "../api/apiConfig";
 
 interface RoomFeature {
@@ -36,12 +49,56 @@ interface RuleProfile {
   settings: Array<{ id: number; rule_code: string; enabled: boolean }>;
 }
 
+type RuleRuntimeState =
+  | "active"
+  | "disabled"
+  | "temporarily_disabled"
+  | "not_implemented";
+
+interface RuleDescription {
+  code: string;
+  name: string;
+  description: string;
+  category: string;
+  configured_enabled: boolean;
+  effective_enabled: boolean;
+  is_hard: boolean;
+  weight: number;
+  configurable: boolean;
+  runtime_state: RuleRuntimeState;
+  runtime_note: string | null;
+}
+
+interface RuleProfileDetails {
+  profile: RuleProfile;
+  rules: RuleDescription[];
+}
+
+const runtimeLabels: Record<RuleRuntimeState, string> = {
+  active: "Применяется",
+  disabled: "Отключено в профиле",
+  temporarily_disabled: "Временно отключено",
+  not_implemented: "Еще не подключено",
+};
+
+const runtimeStyles: Record<RuleRuntimeState, string> = {
+  active: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  disabled: "border-gray-200 bg-gray-50 text-gray-500",
+  temporarily_disabled: "border-amber-200 bg-amber-50 text-amber-700",
+  not_implemented: "border-slate-200 bg-slate-50 text-slate-600",
+};
+
 export const ReferenceDataPage: React.FC = () => {
   const [rooms, setRooms] = useState<Room[]>([]);
   const [activityTypes, setActivityTypes] = useState<ActivityType[]>([]);
   const [profiles, setProfiles] = useState<RuleProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [openedProfile, setOpenedProfile] = useState<RuleProfile | null>(null);
+  const [profileDetails, setProfileDetails] =
+    useState<RuleProfileDetails | null>(null);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
   const [form, setForm] = useState({
     code: "",
     capacity: 30,
@@ -78,6 +135,37 @@ export const ReferenceDataPage: React.FC = () => {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!openedProfile) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpenedProfile(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [openedProfile]);
+
+  const openProfile = async (profile: RuleProfile) => {
+    setOpenedProfile(profile);
+    setProfileDetails(null);
+    setProfileError(null);
+    setProfileLoading(true);
+    try {
+      const response = await apiFetch(
+        `${API_BASE_URL}/api/v1/reference/rule-profiles/${profile.id}/details`,
+      );
+      if (!response.ok) throw new Error("Не удалось загрузить правила профиля");
+      setProfileDetails(await response.json());
+    } catch (requestError) {
+      setProfileError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Не удалось загрузить правила профиля",
+      );
+    } finally {
+      setProfileLoading(false);
+    }
+  };
 
   const createRoom = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -237,25 +325,202 @@ export const ReferenceDataPage: React.FC = () => {
           </h2>
           <div className="space-y-3">
             {profiles.map((profile) => (
-              <div
+              <button
+                type="button"
                 key={profile.id}
-                className="rounded-xl border border-border-light p-3"
+                onClick={() => void openProfile(profile)}
+                className="group w-full rounded-xl border border-border-light p-3 text-left transition-colors hover:border-blue-300 hover:bg-blue-50/40"
               >
-                <div className="flex justify-between font-bold text-text-primary">
+                <div className="flex items-center justify-between gap-3 font-bold text-text-primary">
                   <span>{profile.name}</span>
-                  {profile.is_default && (
-                    <span className="text-xs text-brand">По умолчанию</span>
-                  )}
+                  <span className="flex items-center gap-3">
+                    {profile.is_default && (
+                      <span className="text-xs text-brand">По умолчанию</span>
+                    )}
+                    <ChevronRight
+                      size={17}
+                      className="text-text-tertiary transition-transform group-hover:translate-x-0.5 group-hover:text-brand"
+                    />
+                  </span>
                 </div>
                 <p className="mt-1 text-xs text-text-secondary">
                   {profile.description ||
                     `${profile.settings.filter((item) => item.enabled).length} активных правил`}
                 </p>
-              </div>
+                <p className="mt-2 text-xs font-bold text-brand">
+                  Посмотреть используемые правила
+                </p>
+              </button>
             ))}
           </div>
         </div>
       </section>
+
+      {openedProfile && (
+        <div
+          className="fixed inset-0 z-50 flex justify-end bg-slate-950/35"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.currentTarget === event.target) setOpenedProfile(null);
+          }}
+        >
+          <aside
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="rule-profile-title"
+            className="flex h-full w-full max-w-3xl flex-col bg-white shadow-2xl"
+          >
+            <header className="border-b border-border-light px-6 py-5 sm:px-8">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="mb-2 flex items-center gap-2 text-xs font-extrabold uppercase tracking-wide text-brand">
+                    <ShieldCheck size={17} /> Профиль правил
+                  </div>
+                  <h2
+                    id="rule-profile-title"
+                    className="text-2xl font-black text-text-primary"
+                  >
+                    {openedProfile.name}
+                  </h2>
+                  <p className="mt-1 text-sm text-text-secondary">
+                    {openedProfile.description || "Описание профиля не указано"}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setOpenedProfile(null)}
+                  aria-label="Закрыть описание профиля"
+                  className="rounded-xl border border-border-light p-2 text-text-secondary hover:bg-bg-base hover:text-text-primary"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {profileDetails && (
+                <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                  <div className="rounded-xl bg-bg-light px-4 py-3">
+                    <div className="text-2xl font-black text-text-primary">
+                      {
+                        profileDetails.rules.filter(
+                          (rule) => rule.effective_enabled,
+                        ).length
+                      }
+                    </div>
+                    <div className="text-xs font-bold text-text-secondary">
+                      применяются сейчас
+                    </div>
+                  </div>
+                  <div className="rounded-xl bg-bg-light px-4 py-3">
+                    <div className="text-2xl font-black text-text-primary">
+                      {
+                        profileDetails.rules.filter((rule) => rule.is_hard)
+                          .length
+                      }
+                    </div>
+                    <div className="text-xs font-bold text-text-secondary">
+                      жестких правил
+                    </div>
+                  </div>
+                  <div className="col-span-2 rounded-xl bg-blue-50 px-4 py-3 sm:col-span-1">
+                    <div className="flex items-center gap-2 font-black text-brand">
+                      <SlidersHorizontal size={18} /> Просмотр
+                    </div>
+                    <div className="mt-1 text-xs font-bold text-blue-700/75">
+                      Настройка профилей будет добавлена позже
+                    </div>
+                  </div>
+                </div>
+              )}
+            </header>
+
+            <div className="flex-1 overflow-y-auto px-6 py-5 sm:px-8">
+              {profileLoading && (
+                <div className="flex items-center justify-center gap-3 py-20 font-bold text-text-secondary">
+                  <Loader2 size={22} className="animate-spin text-brand" />
+                  Загружаем правила…
+                </div>
+              )}
+
+              {profileError && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 font-semibold text-red-700">
+                  {profileError}
+                </div>
+              )}
+
+              {profileDetails && (
+                <div className="space-y-4">
+                  {profileDetails.rules.map((rule) => (
+                    <article
+                      key={rule.code}
+                      className={`rounded-2xl border p-4 ${
+                        rule.effective_enabled
+                          ? "border-border-light bg-white"
+                          : "border-gray-200 bg-gray-50/60"
+                      }`}
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="mb-1 text-[11px] font-extrabold uppercase tracking-wide text-text-tertiary">
+                            {rule.category} · {rule.code}
+                          </div>
+                          <h3 className="font-extrabold text-text-primary">
+                            {rule.name}
+                          </h3>
+                        </div>
+                        <span
+                          className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-extrabold ${runtimeStyles[rule.runtime_state]}`}
+                        >
+                          {rule.runtime_state === "active" ? (
+                            <CheckCircle2 size={14} />
+                          ) : rule.runtime_state === "temporarily_disabled" ? (
+                            <TriangleAlert size={14} />
+                          ) : (
+                            <CircleOff size={14} />
+                          )}
+                          {runtimeLabels[rule.runtime_state]}
+                        </span>
+                      </div>
+
+                      <p className="mt-2 text-sm leading-6 text-text-secondary">
+                        {rule.description}
+                      </p>
+
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <span className="inline-flex items-center gap-1 rounded-lg bg-bg-light px-2.5 py-1 text-xs font-bold text-text-secondary">
+                          {rule.is_hard ? (
+                            <LockKeyhole size={13} />
+                          ) : (
+                            <SlidersHorizontal size={13} />
+                          )}
+                          {rule.is_hard
+                            ? "Жесткое правило"
+                            : "Критерий качества"}
+                        </span>
+                        {!rule.is_hard && rule.configurable && (
+                          <span className="rounded-lg bg-bg-light px-2.5 py-1 text-xs font-bold text-text-secondary">
+                            Вес: {rule.weight} из 10
+                          </span>
+                        )}
+                        {!rule.configurable && (
+                          <span className="rounded-lg bg-blue-50 px-2.5 py-1 text-xs font-bold text-brand">
+                            Системное
+                          </span>
+                        )}
+                      </div>
+
+                      {rule.runtime_note && (
+                        <p className="mt-3 rounded-xl bg-bg-light px-3 py-2 text-xs font-semibold text-text-secondary">
+                          {rule.runtime_note}
+                        </p>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              )}
+            </div>
+          </aside>
+        </div>
+      )}
     </div>
   );
 };

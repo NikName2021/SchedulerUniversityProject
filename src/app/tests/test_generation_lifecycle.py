@@ -3,12 +3,16 @@ import datetime
 import pytest
 from database import (
     AcademicPeriod,
+    FileType,
     GenerationComponent,
     GenerationIssue,
     GenerationLock,
     GenerationTask,
+    ImportBatch,
     PlanningWeek,
     ScheduleEntry,
+    Stream,
+    StreamGroup,
     Teacher,
 )
 from httpx import AsyncClient
@@ -209,6 +213,14 @@ async def test_groups_endpoint_only_returns_scheduled_groups_for_calculation(
                 stream_type="Семинар",
             ),
             ScheduleEntry(
+                task_id=first_task.id,
+                group_name="A, C (L1)",
+                event_name="Английский язык",
+                stream_type="Семинар",
+                date=scheduled_on,
+                lesson_number=2,
+            ),
+            ScheduleEntry(
                 task_id=second_task.id,
                 group_name="D",
                 event_name="Информатика",
@@ -234,11 +246,102 @@ async def test_groups_endpoint_only_returns_scheduled_groups_for_calculation(
     semester_response = await api_client.get(
         f"/api/v1/scheduler/groups?semester_batch_id={batch_id}"
     )
+    subgroup_schedule_response = await api_client.get(
+        f"/api/v1/scheduler/schedule?task_id={first_task.id}&group_name=C"
+    )
 
     assert task_response.status_code == 200
-    assert task_response.json() == {"groups": ["A"]}
+    assert task_response.json() == {"groups": ["A", "C"]}
     assert semester_response.status_code == 200
-    assert semester_response.json() == {"groups": ["A", "D"]}
+    assert semester_response.json() == {"groups": ["A", "C", "D"]}
+    assert subgroup_schedule_response.status_code == 200
+    assert [item["event_name"] for item in subgroup_schedule_response.json()] == [
+        "Английский язык"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_experimental_group_preview_returns_related_streams(
+    api_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    batch = ImportBatch(filename="groups.xlsx", file_type=FileType.STREAMS)
+    db_session.add(batch)
+    await db_session.flush()
+    labels = [
+        "К0109-23",
+        "К0609-23",
+        "К0109-23, К0609-23",
+        "К0109-23, К0609-23 (L1)",
+        "К0109-23, К0609-23 (L2)",
+        "К0209-23",
+    ]
+    streams = [
+        Stream(
+            import_batch_id=batch.id,
+            event_name=f"Событие {index}",
+            stream_type="Семинар",
+        )
+        for index, _label in enumerate(labels)
+    ]
+    db_session.add_all(streams)
+    await db_session.flush()
+    db_session.add_all(
+        [
+            StreamGroup(
+                stream_id=stream.id,
+                group_name=label,
+                group_size=0,
+            )
+            for stream, label in zip(streams, labels)
+        ]
+    )
+    await db_session.commit()
+
+    response = await api_client.post(
+        "/api/v1/scheduler/groups/selection-preview",
+        json={"groups": ["К0109-23"]},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["base_groups"] == ["К0109-23", "К0609-23"]
+    assert payload["joint_groups"] == ["К0109-23, К0609-23"]
+    assert len(payload["subgroup_groups"]) == 2
+    assert "К0209-23" not in payload["selected_groups"]
+
+
+@pytest.mark.asyncio
+async def test_schedule_entry_details_expose_joint_group_and_subgroup(
+    api_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    task = GenerationTask(
+        groups_json='["К0109-23"]',
+        holidays_json="[]",
+        settings_json="{}",
+        status="success",
+    )
+    db_session.add(task)
+    await db_session.flush()
+    entry = ScheduleEntry(
+        task_id=task.id,
+        group_name="К0109-23, К0609-23 (L2)",
+        event_name="Английский язык",
+        stream_type="Семинар",
+        date=datetime.datetime(2026, 9, 7),
+        lesson_number=2,
+    )
+    db_session.add(entry)
+    await db_session.commit()
+
+    response = await api_client.get(
+        f"/api/v1/scheduler/schedule/{entry.id}/details"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["base_groups"] == ["К0109-23", "К0609-23"]
+    assert payload["subgroups"] == ["L2"]
+    assert payload["audience_label"] == "К0109-23, К0609-23 (L2)"
 
 
 @pytest.mark.asyncio

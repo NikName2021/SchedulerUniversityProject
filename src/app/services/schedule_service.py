@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from services.availability_service import build_availability_context
+from services.group_relation_service import collect_known_subgroups, labels_overlap
 
 logger = logging.getLogger(__name__)
 NO_ROOM_VALUES = {"НЕТ АУДИТОРИИ", "NO ROOM"}
@@ -42,6 +43,9 @@ class ScheduleService:
         )
         entries = list((await db.execute(stmt)).scalars())
         changed = [entry for entry in entries if entry.id in changed_ids]
+        known_subgroups = collect_known_subgroups(
+            {entry.group_name for entry in entries}
+        )
         errors: set[str] = set()
         for entry in changed:
             if entry.date is None or entry.lesson_number is None:
@@ -55,7 +59,14 @@ class ScheduleService:
                     entry.source_stream_id
                     and entry.source_stream_id == other.source_stream_id
                 )
-                if entry.group_name == other.group_name and not same_stream:
+                if (
+                    labels_overlap(
+                        entry.group_name,
+                        other.group_name,
+                        known_subgroups,
+                    )
+                    and not same_stream
+                ):
                     errors.add(
                         f"Группа {entry.group_name} уже занята: {other.event_name}"
                     )
@@ -119,6 +130,9 @@ class ScheduleService:
         )
         res = await db.execute(stmt)
         all_entries = res.scalars().all()
+        known_subgroups = collect_known_subgroups(
+            {entry.group_name for entry in all_entries}
+        )
 
         by_slot: Dict[tuple[str, int], List[ScheduleEntry]] = {}
         lessons_by_group_day: Dict[tuple[str, str], set[int]] = {}
@@ -169,7 +183,11 @@ class ScheduleService:
                         )
 
                     # Same group = real conflict
-                    if e1.group_name == e2.group_name:
+                    if labels_overlap(
+                        e1.group_name,
+                        e2.group_name,
+                        known_subgroups,
+                    ):
                         slot_warnings.append(
                             f"У группы {e1.group_name} уже есть пара ({e2.event_name})"
                         )

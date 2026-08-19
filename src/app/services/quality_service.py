@@ -15,6 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
+from services.group_relation_service import parse_group_label
+
 logger = logging.getLogger(__name__)
 
 # Weight allocation for each criterion (must sum to 100)
@@ -269,13 +271,14 @@ class ScheduleQualityService:
         stmt = (
             select(ScheduleEntry)
             .options(selectinload(ScheduleEntry.teacher))
-            .where(
-                ScheduleEntry.task_id == task_id,
-                ScheduleEntry.group_name == group_name,
-            )
+            .where(ScheduleEntry.task_id == task_id)
         )
         result = await db.execute(stmt)
-        entries = list(result.scalars().all())
+        entries = [
+            entry
+            for entry in result.scalars().all()
+            if group_name in parse_group_label(entry.group_name).base_groups
+        ]
 
         assigned = [e for e in entries if e.date and e.lesson_number]
 
