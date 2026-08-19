@@ -918,6 +918,58 @@ class ScalableGenerationService:
                         float(metrics.get("solve_seconds", 0) or 0)
                         for metrics in component_metrics
                     ),
+                    "stages": {
+                        "placement": {
+                            "solve_seconds": sum(
+                                float(
+                                    metrics.get("stages", {})
+                                    .get("placement", {})
+                                    .get("solve_seconds", 0)
+                                    or 0
+                                )
+                                for metrics in component_metrics
+                            ),
+                            "objective": sum(
+                                int(metrics.get("placement_objective", 0) or 0)
+                                for metrics in component_metrics
+                            ),
+                            "optimal_components": sum(
+                                1
+                                for metrics in component_metrics
+                                if metrics.get("stages", {})
+                                .get("placement", {})
+                                .get("status")
+                                == "OPTIMAL"
+                            ),
+                        },
+                        "quality": {
+                            "solve_seconds": sum(
+                                float(
+                                    metrics.get("stages", {})
+                                    .get("quality", {})
+                                    .get("solve_seconds", 0)
+                                    or 0
+                                )
+                                for metrics in component_metrics
+                            ),
+                            "completed_components": sum(
+                                1
+                                for metrics in component_metrics
+                                if metrics.get("stages", {})
+                                .get("quality", {})
+                                .get("status")
+                                in {"OPTIMAL", "FEASIBLE"}
+                            ),
+                            "skipped_components": sum(
+                                1
+                                for metrics in component_metrics
+                                if metrics.get("stages", {})
+                                .get("quality", {})
+                                .get("status")
+                                == "skipped"
+                            ),
+                        },
+                    },
                     "room_assignment": room_metrics,
                     "room_warning_count": len(room_warnings),
                     "unassigned_count": sum(

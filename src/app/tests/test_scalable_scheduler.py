@@ -90,6 +90,37 @@ def test_shared_teacher_events_never_overlap() -> None:
     assert len({tuple(item["slot"]) for item in result["assignments"]}) == 2
 
 
+def test_two_stage_solver_reports_stage_metrics() -> None:
+    events = [
+        _event("event-1", ["A"], 1),
+        _event("event-2", ["A"], 2),
+    ]
+
+    result = solve_event_component(events, _context())
+
+    assert result["status"] == "success"
+    assert result["metrics"]["placement_objective"] == 0
+    assert result["metrics"]["unassigned_count"] == 0
+    assert result["metrics"]["stages"]["placement"]["status"] == "OPTIMAL"
+    assert result["metrics"]["stages"]["quality"]["status"] == "OPTIMAL"
+
+
+def test_quality_stage_preserves_the_placement_result() -> None:
+    events = [
+        _event("event-1", ["A"], 1),
+        _event("event-2", ["A"], 2),
+        _event("event-3", ["A"], 3),
+    ]
+
+    result = solve_event_component(events, _context())
+
+    assert result["status"] == "success"
+    assert len(result["assignments"]) == 2
+    assert sum(item["missing_count"] for item in result["unassigned"]) == 1
+    assert result["metrics"]["placement_objective"] == 5
+    assert result["metrics"]["unassigned_count"] == 1
+
+
 def test_language_subgroups_can_run_in_parallel() -> None:
     context = _context()
     context["lessons"] = [1]
