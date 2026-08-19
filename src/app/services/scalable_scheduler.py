@@ -8,13 +8,15 @@ from typing import Any
 from core.config import (
     GROUP_LOAD_EARLY_PRIORITY_MULTIPLIER,
     GROUP_LOAD_EARLY_PRIORITY_STEP,
+    PLACEMENT_STAGE_MIN_SECONDS,
+    PLACEMENT_STAGE_TIME_RATIO,
+    QUALITY_STAGE_MIN_SECONDS,
 )
 from core.constants import (
     NUM_WORKERS,
     PENALTY_LATE_LESSON,
     PENALTY_MORNING_PRIORITY,
     PENALTY_PROGRESS_VIOLATION,
-    PENALTY_UNASSIGNED,
     PENALTY_WINDOW,
 )
 from ortools.sat.python import cp_model
@@ -174,7 +176,7 @@ def _preference_penalty(
 def solve_event_component(
     events: list[dict[str, Any]], context: dict[str, Any]
 ) -> dict[str, Any]:
-    """Solve one conflict-connected component without assigning rooms."""
+    """Solve one conflict component in placement and quality stages."""
     started_at = time.perf_counter()
     slots = _generate_slots(context)
     if not slots:
@@ -199,7 +201,8 @@ def solve_event_component(
     by_teacher_slot: dict[tuple[str, Slot], list[cp_model.IntVar]] = (
         collections.defaultdict(list)
     )
-    penalties: list[Any] = []
+    placement_terms: list[Any] = []
+    quality_penalties: list[Any] = []
     deficits: dict[str, tuple[cp_model.IntVar, int]] = {}
     late_rule = _rule(context, "late_lessons", weight=5)
     preference_rule = _rule(context, "teacher_preferences", weight=5)
@@ -235,7 +238,7 @@ def solve_event_component(
                 load_priority = 1 + (
                     max(1, event_group_load) - 1
                 ) // GROUP_LOAD_EARLY_PRIORITY_STEP
-                penalties.append(
+                quality_penalties.append(
                     variable
                     * slot[1]
                     * PENALTY_LATE_LESSON
@@ -246,9 +249,13 @@ def solve_event_component(
                 )
             preference = event.get("time_preference", "day")
             if preference == "morning" and slot[1] > 2:
-                penalties.append(variable * (slot[1] - 2) * PENALTY_MORNING_PRIORITY)
+                quality_penalties.append(
+                    variable * (slot[1] - 2) * PENALTY_MORNING_PRIORITY
+                )
             elif preference == "evening" and slot[1] < 5:
-                penalties.append(variable * (5 - slot[1]) * PENALTY_MORNING_PRIORITY)
+                quality_penalties.append(
+                    variable * (5 - slot[1]) * PENALTY_MORNING_PRIORITY
+                )
             if preference_rule["enabled"]:
                 preference_cost = _preference_penalty(
                     event, slot, context.get("discouraged", {}), preferred=False
@@ -256,19 +263,17 @@ def solve_event_component(
                     event, slot, context.get("preferred", {}), preferred=True
                 )
                 if preference_cost:
-                    penalties.append(
+                    quality_penalties.append(
                         variable * preference_cost * preference_rule["weight"]
                     )
 
         target = int(event["lessons_count"])
         deficit = model.NewIntVar(0, target, f"deficit_{event_id}")
         model.Add(sum(event_variables) + deficit == target)
-        penalties.append(
-            deficit
-            * PENALTY_UNASSIGNED
-            * max(1, len(event["groups"]))
-            * max(1, int(event.get("priority", 5)))
+        placement_weight = max(1, len(event["groups"])) * max(
+            1, int(event.get("priority", 5))
         )
+        placement_terms.append(deficit * placement_weight)
         deficits[event_id] = (deficit, target)
 
         for _day, day_slots in by_day.items():
@@ -305,78 +310,6 @@ def solve_event_component(
         if len(resource_variables) > 1:
             model.AddAtMostOne(resource_variables)
 
-    progression_rule = _rule(context, "lecture_before_practice", weight=5)
-    # Keep practical and laboratory progress behind lectures for the same group
-    # and subject. These events already share a group and therefore always belong
-    # to the same conflict component.
-    for group in (
-        sorted({group for event in events for group in event["groups"]})
-        if progression_rule["enabled"]
-        else []
-    ):
-        subjects = {event["subject"] for event in events if group in event["groups"]}
-        for subject in subjects:
-            lecture_events = [
-                event
-                for event in events
-                if event["subject"] == subject
-                and event["type"] == "lec"
-                and group in event["groups"]
-            ]
-            practical_events = [
-                event
-                for event in events
-                if event["subject"] == subject
-                and event["type"] in {"sem", "lab"}
-                and group in event["groups"]
-            ]
-            if not lecture_events or not practical_events:
-                continue
-            total_lectures = sum(
-                int(event["lessons_count"]) for event in lecture_events
-            )
-            total_practicals = sum(
-                int(event["lessons_count"]) for event in practical_events
-            )
-            cumulative_lectures: Any = 0
-            cumulative_practicals: Any = 0
-            for day in sorted(by_day):
-                for slot in sorted(by_day[day], key=lambda value: value[1]):
-                    cumulative_lectures += sum(
-                        variables[(event["id"], slot)]
-                        for event in lecture_events
-                        if (event["id"], slot) in variables
-                    )
-                    cumulative_practicals += sum(
-                        variables[(event["id"], slot)]
-                        for event in practical_events
-                        if (event["id"], slot) in variables
-                    )
-                    violation = model.NewIntVar(
-                        -total_lectures * total_practicals,
-                        total_lectures * total_practicals,
-                        f"progress_{group}_{subject}_{day.isoformat()}_{slot[1]}",
-                    )
-                    model.Add(
-                        violation
-                        == cumulative_practicals * total_lectures
-                        - cumulative_lectures * total_practicals
-                    )
-                    positive_violation = model.NewIntVar(
-                        0,
-                        total_lectures * total_practicals,
-                        f"progress_positive_{group}_{subject}_{day.isoformat()}_{slot[1]}",
-                    )
-                    model.AddMaxEquality(positive_violation, [0, violation])
-                    penalties.append(
-                        positive_violation
-                        * PENALTY_PROGRESS_VIOLATION
-                        * progression_rule["weight"]
-                    )
-
-    # Penalize every empty lesson between the first and last lesson of a group.
-    # Using any occupied slot before and after the empty slot also catches
-    # double and longer windows, not only occupied-empty-occupied patterns.
     component_groups = sorted(
         {
             group
@@ -386,77 +319,317 @@ def solve_event_component(
     )
     windows_rule = _rule(context, "minimize_windows", weight=5)
     lunch_rule = _rule(context, "lunch_break", is_hard=True, weight=5)
-    for group in component_groups:
-        for day, day_slots in by_day.items():
-            ordered_slots = sorted(day_slots, key=lambda slot: slot[1])
-            occupied: list[cp_model.IntVar] = []
-            for slot in ordered_slots:
-                slot_variables = by_group_slot.get((group, slot), [])
-                occupancy = model.NewBoolVar(
-                    f"occupied_{group}_{day.isoformat()}_{slot[1]}"
-                )
-                if slot_variables:
-                    model.Add(occupancy == sum(slot_variables))
-                else:
-                    model.Add(occupancy == 0)
-                occupied.append(occupancy)
+    if lunch_rule["enabled"] and lunch_rule["is_hard"]:
+        for group in component_groups:
+            for day in by_day:
+                third = by_group_slot.get((group, (day, 3)), [])
+                fourth = by_group_slot.get((group, (day, 4)), [])
+                if third and fourth:
+                    model.Add(sum(third) + sum(fourth) <= 1)
 
-            for index in range(1, len(occupied) - 1):
-                occupied_before = model.NewBoolVar(
-                    f"occupied_before_{group}_{day.isoformat()}_"
-                    f"{ordered_slots[index][1]}"
-                )
-                occupied_after = model.NewBoolVar(
-                    f"occupied_after_{group}_{day.isoformat()}_"
-                    f"{ordered_slots[index][1]}"
-                )
-                model.AddMaxEquality(occupied_before, occupied[:index])
-                model.AddMaxEquality(occupied_after, occupied[index + 1 :])
-                window = model.NewBoolVar(
-                    f"window_{group}_{day.isoformat()}_{ordered_slots[index][1]}"
-                )
-                model.Add(window <= occupied_before)
-                model.Add(window <= occupied_after)
-                model.Add(window <= 1 - occupied[index])
-                model.Add(
-                    window >= occupied_before + occupied_after - occupied[index] - 1
-                )
-                if windows_rule["enabled"]:
-                    penalties.append(window * PENALTY_WINDOW * windows_rule["weight"])
+    total_budget = max(0.1, float(context["max_time_seconds"]))
+    remaining_before_placement = max(
+        0.01, total_budget - (time.perf_counter() - started_at)
+    )
+    placement_budget = min(
+        remaining_before_placement,
+        max(
+            min(float(PLACEMENT_STAGE_MIN_SECONDS), remaining_before_placement),
+            remaining_before_placement * float(PLACEMENT_STAGE_TIME_RATIO),
+        ),
+    )
+    num_workers = max(1, int(context.get("num_workers", NUM_WORKERS)))
+    model.Minimize(sum(placement_terms))
+    placement_solver = cp_model.CpSolver()
+    placement_solver.parameters.max_time_in_seconds = placement_budget
+    placement_solver.parameters.num_search_workers = num_workers
+    placement_started_at = time.perf_counter()
+    placement_status = placement_solver.Solve(model)
+    placement_seconds = time.perf_counter() - placement_started_at
 
-            occupancy_by_lesson = {
-                slot[1]: occupancy for slot, occupancy in zip(ordered_slots, occupied)
+    placement_stage = {
+        "status": placement_solver.StatusName(placement_status),
+        "solve_seconds": round(placement_seconds, 4),
+        "objective": None,
+        "best_bound": None,
+        "conflicts": placement_solver.NumConflicts(),
+        "branches": placement_solver.NumBranches(),
+    }
+    if placement_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        elapsed = time.perf_counter() - started_at
+        metrics = {
+            "events": len(events),
+            "groups": len(component_groups),
+            "slots": len(slots),
+            "variables": len(model.Proto().variables),
+            "decision_variables": len(variables),
+            "constraints": len(model.Proto().constraints),
+            "solve_seconds": round(elapsed, 4),
+            "solver_status": placement_stage["status"],
+            "objective": None,
+            "placement_objective": None,
+            "quality_objective": None,
+            "unassigned_count": None,
+            "stages": {
+                "placement": placement_stage,
+                "quality": {
+                    "status": "skipped",
+                    "solve_seconds": 0.0,
+                    "objective": None,
+                    "reason": "placement_stage_has_no_feasible_solution",
+                },
+            },
+        }
+        return {
+            "status": "failed",
+            "assignments": [],
+            "unassigned": [],
+            "error": "No feasible component solution",
+            "metrics": metrics,
+        }
+
+    placement_values = {
+        key: int(placement_solver.Value(variable))
+        for key, variable in variables.items()
+    }
+    deficit_values = {
+        event_id: int(placement_solver.Value(deficit))
+        for event_id, (deficit, _target) in deficits.items()
+    }
+    placement_value = sum(
+        deficit_values[event["id"]]
+        * max(1, len(event["groups"]))
+        * max(1, int(event.get("priority", 5)))
+        for event in events
+    )
+    placement_stage["objective"] = placement_value
+    placement_stage["best_bound"] = round(
+        placement_solver.BestObjectiveBound(), 2
+    )
+
+    selected_values = placement_values
+    selected_deficits = deficit_values
+    selected_status = placement_stage["status"]
+    quality_objective: float | None = None
+    quality_stage: dict[str, Any] = {
+        "status": "skipped",
+        "solve_seconds": 0.0,
+        "objective": None,
+        "reason": None,
+    }
+    placement_is_proven = (
+        placement_status == cp_model.OPTIMAL or placement_value == 0
+    )
+    remaining_for_quality = total_budget - (time.perf_counter() - started_at)
+
+    if not placement_is_proven:
+        quality_stage["reason"] = "placement_optimum_not_proven"
+    elif remaining_for_quality < float(QUALITY_STAGE_MIN_SECONDS):
+        quality_stage["reason"] = "time_budget_exhausted"
+    else:
+        model.Add(sum(placement_terms) == placement_value)
+        for key, variable in variables.items():
+            model.AddHint(variable, placement_values[key])
+        for event_id, (deficit, _target) in deficits.items():
+            model.Add(deficit == deficit_values[event_id])
+            model.AddHint(deficit, deficit_values[event_id])
+
+        progression_rule = _rule(context, "lecture_before_practice", weight=5)
+        # Keep practical and laboratory progress behind lectures for the same
+        # group and subject. These auxiliary variables are intentionally added
+        # only after the maximum placement count has been established.
+        for group in (
+            sorted({group for event in events for group in event["groups"]})
+            if progression_rule["enabled"]
+            else []
+        ):
+            subjects = {
+                event["subject"] for event in events if group in event["groups"]
             }
-            if (
-                lunch_rule["enabled"]
-                and lunch_rule["is_hard"]
-                and 3 in occupancy_by_lesson
-                and 4 in occupancy_by_lesson
-            ):
-                model.Add(occupancy_by_lesson[3] + occupancy_by_lesson[4] <= 1)
-            elif (
-                lunch_rule["enabled"]
-                and 3 in occupancy_by_lesson
-                and 4 in occupancy_by_lesson
-            ):
-                lunch_violation = model.NewBoolVar(f"lunch_{group}_{day.isoformat()}")
-                model.Add(
-                    lunch_violation
-                    == occupancy_by_lesson[3] + occupancy_by_lesson[4] - 1
-                ).OnlyEnforceIf([occupancy_by_lesson[3], occupancy_by_lesson[4]])
-                model.Add(lunch_violation == 0).OnlyEnforceIf(
-                    occupancy_by_lesson[3].Not()
+            for subject in subjects:
+                lecture_events = [
+                    event
+                    for event in events
+                    if event["subject"] == subject
+                    and event["type"] == "lec"
+                    and group in event["groups"]
+                ]
+                practical_events = [
+                    event
+                    for event in events
+                    if event["subject"] == subject
+                    and event["type"] in {"sem", "lab"}
+                    and group in event["groups"]
+                ]
+                if not lecture_events or not practical_events:
+                    continue
+                total_lectures = sum(
+                    int(event["lessons_count"]) for event in lecture_events
                 )
-                model.Add(lunch_violation == 0).OnlyEnforceIf(
-                    occupancy_by_lesson[4].Not()
+                total_practicals = sum(
+                    int(event["lessons_count"]) for event in practical_events
                 )
-                penalties.append(lunch_violation * 100 * lunch_rule["weight"])
+                cumulative_lectures: Any = 0
+                cumulative_practicals: Any = 0
+                for day in sorted(by_day):
+                    for slot in sorted(by_day[day], key=lambda value: value[1]):
+                        cumulative_lectures += sum(
+                            variables[(event["id"], slot)]
+                            for event in lecture_events
+                            if (event["id"], slot) in variables
+                        )
+                        cumulative_practicals += sum(
+                            variables[(event["id"], slot)]
+                            for event in practical_events
+                            if (event["id"], slot) in variables
+                        )
+                        violation = model.NewIntVar(
+                            -total_lectures * total_practicals,
+                            total_lectures * total_practicals,
+                            "progress_"
+                            f"{group}_{subject}_{day.isoformat()}_{slot[1]}",
+                        )
+                        model.Add(
+                            violation
+                            == cumulative_practicals * total_lectures
+                            - cumulative_lectures * total_practicals
+                        )
+                        positive_violation = model.NewIntVar(
+                            0,
+                            total_lectures * total_practicals,
+                            "progress_positive_"
+                            f"{group}_{subject}_{day.isoformat()}_{slot[1]}",
+                        )
+                        model.AddMaxEquality(positive_violation, [0, violation])
+                        quality_penalties.append(
+                            positive_violation
+                            * PENALTY_PROGRESS_VIOLATION
+                            * progression_rule["weight"]
+                        )
 
-    model.Minimize(sum(penalties))
-    solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = float(context["max_time_seconds"])
-    solver.parameters.num_search_workers = int(context.get("num_workers", NUM_WORKERS))
-    status = solver.Solve(model)
+        # Penalize every empty lesson between the first and last lesson of a
+        # group. Occupancy auxiliaries also support the soft lunch rule.
+        if windows_rule["enabled"] or (
+            lunch_rule["enabled"] and not lunch_rule["is_hard"]
+        ):
+            for group in component_groups:
+                for day, day_slots in by_day.items():
+                    ordered_slots = sorted(day_slots, key=lambda slot: slot[1])
+                    occupied: list[cp_model.IntVar] = []
+                    for slot in ordered_slots:
+                        slot_variables = by_group_slot.get((group, slot), [])
+                        occupancy = model.NewBoolVar(
+                            f"occupied_{group}_{day.isoformat()}_{slot[1]}"
+                        )
+                        if slot_variables:
+                            model.Add(occupancy == sum(slot_variables))
+                        else:
+                            model.Add(occupancy == 0)
+                        occupied.append(occupancy)
+
+                    if windows_rule["enabled"]:
+                        for index in range(1, len(occupied) - 1):
+                            lesson = ordered_slots[index][1]
+                            occupied_before = model.NewBoolVar(
+                                "occupied_before_"
+                                f"{group}_{day.isoformat()}_{lesson}"
+                            )
+                            occupied_after = model.NewBoolVar(
+                                "occupied_after_"
+                                f"{group}_{day.isoformat()}_{lesson}"
+                            )
+                            model.AddMaxEquality(occupied_before, occupied[:index])
+                            model.AddMaxEquality(
+                                occupied_after, occupied[index + 1 :]
+                            )
+                            window = model.NewBoolVar(
+                                f"window_{group}_{day.isoformat()}_{lesson}"
+                            )
+                            model.Add(window <= occupied_before)
+                            model.Add(window <= occupied_after)
+                            model.Add(window <= 1 - occupied[index])
+                            model.Add(
+                                window
+                                >= occupied_before
+                                + occupied_after
+                                - occupied[index]
+                                - 1
+                            )
+                            quality_penalties.append(
+                                window * PENALTY_WINDOW * windows_rule["weight"]
+                            )
+
+                    occupancy_by_lesson = {
+                        slot[1]: occupancy
+                        for slot, occupancy in zip(ordered_slots, occupied)
+                    }
+                    if (
+                        lunch_rule["enabled"]
+                        and not lunch_rule["is_hard"]
+                        and 3 in occupancy_by_lesson
+                        and 4 in occupancy_by_lesson
+                    ):
+                        lunch_violation = model.NewBoolVar(
+                            f"lunch_{group}_{day.isoformat()}"
+                        )
+                        model.Add(
+                            lunch_violation
+                            == occupancy_by_lesson[3]
+                            + occupancy_by_lesson[4]
+                            - 1
+                        ).OnlyEnforceIf(
+                            [occupancy_by_lesson[3], occupancy_by_lesson[4]]
+                        )
+                        model.Add(lunch_violation == 0).OnlyEnforceIf(
+                            occupancy_by_lesson[3].Not()
+                        )
+                        model.Add(lunch_violation == 0).OnlyEnforceIf(
+                            occupancy_by_lesson[4].Not()
+                        )
+                        quality_penalties.append(
+                            lunch_violation * 100 * lunch_rule["weight"]
+                        )
+
+        remaining_for_quality = total_budget - (time.perf_counter() - started_at)
+        if not quality_penalties:
+            quality_stage["reason"] = "no_quality_terms"
+        elif remaining_for_quality < float(QUALITY_STAGE_MIN_SECONDS):
+            quality_stage["reason"] = "time_budget_exhausted_during_model_build"
+        else:
+            model.Minimize(sum(quality_penalties))
+            quality_solver = cp_model.CpSolver()
+            quality_solver.parameters.max_time_in_seconds = remaining_for_quality
+            quality_solver.parameters.num_search_workers = num_workers
+            quality_started_at = time.perf_counter()
+            quality_status = quality_solver.Solve(model)
+            quality_seconds = time.perf_counter() - quality_started_at
+            quality_stage = {
+                "status": quality_solver.StatusName(quality_status),
+                "solve_seconds": round(quality_seconds, 4),
+                "objective": None,
+                "best_bound": None,
+                "conflicts": quality_solver.NumConflicts(),
+                "branches": quality_solver.NumBranches(),
+                "reason": None,
+            }
+            if quality_status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+                selected_values = {
+                    key: int(quality_solver.Value(variable))
+                    for key, variable in variables.items()
+                }
+                selected_deficits = {
+                    event_id: int(quality_solver.Value(deficit))
+                    for event_id, (deficit, _target) in deficits.items()
+                }
+                selected_status = quality_stage["status"]
+                quality_objective = round(quality_solver.ObjectiveValue(), 2)
+                quality_stage["objective"] = quality_objective
+                quality_stage["best_bound"] = round(
+                    quality_solver.BestObjectiveBound(), 2
+                )
+            else:
+                quality_stage["reason"] = "quality_stage_has_no_feasible_solution"
+
     elapsed = time.perf_counter() - started_at
     metrics = {
         "events": len(events),
@@ -466,27 +639,24 @@ def solve_event_component(
         "decision_variables": len(variables),
         "constraints": len(model.Proto().constraints),
         "solve_seconds": round(elapsed, 4),
-        "solver_status": solver.StatusName(status),
+        "solver_status": selected_status,
         "objective": (
-            round(solver.ObjectiveValue(), 2)
-            if status in (cp_model.OPTIMAL, cp_model.FEASIBLE)
-            else None
+            quality_objective if quality_objective is not None else placement_value
         ),
+        "placement_objective": placement_value,
+        "quality_objective": quality_objective,
+        "unassigned_count": sum(selected_deficits.values()),
+        "stages": {
+            "placement": placement_stage,
+            "quality": quality_stage,
+        },
     }
-    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        return {
-            "status": "failed",
-            "assignments": [],
-            "unassigned": [],
-            "error": "No feasible component solution",
-            "metrics": metrics,
-        }
 
     assignments: list[dict[str, Any]] = []
     unassigned: list[dict[str, Any]] = []
     events_by_id = {event["id"]: event for event in events}
-    for (event_id, slot), variable in variables.items():
-        if solver.Value(variable):
+    for event_id, slot in variables:
+        if selected_values[(event_id, slot)]:
             event = events_by_id[event_id]
             assignments.append(
                 {
@@ -494,8 +664,8 @@ def solve_event_component(
                     "slot": [slot[0].isoformat(), slot[1]],
                 }
             )
-    for event_id, (deficit, target) in deficits.items():
-        missing = solver.Value(deficit)
+    for event_id, (_deficit, target) in deficits.items():
+        missing = selected_deficits[event_id]
         if missing:
             event = events_by_id[event_id]
             unassigned.append({**event, "missing_count": missing, "target": target})
