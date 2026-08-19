@@ -17,9 +17,13 @@ import {
   Layers3,
   RefreshCcw,
   RotateCcw,
+  FlaskConical,
 } from "lucide-react";
 import { API_BASE_URL, apiFetch, openDownload } from "../api/apiConfig";
-import { getStandaloneGroups } from "../utils/groupSelection";
+import {
+  getStandaloneGroups,
+  isStandaloneGroupName,
+} from "../utils/groupSelection";
 
 interface Stats {
   total_streams: number;
@@ -102,6 +106,13 @@ interface SemesterDistributionResult {
   }>;
 }
 
+interface ExperimentalGroupSelection {
+  base_groups: string[];
+  selected_groups: string[];
+  joint_groups: string[];
+  subgroup_groups: string[];
+}
+
 const ALL_TYPES = [
   "Лекция",
   "Семинар",
@@ -173,6 +184,9 @@ export const GenerationPage: React.FC = () => {
   const [previewGroup, setPreviewGroup] = useState<string | null>(null);
   const [previewStreams, setPreviewStreams] = useState<StreamPreview[]>([]);
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
+  const [experimentalSelection, setExperimentalSelection] =
+    useState<ExperimentalGroupSelection | null>(null);
+  const [isExpandingGroups, setIsExpandingGroups] = useState(false);
 
   // Filter types
   const [enabledTypes, setEnabledTypes] = useState<string[]>(
@@ -196,10 +210,16 @@ export const GenerationPage: React.FC = () => {
   const fetchSubjectSummary = useCallback(async () => {
     setIsSummaryLoading(true);
     try {
-      const groupsParam = encodeURIComponent(selectedGroups.join(","));
-      const typesParam = encodeURIComponent(enabledTypes.join(","));
       const res = await apiFetch(
-        `${API_BASE_URL}/api/v1/scheduler/subjects-summary?groups=${groupsParam}&types=${typesParam}`,
+        `${API_BASE_URL}/api/v1/scheduler/subjects-summary`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            groups: selectedGroups,
+            types: enabledTypes,
+          }),
+        },
       );
       if (!res.ok) {
         const err = await res.json();
@@ -348,6 +368,7 @@ export const GenerationPage: React.FC = () => {
   }, [batchWeeks]);
 
   const handleToggleGroup = (group: string) => {
+    setExperimentalSelection(null);
     setSelectedGroups((prev) =>
       prev.includes(group) ? prev.filter((g) => g !== group) : [...prev, group],
     );
@@ -715,7 +736,58 @@ export const GenerationPage: React.FC = () => {
     standaloneGroups.every((group) => selectedGroups.includes(group));
 
   const toggleStandaloneGroups = () => {
+    setExperimentalSelection(null);
     setSelectedGroups(onlyStandaloneGroupsSelected ? [] : standaloneGroups);
+  };
+
+  const toggleExperimentalGroups = async () => {
+    if (experimentalSelection) {
+      setExperimentalSelection(null);
+      setSelectedGroups([]);
+      return;
+    }
+    const requestedGroups = selectedGroups.filter(isStandaloneGroupName);
+    const baseGroups =
+      requestedGroups.length > 0 ? requestedGroups : standaloneGroups;
+    if (baseGroups.length === 0) return;
+
+    setIsExpandingGroups(true);
+    try {
+      const response = await apiFetch(
+        `${API_BASE_URL}/api/v1/scheduler/groups/selection-preview`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ groups: baseGroups }),
+        },
+      );
+      const payload = (await response.json()) as
+        | ExperimentalGroupSelection
+        | { detail?: string };
+      if (!response.ok || !("selected_groups" in payload)) {
+        throw new Error(
+          "detail" in payload && payload.detail
+            ? payload.detail
+            : "Не удалось определить связанные потоки",
+        );
+      }
+      setExperimentalSelection(payload);
+      setSelectedGroups(payload.selected_groups);
+      setStatus({
+        type: "success",
+        msg: `Экспериментальный выбор: ${payload.base_groups.length} основных групп, ${payload.joint_groups.length} общих потоков и ${payload.subgroup_groups.length} подгрупп`,
+      });
+    } catch (error) {
+      setStatus({
+        type: "error",
+        msg:
+          error instanceof Error
+            ? error.message
+            : "Не удалось определить связанные потоки",
+      });
+    } finally {
+      setIsExpandingGroups(false);
+    }
   };
 
   // Apply type filter to preview
@@ -960,28 +1032,36 @@ export const GenerationPage: React.FC = () => {
                 >
                   <Users size={18} style={{ color: "var(--brand)" }} /> Группы
                 </h3>
-                <button
-                  type="button"
-                  onClick={toggleStandaloneGroups}
-                  disabled={standaloneGroups.length === 0}
-                  aria-label="Выбрать только одиночные группы"
-                  title="Исключает подгруппы в скобках и объединения нескольких групп"
-                  style={{
-                    fontSize: "0.625rem",
-                    fontWeight: 900,
-                    textTransform: "uppercase",
-                    letterSpacing: "0.05em",
-                    color: "var(--brand)",
-                    cursor: "pointer",
-                    border: "none",
-                    background: "none",
-                    textAlign: "right",
-                  }}
-                >
-                  {onlyStandaloneGroupsSelected
-                    ? "Сбросить"
-                    : "Только одиночные"}
-                </button>
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={toggleStandaloneGroups}
+                    disabled={standaloneGroups.length === 0}
+                    aria-label="Выбрать только одиночные группы"
+                    title="Исключает подгруппы в скобках и объединения нескольких групп"
+                    className="rounded-lg px-2 py-1 text-[10px] font-black uppercase tracking-wider text-brand hover:bg-brand/5 disabled:opacity-40"
+                  >
+                    {onlyStandaloneGroupsSelected
+                      ? "Сбросить"
+                      : "Только одиночные"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void toggleExperimentalGroups()}
+                    disabled={
+                      standaloneGroups.length === 0 || isExpandingGroups
+                    }
+                    title="Добавить общие потоки и языковые подгруппы"
+                    className="flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-violet-700 hover:bg-violet-100 disabled:opacity-40"
+                  >
+                    <FlaskConical size={12} />
+                    {experimentalSelection
+                      ? "Сбросить эксперимент"
+                      : isExpandingGroups
+                        ? "Проверяем..."
+                        : "С потоками · эксперимент"}
+                  </button>
+                </div>
               </div>
               <div style={{ position: "relative" }}>
                 <Search
@@ -1010,6 +1090,13 @@ export const GenerationPage: React.FC = () => {
                   }}
                 />
               </div>
+              {experimentalSelection && (
+                <div className="mt-3 rounded-lg border border-violet-100 bg-violet-50 px-3 py-2 text-[10px] font-bold leading-relaxed text-violet-800">
+                  {experimentalSelection.base_groups.length} основных ·{" "}
+                  {experimentalSelection.joint_groups.length} общих потоков ·{" "}
+                  {experimentalSelection.subgroup_groups.length} подгрупп
+                </div>
+              )}
             </div>
 
             <div style={{ flex: 1, overflowY: "auto", padding: "0.5rem" }}>

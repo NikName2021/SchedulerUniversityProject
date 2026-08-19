@@ -48,6 +48,7 @@ from services.generation_lifecycle_service import (
     GenerationLifecycleService,
 )
 from services.generation_service import GenerationService
+from services.group_relation_service import expand_group_selection, parse_group_label
 from services.parser_service import parse_streams_content, read_tabular_content
 from services.quality_service import ScheduleQualityService
 from services.schedule_service import ScheduleService
@@ -245,6 +246,19 @@ class GenerationTaskModel(BaseModel):
         return value
 
 
+class GroupSelectionPreviewModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    groups: list[str] = Field(min_length=1, max_length=1_000)
+
+
+class SubjectsSummaryModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    groups: list[str] = Field(min_length=1, max_length=1_000)
+    types: list[str] = Field(default_factory=list, max_length=20)
+
+
 async def _resolve_generation_period(
     task: GenerationTaskModel, db: AsyncSession
 ) -> tuple[datetime | None, datetime | None]:
@@ -435,7 +449,26 @@ async def get_groups(
         )
     result = await db.execute(stmt)
     groups = result.scalars().all()
+    if task_id is not None or semester_batch_id is not None:
+        groups = sorted(
+            {
+                base_group
+                for label in groups
+                for base_group in parse_group_label(label).base_groups
+            }
+        )
     return {"groups": groups}
+
+
+@router.post("/groups/selection-preview")
+async def preview_group_selection(
+    payload: GroupSelectionPreviewModel,
+    db: Annotated[AsyncSession, Depends(async_get_db)] = None,
+) -> dict[str, list[str]]:
+    result = await db.execute(
+        select(distinct(StreamGroup.group_name)).order_by(StreamGroup.group_name)
+    )
+    return expand_group_selection(payload.groups, list(result.scalars().all()))
 
 
 @router.get("/subjects-summary")
@@ -450,6 +483,22 @@ async def get_subjects_summary(
             selected_groups, enabled_types
         )
         return summary
+    except Exception:
+        logger.exception("Error getting subjects summary")
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to build subjects summary",
+        ) from None
+
+
+@router.post("/subjects-summary")
+async def post_subjects_summary(
+    payload: SubjectsSummaryModel,
+) -> dict[str, list[str]]:
+    try:
+        return await GenerationService.get_subjects_summary(
+            payload.groups, payload.types
+        )
     except Exception:
         logger.exception("Error getting subjects summary")
         raise HTTPException(
@@ -1054,14 +1103,18 @@ async def get_schedule(
         stmt = stmt.join(
             GenerationTask, GenerationTask.id == ScheduleEntry.task_id
         ).where(GenerationTask.semester_batch_id == semester_batch_id)
-    if group_name is not None:
-        stmt = stmt.where(ScheduleEntry.group_name == group_name)
     if teacher_id is not None:
         stmt = stmt.where(ScheduleEntry.teacher_id == teacher_id)
 
     stmt = stmt.order_by(ScheduleEntry.date, ScheduleEntry.lesson_number)
     result = await db.execute(stmt)
     entries = result.scalars().all()
+    if group_name is not None:
+        entries = [
+            entry
+            for entry in entries
+            if group_name in parse_group_label(entry.group_name).base_groups
+        ]
 
     return [
         {
@@ -1080,6 +1133,107 @@ async def get_schedule(
         }
         for e in entries
     ]
+
+
+@router.get("/schedule/{entry_id}/details")
+async def get_schedule_entry_details(
+    entry_id: int,
+    db: Annotated[AsyncSession, Depends(async_get_db)] = None,
+) -> dict[str, Any]:
+    entry = await db.scalar(
+        select(ScheduleEntry)
+        .where(ScheduleEntry.id == entry_id)
+        .options(selectinload(ScheduleEntry.teacher))
+    )
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Schedule entry not found")
+
+    task = await db.get(GenerationTask, entry.task_id) if entry.task_id else None
+    stream = None
+    if entry.source_stream_id is not None:
+        stream = await db.scalar(
+            select(Stream)
+            .where(Stream.id == entry.source_stream_id)
+            .options(
+                selectinload(Stream.groups),
+                selectinload(Stream.discipline),
+                selectinload(Stream.activity_type),
+            )
+        )
+
+    audience_labels = (
+        sorted({group.group_name for group in stream.groups})
+        if stream is not None
+        else [entry.group_name]
+    )
+    parsed_audiences = [parse_group_label(label) for label in audience_labels]
+    base_groups = sorted(
+        {
+            base_group
+            for audience in parsed_audiences
+            for base_group in audience.base_groups
+        }
+    )
+    subgroup_codes = sorted(
+        {audience.subgroup for audience in parsed_audiences if audience.subgroup}
+    )
+
+    related_entries: list[ScheduleEntry] = []
+    if entry.task_id is not None and entry.source_stream_id is not None:
+        related_entries = list(
+            (
+                await db.execute(
+                    select(ScheduleEntry).where(
+                        ScheduleEntry.task_id == entry.task_id,
+                        ScheduleEntry.source_stream_id == entry.source_stream_id,
+                    )
+                )
+            ).scalars()
+        )
+    scheduled_slots = {
+        (related.date, related.lesson_number)
+        for related in related_entries
+        if related.date is not None and related.lesson_number is not None
+    }
+    unassigned_by_group: dict[str, int] = {}
+    for related in related_entries:
+        if related.date is None:
+            unassigned_by_group[related.group_name] = (
+                unassigned_by_group.get(related.group_name, 0) + 1
+            )
+    unassigned_count = max(unassigned_by_group.values(), default=0)
+
+    return {
+        "id": entry.id,
+        "task_id": entry.task_id,
+        "semester_batch_id": task.semester_batch_id if task else None,
+        "planning_week_id": entry.planning_week_id,
+        "source_stream_id": entry.source_stream_id,
+        "event_name": entry.event_name,
+        "discipline_name": (
+            stream.discipline.full_name
+            if stream is not None and stream.discipline is not None
+            else entry.event_name
+        ),
+        "stream_type": (
+            stream.activity_type.name
+            if stream is not None and stream.activity_type is not None
+            else entry.stream_type
+        ),
+        "teacher": entry.teacher.name if entry.teacher else None,
+        "audience_label": entry.group_name,
+        "audience_labels": audience_labels,
+        "base_groups": base_groups,
+        "subgroups": subgroup_codes,
+        "date": entry.date.strftime("%Y-%m-%d") if entry.date else None,
+        "lesson_number": entry.lesson_number,
+        "room_id": entry.room_id,
+        "is_locked": entry.is_locked,
+        "warning": entry.warning,
+        "scheduled_count": len(scheduled_slots),
+        "unassigned_count": unassigned_count,
+        "planned_count": len(scheduled_slots) + unassigned_count,
+    }
 
 
 @router.patch("/schedule/{entry_id}")

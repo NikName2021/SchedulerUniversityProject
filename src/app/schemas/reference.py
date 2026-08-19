@@ -174,6 +174,25 @@ class RuleProfileRead(BaseModel):
     settings: list[RuleSettingRead]
 
 
+class RuleDescriptionRead(BaseModel):
+    code: str
+    name: str
+    description: str
+    category: str
+    configured_enabled: bool
+    effective_enabled: bool
+    is_hard: bool
+    weight: int
+    configurable: bool
+    runtime_state: str
+    runtime_note: str | None = None
+
+
+class RuleProfileDetailsRead(BaseModel):
+    profile: RuleProfileRead
+    rules: list[RuleDescriptionRead]
+
+
 class RuleSettingsUpdate(BaseModel):
     settings: list[RuleSettingInput]
 

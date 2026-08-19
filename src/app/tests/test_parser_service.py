@@ -25,3 +25,15 @@ def test_duplicate_group_uses_largest_reported_size() -> None:
     streams = parse_streams_content(csv_content, "streams.csv")
 
     assert streams[0]["groups"] == [{"name": "ФИЗ-101", "size": 24}]
+
+
+def test_joint_language_group_keeps_a_single_audience_label() -> None:
+    csv_content = """Мероприятие;Вид потока;Преподаватель;Группа
+Английский язык;П;Иванов И.И.;К0109-23 [10], К0609-23 [12] (L2)
+""".encode()
+
+    streams = parse_streams_content(csv_content, "streams.csv")
+
+    assert streams[0]["groups"] == [
+        {"name": "К0109-23, К0609-23 (L2)", "size": 22}
+    ]
