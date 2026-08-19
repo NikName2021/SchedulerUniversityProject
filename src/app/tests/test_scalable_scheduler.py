@@ -90,18 +90,21 @@ def test_shared_teacher_events_never_overlap() -> None:
     assert len({tuple(item["slot"]) for item in result["assignments"]}) == 2
 
 
-def test_two_stage_solver_reports_stage_metrics() -> None:
+def test_three_stage_solver_reports_stage_metrics() -> None:
+    context = _context()
+    context["lessons"] = [1, 2, 3]
     events = [
         _event("event-1", ["A"], 1),
         _event("event-2", ["A"], 2),
     ]
 
-    result = solve_event_component(events, _context())
+    result = solve_event_component(events, context)
 
     assert result["status"] == "success"
     assert result["metrics"]["placement_objective"] == 0
     assert result["metrics"]["unassigned_count"] == 0
     assert result["metrics"]["stages"]["placement"]["status"] == "OPTIMAL"
+    assert result["metrics"]["stages"]["windows"]["status"] == "OPTIMAL"
     assert result["metrics"]["stages"]["quality"]["status"] == "OPTIMAL"
 
 
@@ -214,6 +217,7 @@ def test_double_window_is_penalized() -> None:
         for assignment in result["assignments"]
     }
     assert lessons_by_event == {"event-1": 1, "event-2": 2}
+    assert result["metrics"]["window_objective"] == 0
 
 
 def test_lecture_is_scheduled_before_practical() -> None:

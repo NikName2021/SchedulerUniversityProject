@@ -942,6 +942,37 @@ class ScalableGenerationService:
                                 == "OPTIMAL"
                             ),
                         },
+                        "windows": {
+                            "solve_seconds": sum(
+                                float(
+                                    metrics.get("stages", {})
+                                    .get("windows", {})
+                                    .get("solve_seconds", 0)
+                                    or 0
+                                )
+                                for metrics in component_metrics
+                            ),
+                            "objective": sum(
+                                int(metrics.get("window_objective", 0) or 0)
+                                for metrics in component_metrics
+                            ),
+                            "completed_components": sum(
+                                1
+                                for metrics in component_metrics
+                                if metrics.get("stages", {})
+                                .get("windows", {})
+                                .get("status")
+                                in {"OPTIMAL", "FEASIBLE"}
+                            ),
+                            "skipped_components": sum(
+                                1
+                                for metrics in component_metrics
+                                if metrics.get("stages", {})
+                                .get("windows", {})
+                                .get("status")
+                                == "skipped"
+                            ),
+                        },
                         "quality": {
                             "solve_seconds": sum(
                                 float(
