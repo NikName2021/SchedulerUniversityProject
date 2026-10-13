@@ -30,6 +30,7 @@ from middleware import LoggingMiddleware, SecurityHeadersMiddleware
 from services.default_users_service import bootstrap_default_users
 from services.upload_service import purge_legacy_uploads
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -40,8 +41,18 @@ async def application_lifespan(_application: FastAPI):
         await create_tables(engine)
     else:
         # Only clean legacy files after the destructive database migration.
-        async with sessionmaker() as db:
-            revision = await db.scalar(text("SELECT version_num FROM alembic_version"))
+        try:
+            async with sessionmaker() as db:
+                revision = await db.scalar(
+                    text("SELECT version_num FROM alembic_version")
+                )
+        except SQLAlchemyError:
+            revision = None
+            logger.warning(
+                "Could not read the database migration revision; "
+                "legacy upload cleanup was skipped",
+                exc_info=True,
+            )
         if revision == DATABASE_SCHEMA_REVISION:
             removed = purge_legacy_uploads(UPLOAD_DIR)
             if removed:
