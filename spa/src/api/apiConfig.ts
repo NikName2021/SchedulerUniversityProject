@@ -6,8 +6,10 @@ export const API_BASE_URL = runtimeEnv?.VITE_API_BASE_URL || "";
 export const AUTH_UNAUTHORIZED_EVENT = "scheduler:unauthorized";
 
 let csrfToken: string | null = null;
+let sessionVersion = 0;
 
 export const setCsrfToken = (token: string | null): void => {
+  if (csrfToken !== token) sessionVersion += 1;
   csrfToken = token;
 };
 
@@ -26,11 +28,16 @@ export const apiFetch = async (
     headers.set("X-CSRF-Token", csrfToken);
   }
 
+  const requestSession = sessionVersion;
   const response = await fetch(input, {
     ...init,
     headers,
     credentials: "include",
   });
+
+  if (requestSession !== sessionVersion) {
+    throw new DOMException("Session changed", "AbortError");
+  }
 
   const requestUrl = String(input);
   if (

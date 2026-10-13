@@ -36,7 +36,7 @@ const pageMeta: Record<string, { title: string; description: string }> = {
   },
   "/history": {
     title: "Журнал операций",
-    description: "Версии, результаты и публикации",
+    description: "Личные расчёты и результаты",
   },
   "/schedule": {
     title: "Расписание",
@@ -118,7 +118,7 @@ export const Layout: React.FC = () => {
 
           <nav className="app-navigation" aria-label="Основная навигация">
             {!isCollapsed && (
-              <p className="app-navigation__label">РАБОЧАЯ ОБЛАСТЬ</p>
+              <p className="app-navigation__label">ЛИЧНОЕ ПРОСТРАНСТВО</p>
             )}
             {navItems.map((item) => (
               <NavLink
@@ -165,7 +165,9 @@ export const Layout: React.FC = () => {
       <main className="app-main">
         <header className="app-topbar">
           <div>
-            <div className="app-topbar__crumb">Рабочее место оператора</div>
+            <div className="app-topbar__crumb">
+              Личное пространство · {userLabel}
+            </div>
             <h1>{currentPage.title}</h1>
           </div>
           <div className="app-topbar__actions">

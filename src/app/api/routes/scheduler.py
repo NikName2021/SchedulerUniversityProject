@@ -344,7 +344,9 @@ async def import_streams(
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     extension = Path(safe_filename).suffix.lower()
     unique_filename = f"{timestamp}_{uuid.uuid4().hex[:12]}{extension}"
-    file_path = UPLOAD_DIR / unique_filename
+    workspace_dir = UPLOAD_DIR / str(db.info["workspace_owner_id"])
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    file_path = workspace_dir / unique_filename
 
     try:
         file_path.write_bytes(content)
@@ -487,12 +489,13 @@ async def preview_group_selection(
 async def get_subjects_summary(
     groups: Annotated[str, Query(...)] = None,  # Comma separated
     types: Annotated[str, Query(...)] = None,  # Comma separated
+    db: AsyncSession = Depends(async_get_db),
 ) -> dict[str, list[str]]:
     selected_groups = groups.split(",")
     enabled_types = types.split(",")
     try:
         summary = await GenerationService.get_subjects_summary(
-            selected_groups, enabled_types
+            selected_groups, enabled_types, db
         )
         return summary
     except Exception:
@@ -506,10 +509,11 @@ async def get_subjects_summary(
 @router.post("/subjects-summary")
 async def post_subjects_summary(
     payload: SubjectsSummaryModel,
+    db: AsyncSession = Depends(async_get_db),
 ) -> dict[str, list[str]]:
     try:
         return await GenerationService.get_subjects_summary(
-            payload.groups, payload.types
+            payload.groups, payload.types, db
         )
     except Exception:
         logger.exception("Error getting subjects summary")

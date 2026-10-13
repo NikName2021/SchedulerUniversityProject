@@ -75,6 +75,8 @@ interface AppState {
   startGeneration: () => Promise<void>;
 }
 
+let workspaceEpoch = 0;
+
 export const useAppStore = create<AppState>((set) => ({
   teachers: [],
   streams: [],
@@ -89,6 +91,7 @@ export const useAppStore = create<AppState>((set) => ({
   logs: [],
 
   fetchInitialData: async () => {
+    const epoch = workspaceEpoch;
     set({ isLoading: true, error: null });
     try {
       const res = await apiFetch(`${API_BASE_URL}/api/v1/scheduler/teachers`);
@@ -148,12 +151,14 @@ export const useAppStore = create<AppState>((set) => ({
         },
       );
 
+      if (epoch !== workspaceEpoch) return;
       set({
         teachers,
         isLoading: false,
         selectedTeacherId: teachers[0]?.id || null,
       });
     } catch {
+      if (epoch !== workspaceEpoch) return;
       set({
         error: "Не удалось загрузить данные преподавателей",
         isLoading: false,
@@ -275,18 +280,23 @@ export const useAppStore = create<AppState>((set) => ({
   },
 
   startGeneration: async () => {
+    const epoch = workspaceEpoch;
     set({ isGenerating: true, progress: 0, logs: ["Инициализация..."] });
     try {
       const { jobId } = await MockAPI.startGeneration();
+      if (epoch !== workspaceEpoch) return;
       set({ jobId });
     } catch {
+      if (epoch !== workspaceEpoch) return;
       set({ error: "Failed to start generation", isGenerating: false });
     }
   },
 
   updateJobProgress: async (jobId) => {
+    const epoch = workspaceEpoch;
     try {
       const { progress, logs } = await MockAPI.checkStatus(jobId);
+      if (epoch !== workspaceEpoch) return;
       set({ progress, logs });
       if (progress >= 100) {
         set({ isGenerating: false, jobId: null });
@@ -300,6 +310,7 @@ export const useAppStore = create<AppState>((set) => ({
     set({ isGenerating: false, jobId: null, progress: 0, logs: [] }),
 
   saveTeacherRestrictions: async (teacherId: string) => {
+    const epoch = workspaceEpoch;
     const state = useAppStore.getState();
     const teacher = state.teachers.find((t) => t.id === teacherId);
     if (!teacher) return;
@@ -313,10 +324,12 @@ export const useAppStore = create<AppState>((set) => ({
           body: JSON.stringify({ restrictions: teacher.restrictions }),
         },
       );
+      if (epoch !== workspaceEpoch) return;
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as {
           detail?: string;
         } | null;
+        if (epoch !== workspaceEpoch) return;
         set({
           error:
             payload?.detail || "Не удалось сохранить ограничения преподавателя",
@@ -325,8 +338,14 @@ export const useAppStore = create<AppState>((set) => ({
       }
       set({ error: null });
     } catch (e) {
+      if (epoch !== workspaceEpoch) return;
       console.error("Failed to save restrictions", e);
       set({ error: "Не удалось сохранить ограничения преподавателя" });
     }
   },
 }));
+
+export const resetWorkspaceStore = () => {
+  workspaceEpoch += 1;
+  useAppStore.setState(useAppStore.getInitialState(), true);
+};

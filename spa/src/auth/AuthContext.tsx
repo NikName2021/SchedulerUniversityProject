@@ -12,7 +12,17 @@ import {
   apiFetch,
   setCsrfToken,
 } from "../api/apiConfig";
+import { resetWorkspaceStore } from "../store/useAppStore";
 import { AuthContext, type AuthUser } from "./authContextValue";
+
+const authTabId = `${Date.now()}-${Math.random()}`;
+
+const notifySessionChange = () => {
+  if (typeof BroadcastChannel === "undefined") return;
+  const channel = new BroadcastChannel("scheduler:session");
+  channel.postMessage({ source: authTabId });
+  channel.close();
+};
 
 type AuthPayload = {
   user: AuthUser;
@@ -35,6 +45,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [isLoading, setIsLoading] = useState(true);
 
   const clearAuth = useCallback(() => {
+    resetWorkspaceStore();
     setCsrfToken(null);
     setUser(null);
   }, []);
@@ -53,6 +64,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
         const payload = (await response.json()) as AuthPayload;
         setCsrfToken(payload.csrf_token);
+        resetWorkspaceStore();
         setUser(payload.user);
       } catch (error) {
         if (!(error instanceof DOMException && error.name === "AbortError")) {
@@ -74,6 +86,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     return () => window.removeEventListener(AUTH_UNAUTHORIZED_EVENT, clearAuth);
   }, [clearAuth]);
 
+  useEffect(() => {
+    if (typeof BroadcastChannel === "undefined") return;
+    const channel = new BroadcastChannel("scheduler:session");
+    channel.onmessage = (event: MessageEvent<{ source?: string }>) => {
+      if (event.data?.source !== authTabId) clearAuth();
+    };
+    return () => channel.close();
+  }, [clearAuth]);
+
   const login = useCallback(async (username: string, password: string) => {
     const response = await apiFetch(`${API_BASE_URL}/api/v1/auth/login`, {
       method: "POST",
@@ -85,7 +106,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
     const payload = (await response.json()) as AuthPayload;
     setCsrfToken(payload.csrf_token);
+    resetWorkspaceStore();
     setUser(payload.user);
+    notifySessionChange();
   }, []);
 
   const logout = useCallback(async () => {
@@ -96,6 +119,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       throw new Error("Не удалось завершить сессию");
     }
     clearAuth();
+    notifySessionChange();
   }, [clearAuth]);
 
   const value = useMemo(

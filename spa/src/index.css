@@ -1856,3 +1856,17 @@ textarea:focus-visible {
     padding-top: 22px;
   }
 }
+
+.action-tooltip {
+  position: fixed;
+  z-index: 10000;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  background: #172b4d;
+  color: #fff;
+  box-shadow: 0 4px 16px rgb(15 23 42 / 20%);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  text-align: center;
+  pointer-events: none;
+}

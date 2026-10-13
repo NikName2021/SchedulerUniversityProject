@@ -5,7 +5,7 @@ import json
 from typing import Any
 
 from database import GenerationIssue, GenerationLock, GenerationTask
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 TERMINAL_STATUSES = {"success", "partial", "failed", "canceled"}
@@ -52,6 +52,8 @@ class GenerationLifecycleService:
             )
         )
         keys = cls.scope_keys(groups, planning_week_id, start_date, end_date)
+        owner_id = db.info["workspace_owner_id"]
+        keys = [f"owner:{owner_id}:{key}" for key in keys]
         conflict = await db.scalar(
             select(GenerationLock.scope_key).where(GenerationLock.scope_key.in_(keys))
         )
@@ -98,28 +100,32 @@ class GenerationLifecycleService:
 
     @staticmethod
     async def publish(task: GenerationTask, db: AsyncSession) -> None:
-        if task.status not in {"success", "partial"}:
-            raise ValueError("Only a completed schedule can be published")
-        if task.planning_week_id is not None:
-            scope = GenerationTask.planning_week_id == task.planning_week_id
-        else:
-            scope = (
-                GenerationTask.planning_week_id.is_(None)
-                & (GenerationTask.start_date == task.start_date)
-                & (GenerationTask.end_date == task.end_date)
-            )
-        await db.execute(
-            update(GenerationTask)
-            .where(
-                scope,
-                GenerationTask.id != task.id,
-                GenerationTask.publication_status == "published",
-            )
-            .values(publication_status="archived")
-        )
-        task.publication_status = "published"
-        task.published_at = datetime.datetime.utcnow()
-        await db.commit()
+        # Publication is temporarily disabled at the service boundary as well
+        # as in the UI. Keep the original algorithm below for re-enabling.
+        raise ValueError("Публикация расписания временно отключена")
+
+        # if task.status not in {"success", "partial"}:
+        #     raise ValueError("Only a completed schedule can be published")
+        # if task.planning_week_id is not None:
+        #     scope = GenerationTask.planning_week_id == task.planning_week_id
+        # else:
+        #     scope = (
+        #         GenerationTask.planning_week_id.is_(None)
+        #         & (GenerationTask.start_date == task.start_date)
+        #         & (GenerationTask.end_date == task.end_date)
+        #     )
+        # await db.execute(
+        #     update(GenerationTask)
+        #     .where(
+        #         scope,
+        #         GenerationTask.id != task.id,
+        #         GenerationTask.publication_status == "published",
+        #     )
+        #     .values(publication_status="archived")
+        # )
+        # task.publication_status = "published"
+        # task.published_at = datetime.datetime.utcnow()
+        # await db.commit()
 
     @staticmethod
     async def archive(task: GenerationTask, db: AsyncSession) -> None:
