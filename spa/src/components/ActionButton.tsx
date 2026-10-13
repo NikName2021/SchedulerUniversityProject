@@ -1,4 +1,10 @@
-import { useEffect, useId, useRef, useState, type ButtonHTMLAttributes } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ButtonHTMLAttributes,
+} from "react";
 import { createPortal } from "react-dom";
 
 type ActionButtonProps = Omit<
@@ -25,7 +31,9 @@ export const ActionButton = ({
     const close = () => setAnchor(null);
     const reposition = () => {
       const rect = buttonRef.current?.getBoundingClientRect();
-      setAnchor(rect && rect.bottom > 0 && rect.top < window.innerHeight ? rect : null);
+      setAnchor(
+        rect && rect.bottom > 0 && rect.top < window.innerHeight ? rect : null,
+      );
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") close();

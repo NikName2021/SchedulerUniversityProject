@@ -10,6 +10,7 @@ from database import (
     GenerationTask,
     ImportBatch,
     PlanningWeek,
+    PublicSchedule,
     ScheduleEntry,
     Stream,
     StreamGroup,
@@ -50,8 +51,7 @@ async def test_generation_lock_and_version_lifecycle(db_session: AsyncSession) -
     first.status = "success"
     await GenerationLifecycleService.release_locks(first.id, db_session)
     await db_session.commit()
-    with pytest.raises(ValueError, match="временно отключена"):
-        await GenerationLifecycleService.publish(first, db_session)
+    await GenerationLifecycleService.publish(first, db_session)
 
     second = await GenerationLifecycleService.reserve_task(
         db_session,
@@ -66,13 +66,15 @@ async def test_generation_lock_and_version_lifecycle(db_session: AsyncSession) -
     second.status = "partial"
     await GenerationLifecycleService.release_locks(second.id, db_session)
     await db_session.commit()
-    with pytest.raises(ValueError, match="временно отключена"):
-        await GenerationLifecycleService.publish(second, db_session)
+    await GenerationLifecycleService.publish(second, db_session)
     await db_session.refresh(first)
 
     assert second.version_number == first.version_number + 1
-    assert second.publication_status == "draft"
-    assert first.publication_status == "draft"
+    assert second.publication_status == "published"
+    assert first.publication_status == "archived"
+    publication = await db_session.scalar(select(PublicSchedule))
+    assert publication is not None
+    assert publication.source_task_id == second.id
 
 
 @pytest.mark.asyncio

@@ -16,6 +16,7 @@ import {
   LayoutDashboard,
   RefreshCcw,
   RotateCcw,
+  Send,
   Trash2,
   Users,
   XCircle,
@@ -176,7 +177,7 @@ const HistoryPage: React.FC = () => {
 
   const runTaskAction = async (
     taskId: number,
-    action: "cancel" | "retry" | "archive",
+    action: "cancel" | "retry" | "publish" | "archive",
   ) => {
     const response = await apiFetch(
       `${API_BASE_URL}/api/v1/scheduler/tasks/${taskId}/${action}`,
@@ -328,7 +329,17 @@ const HistoryPage: React.FC = () => {
           <RotateCcw size={16} />
         </ActionButton>
       )}
-      {/* Publication is temporarily disabled; the API also rejects it. */}
+      {hasScheduleResult(task.status) &&
+        task.publication_status === "draft" && (
+          <ActionButton
+            type="button"
+            className="button-icon task-action--success"
+            label="Опубликовать для всех сотрудников"
+            onClick={() => void runTaskAction(task.id, "publish")}
+          >
+            <Send size={16} />
+          </ActionButton>
+        )}
       {task.publication_status === "published" && (
         <ActionButton
           type="button"
@@ -426,8 +437,8 @@ const HistoryPage: React.FC = () => {
           <h2 className="enterprise-page__heading">Реестр расчётов</h2>
           <p className="enterprise-page__description">
             Семестровые запуски объединены в одну операцию с детализацией по
-            неделям. Все расчёты доступны только вам. Публикация временно
-            отключена.
+            неделям. Исходные данные и черновики доступны только вам.
+            Опубликованные версии появляются в общем каталоге.
           </p>
         </div>
         <div style={{ display: "flex", gap: "0.75rem" }}>

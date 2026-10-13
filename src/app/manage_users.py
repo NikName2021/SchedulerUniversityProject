@@ -1,7 +1,9 @@
 import argparse
 import asyncio
+import csv
 import datetime
 import getpass
+import secrets
 import sys
 
 from core.config import sessionmaker
@@ -40,6 +42,67 @@ async def _create_user(args: argparse.Namespace) -> None:
             await db.rollback()
             raise ValueError(f"User '{username}' already exists") from exc
     print(f"Created {args.role} account '{username}'.")
+
+
+async def _create_users(args: argparse.Namespace) -> None:
+    if not 1 <= args.count <= 100:
+        raise ValueError("Count must be between 1 and 100")
+    if not 1 <= args.start <= 9_999:
+        raise ValueError("Start must be between 1 and 9999")
+    display_name_prefix = args.display_name_prefix.strip()
+    if not display_name_prefix or len(display_name_prefix) > 110:
+        raise ValueError("Display name prefix must contain 1-110 characters")
+
+    accounts = [
+        {
+            "username": validate_username(f"{args.prefix}{index}"),
+            "display_name": f"{display_name_prefix} {index}",
+            "password": secrets.token_urlsafe(18),
+        }
+        for index in range(args.start, args.start + args.count)
+    ]
+    usernames = [account["username"] for account in accounts]
+
+    async with sessionmaker() as db:
+        existing = set(
+            (
+                await db.scalars(
+                    select(UserAccount.username).where(
+                        UserAccount.username.in_(usernames)
+                    )
+                )
+            ).all()
+        )
+        if existing:
+            raise ValueError(
+                "Accounts already exist: " + ", ".join(sorted(existing))
+            )
+
+        db.add_all(
+            [
+                UserAccount(
+                    username=account["username"],
+                    display_name=account["display_name"],
+                    password_hash=hash_password(account["password"]),
+                    role=args.role,
+                )
+                for account in accounts
+            ]
+        )
+        try:
+            await db.commit()
+        except IntegrityError as exc:
+            await db.rollback()
+            raise ValueError("Could not create the account batch") from exc
+
+    writer = csv.DictWriter(
+        sys.stdout,
+        fieldnames=("username", "password", "display_name", "role"),
+        lineterminator="\n",
+    )
+    writer.writeheader()
+    for account in accounts:
+        writer.writerow({**account, "role": args.role})
 
 
 async def _set_password(args: argparse.Namespace) -> None:
@@ -109,6 +172,23 @@ def _build_parser() -> argparse.ArgumentParser:
         default="operator",
     )
     create_parser.set_defaults(handler=_create_user)
+
+    bulk_parser = subparsers.add_parser(
+        "create-users", help="Create numbered accounts with generated passwords"
+    )
+    bulk_parser.add_argument("--prefix", required=True)
+    bulk_parser.add_argument("--count", type=int, required=True)
+    bulk_parser.add_argument("--start", type=int, default=1)
+    bulk_parser.add_argument(
+        "--display-name-prefix",
+        default="Оператор",
+    )
+    bulk_parser.add_argument(
+        "--role",
+        choices=("admin", "operator"),
+        default="operator",
+    )
+    bulk_parser.set_defaults(handler=_create_users)
 
     password_parser = subparsers.add_parser(
         "set-password",

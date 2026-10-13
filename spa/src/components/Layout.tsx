@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Database,
   FolderInput,
+  Globe2,
   History,
   LayoutDashboard,
   LogOut,
@@ -38,6 +39,10 @@ const pageMeta: Record<string, { title: string; description: string }> = {
     title: "Журнал операций",
     description: "Личные расчёты и результаты",
   },
+  "/published": {
+    title: "Общий каталог",
+    description: "Опубликованные расписания сотрудников",
+  },
   "/schedule": {
     title: "Расписание",
     description: "Проверка и ручное редактирование",
@@ -68,7 +73,9 @@ export const Layout: React.FC = () => {
     pageMeta[location.pathname] ??
     (location.pathname.startsWith("/schedule/")
       ? pageMeta["/schedule"]
-      : pageMeta["/"]);
+      : location.pathname.startsWith("/published/")
+        ? pageMeta["/published"]
+        : pageMeta["/"]);
   const userLabel = user?.display_name || user?.username || "Пользователь";
   const userRole = user?.role === "admin" ? "Администратор" : "Оператор";
 
@@ -134,6 +141,17 @@ export const Layout: React.FC = () => {
                 {!isCollapsed && <span>{item.label}</span>}
               </NavLink>
             ))}
+            {!isCollapsed && <p className="app-navigation__label">ОБЩЕЕ</p>}
+            <NavLink
+              to="/published"
+              title={isCollapsed ? "Общий каталог" : undefined}
+              className={({ isActive }) =>
+                `app-nav-link ${isActive ? "app-nav-link--active" : ""}`
+              }
+            >
+              <Globe2 size={18} strokeWidth={1.8} />
+              {!isCollapsed && <span>Общий каталог</span>}
+            </NavLink>
           </nav>
         </div>
 

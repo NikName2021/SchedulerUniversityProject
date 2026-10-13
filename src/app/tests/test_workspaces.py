@@ -260,16 +260,83 @@ async def test_workspace_names_and_generation_locks_are_independent(spaces):
 
 
 @pytest.mark.asyncio
-async def test_publication_is_disabled_without_changing_task(spaces):
+async def test_publication_catalog_is_shared_but_source_remains_private(spaces):
     own = spaces.first
     response = await own.client.post(f"/api/v1/scheduler/tasks/{own.task.id}/publish")
-    assert response.status_code == 409
-    assert "временно отключена" in response.json()["detail"]
-    async with spaces.factory() as db:
-        bind_workspace(db, own.user.id)
-        task = await db.get(GenerationTask, own.task.id)
-        assert task.publication_status == "draft"
-        assert task.published_at is None
+    assert response.status_code == 200
+
+    catalog = await spaces.second.client.get("/api/v1/scheduler/publications")
+    assert catalog.status_code == 200
+    [published] = catalog.json()
+    assert published["owner_display_name"] == own.user.display_name
+    assert published["can_edit"] is False
+    assert published["source_task_id"] is None
+    assert f"#{own.task.id}" not in published["title"]
+
+    detail = await spaces.second.client.get(
+        f"/api/v1/scheduler/publications/{published['id']}"
+    )
+    assert detail.status_code == 200
+    entry = detail.json()["entries"][0]
+    assert entry["event_name"] == own.stream.event_name
+    assert entry["id"] == 1
+    assert set(entry) == {
+        "id",
+        "group_name",
+        "event_name",
+        "stream_type",
+        "teacher",
+        "room_id",
+        "date",
+        "lesson_number",
+    }
+
+    [owner_view] = (await own.client.get("/api/v1/scheduler/publications")).json()
+    assert owner_view["can_edit"] is True
+    assert owner_view["source_task_id"] == own.task.id
+
+    private = await spaces.second.client.get(
+        f"/api/v1/scheduler/tasks/{own.task.id}/diagnostics"
+    )
+    assert private.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_owner_can_edit_published_schedule_and_catalog_updates(spaces):
+    own = spaces.first
+    await own.client.post(f"/api/v1/scheduler/tasks/{own.task.id}/publish")
+    publication = (
+        await spaces.second.client.get("/api/v1/scheduler/publications")
+    ).json()[0]
+
+    response = await own.client.patch(
+        f"/api/v1/scheduler/schedule/{own.entry.id}",
+        json={"lesson_number": 2},
+    )
+    assert response.status_code == 200, response.text
+
+    detail = await spaces.second.client.get(
+        f"/api/v1/scheduler/publications/{publication['id']}"
+    )
+    assert detail.status_code == 200
+    assert detail.json()["entries"][0]["lesson_number"] == 2
+    assert detail.json()["edit_revision"] == 1
+
+    deleted = await own.client.delete(
+        f"/api/v1/scheduler/schedule/{own.entry.id}"
+    )
+    assert deleted.status_code == 200
+    detail = await spaces.second.client.get(
+        f"/api/v1/scheduler/publications/{publication['id']}"
+    )
+    assert detail.json()["entries"] == []
+    assert detail.json()["edit_revision"] == 2
+
+    archived = await own.client.post(f"/api/v1/scheduler/tasks/{own.task.id}/archive")
+    assert archived.status_code == 200
+    assert (
+        await spaces.second.client.get("/api/v1/scheduler/publications")
+    ).json() == []
 
 
 @pytest.mark.asyncio

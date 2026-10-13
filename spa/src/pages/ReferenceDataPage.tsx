@@ -3,6 +3,7 @@ import {
   Building2,
   CheckCircle2,
   ChevronRight,
+  Clock3,
   CircleOff,
   Loader2,
   LockKeyhole,
@@ -69,9 +70,25 @@ interface RuleDescription {
   runtime_note: string | null;
 }
 
+interface SolverStageTiming {
+  code: string;
+  name: string;
+  seconds: number;
+  allocation: "maximum" | "remainder";
+  description: string;
+}
+
+interface SolverTiming {
+  total_component_seconds: number;
+  scope: string;
+  stages: SolverStageTiming[];
+  note: string;
+}
+
 interface RuleProfileDetails {
   profile: RuleProfile;
   rules: RuleDescription[];
+  solver_timing: SolverTiming;
 }
 
 const runtimeLabels: Record<RuleRuntimeState, string> = {
@@ -449,6 +466,50 @@ export const ReferenceDataPage: React.FC = () => {
 
               {profileDetails && (
                 <div className="space-y-4">
+                  <section className="rounded-2xl border border-blue-200 bg-blue-50/60 p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <h3 className="flex items-center gap-2 font-extrabold text-text-primary">
+                          <Clock3 size={17} className="text-brand" /> Время на
+                          этапы расчёта
+                        </h3>
+                        <p className="mt-1 text-xs font-semibold text-text-secondary">
+                          {profileDetails.solver_timing.scope}
+                        </p>
+                      </div>
+                      <span className="rounded-lg bg-white px-3 py-1.5 text-sm font-black text-brand shadow-sm">
+                        {profileDetails.solver_timing.total_component_seconds} с
+                        всего
+                      </span>
+                    </div>
+
+                    <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                      {profileDetails.solver_timing.stages.map((stage) => (
+                        <div
+                          key={stage.code}
+                          className="rounded-xl border border-blue-100 bg-white p-3"
+                        >
+                          <div className="text-xl font-black text-text-primary">
+                            {stage.allocation === "remainder"
+                              ? "остаток ≈ "
+                              : "до "}
+                            {stage.seconds} с
+                          </div>
+                          <div className="mt-1 text-xs font-extrabold text-text-primary">
+                            {stage.name}
+                          </div>
+                          <p className="mt-2 text-xs leading-5 text-text-secondary">
+                            {stage.description}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+
+                    <p className="mt-3 text-xs font-semibold leading-5 text-blue-800/75">
+                      {profileDetails.solver_timing.note}
+                    </p>
+                  </section>
+
                   {profileDetails.rules.map((rule) => (
                     <article
                       key={rule.code}

@@ -16,7 +16,7 @@ else:
 API_PREFIX = "/api"
 VERSION = "0.1.0"
 # Keep in sync with the single Alembic head; readiness fails closed on schema drift.
-DATABASE_SCHEMA_REVISION = "20261013_0010"
+DATABASE_SCHEMA_REVISION = "20261013_0011"
 DEBUG: bool = config("DEBUG", cast=bool, default=False)
 MEMOIZATION_FLAG: bool = config("MEMOIZATION_FLAG", cast=bool, default=True)
 AUTO_CREATE_TABLES: bool = config("AUTO_CREATE_TABLES", cast=bool, default=False)

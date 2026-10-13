@@ -13,6 +13,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -444,6 +445,41 @@ class GenerationTask(WorkspaceOwned, DeclBase):
     issues = relationship(
         "GenerationIssue", cascade="all,delete-orphan", back_populates="task"
     )
+
+
+class PublicSchedule(DeclBase):
+    """A safe snapshot visible to every authenticated employee."""
+
+    __tablename__ = "public_schedule"
+    __table_args__ = (
+        Index("ix_public_schedule_published_at", "published_at"),
+        Index("ix_public_schedule_owner_id", "owner_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source_task_id = Column(
+        Integer,
+        ForeignKey("generation_task.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    owner_id = Column(
+        Integer,
+        ForeignKey("user_account.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    owner_display_name = Column(String(120), nullable=False)
+    title = Column(String(255), nullable=False)
+    starts_on = Column(DateTime, nullable=True)
+    ends_on = Column(DateTime, nullable=True)
+    groups_json = Column(Text, nullable=False, default="[]")
+    entries_json = Column(Text, nullable=False, default="[]")
+    result_count = Column(Integer, nullable=False, default=0)
+    edit_revision = Column(Integer, nullable=False, default=0)
+    published_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
+
+
 class UserAccount(DeclBase):
     __tablename__ = "user_account"
     __table_args__ = (

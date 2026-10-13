@@ -104,3 +104,11 @@ async def test_rule_profile_details_describe_actual_generator_state(
     assert rules["minimize_windows"]["runtime_state"] == "disabled"
     assert rules["room_capacity"]["runtime_state"] == "temporarily_disabled"
     assert rules["load_balance"]["runtime_state"] == "not_implemented"
+    timing = payload["solver_timing"]
+    assert timing["total_component_seconds"] == 400
+    assert [stage["seconds"] for stage in timing["stages"]] == [140, 140, 120]
+    assert [stage["code"] for stage in timing["stages"]] == [
+        "placement",
+        "windows",
+        "quality",
+    ]
