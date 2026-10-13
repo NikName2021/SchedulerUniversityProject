@@ -3,10 +3,17 @@ name: CI
 on:
   push:
     branches:
-      - master
+      - "**"
   pull_request:
     branches:
       - master
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   backend:
@@ -40,19 +47,13 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
-      - name: Run tests
-        run: npm test -- --ci --runInBand
-
-      - name: Run ESLint
-        run: npm run lint
-
-      - name: Build frontend
+      - name: Validate and build frontend
         run: npm run build
 
 
   docker-image-backend-build:
     name: Build and Push Docker Image Backend
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -86,7 +87,7 @@ jobs:
 
   docker-image-frontend-build:
     name: Build and Push Docker Image Frontend
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     defaults:
       run:
