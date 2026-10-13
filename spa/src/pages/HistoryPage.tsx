@@ -21,6 +21,7 @@ import {
   Users,
   XCircle,
 } from "lucide-react";
+import { ActionButton } from "../components/ActionButton";
 import { API_BASE_URL, apiFetch, openDownload } from "../api/apiConfig";
 
 interface PlanningWeekSummary {
@@ -244,15 +245,13 @@ const HistoryPage: React.FC = () => {
     return `/schedule?${params.toString()}`;
   };
 
-  const shareSchedule = async (path: string, title: string) => {
+  const shareSchedule = async (path: string) => {
     const url = new URL(path, window.location.origin).toString();
     try {
-      if (navigator.share) {
-        await navigator.share({ title, url });
-      } else {
-        await navigator.clipboard.writeText(url);
-        alert("Ссылка на расчёт скопирована");
-      }
+      await navigator.clipboard.writeText(url);
+      alert(
+        "Личная ссылка скопирована. Расписание доступно только в вашем аккаунте.",
+      );
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
       window.prompt("Скопируйте ссылку на расчёт", url);
@@ -311,69 +310,69 @@ const HistoryPage: React.FC = () => {
   ) => (
     <div className="task-row__actions">
       {(task.status === "queued" || task.status === "running") && (
-        <button
+        <ActionButton
           type="button"
           className="button-icon button-danger"
-          title="Отменить расчёт"
+          label="Отменить расчёт"
           onClick={() => void runTaskAction(task.id, "cancel")}
         >
           <Ban size={16} />
-        </button>
+        </ActionButton>
       )}
       {(task.status === "failed" || task.status === "canceled") && (
-        <button
+        <ActionButton
           type="button"
           className="button-icon"
-          title="Повторить расчёт"
+          label="Повторить расчёт"
           onClick={() => void runTaskAction(task.id, "retry")}
         >
           <RotateCcw size={16} />
-        </button>
+        </ActionButton>
       )}
       {hasScheduleResult(task.status) &&
         task.publication_status === "draft" && (
-          <button
+          <ActionButton
             type="button"
             className="button-icon task-action--success"
-            title="Опубликовать версию"
+            label="Опубликовать для всех сотрудников"
             onClick={() => void runTaskAction(task.id, "publish")}
           >
             <Send size={16} />
-          </button>
+          </ActionButton>
         )}
       {task.publication_status === "published" && (
-        <button
+        <ActionButton
           type="button"
           className="button-icon"
-          title="Отправить в архив"
+          label="Отправить в архив"
           onClick={() => void runTaskAction(task.id, "archive")}
         >
           <Archive size={16} />
-        </button>
+        </ActionButton>
       )}
       {(task.status === "partial" || task.status === "failed") && (
-        <button
+        <ActionButton
           type="button"
           className="button-icon task-action--warning"
-          title="Показать диагностику"
+          label="Показать диагностику"
           onClick={() => void showDiagnostics(task.id)}
         >
           <AlertTriangle size={16} />
-        </button>
+        </ActionButton>
       )}
-      <button
+      <ActionButton
         type="button"
         className="button-icon"
-        title="Наследовать параметры"
+        label="Создать расчёт с такими же параметрами"
         onClick={() => handleInherit(task)}
       >
         <RefreshCcw size={16} />
-      </button>
+      </ActionButton>
       {hasScheduleResult(task.status) && (
-        <button
+        <ActionButton
           type="button"
           className="button-icon task-action--primary"
-          title="Скачать Excel"
+          label="Скачать Excel"
           onClick={() =>
             openDownload(
               `${API_BASE_URL}/api/v1/scheduler/export?task_id=${task.id}`,
@@ -381,13 +380,13 @@ const HistoryPage: React.FC = () => {
           }
         >
           <Download size={16} />
-        </button>
+        </ActionButton>
       )}
       {hasScheduleResult(task.status) && (
-        <button
+        <ActionButton
           type="button"
           className="button-icon task-action--primary"
-          title="Открыть расписание"
+          label="Открыть расписание"
           onClick={() =>
             semesterBatchId
               ? openSemester(semesterBatchId, task.planning_week)
@@ -395,33 +394,32 @@ const HistoryPage: React.FC = () => {
           }
         >
           <LayoutDashboard size={16} />
-        </button>
+        </ActionButton>
       )}
       {hasScheduleResult(task.status) && (
-        <button
+        <ActionButton
           type="button"
           className="button-icon task-action--primary"
-          title="Поделиться ссылкой"
+          label="Скопировать личную ссылку"
           onClick={() =>
             void shareSchedule(
               semesterBatchId
                 ? semesterSchedulePath(semesterBatchId, task.planning_week)
                 : `/schedule/${task.id}`,
-              `Расписание #${task.id}`,
             )
           }
         >
           <Link2 size={16} />
-        </button>
+        </ActionButton>
       )}
-      <button
+      <ActionButton
         type="button"
         className="button-icon button-danger"
-        title="Удалить расчёт"
+        label="Удалить расчёт"
         onClick={() => void deleteTask(task)}
       >
         <Trash2 size={16} />
-      </button>
+      </ActionButton>
     </div>
   );
 
@@ -439,7 +437,8 @@ const HistoryPage: React.FC = () => {
           <h2 className="enterprise-page__heading">Реестр расчётов</h2>
           <p className="enterprise-page__description">
             Семестровые запуски объединены в одну операцию с детализацией по
-            неделям.
+            неделям. Исходные данные и черновики доступны только вам.
+            Опубликованные версии появляются в общем каталоге.
           </p>
         </div>
         <div style={{ display: "flex", gap: "0.75rem" }}>
@@ -550,6 +549,8 @@ const HistoryPage: React.FC = () => {
                           return next;
                         })
                       }
+                      title={expanded ? "Свернуть недели" : "Развернуть недели"}
+                      aria-expanded={expanded}
                       aria-label={
                         expanded ? "Свернуть недели" : "Развернуть недели"
                       }
@@ -599,18 +600,18 @@ const HistoryPage: React.FC = () => {
                       </span>
                     </div>
                     <div className="task-row__actions">
-                      <button
+                      <ActionButton
                         type="button"
                         className="button-icon task-action--primary"
-                        title="Открыть расписание семестра"
+                        label="Открыть расписание семестра"
                         onClick={() => openSemester(batch.id)}
                       >
                         <LayoutDashboard size={16} />
-                      </button>
-                      <button
+                      </ActionButton>
+                      <ActionButton
                         type="button"
                         className="button-icon task-action--primary"
-                        title="Скачать расписание семестра"
+                        label="Скачать расписание семестра в Excel"
                         onClick={() =>
                           openDownload(
                             `${API_BASE_URL}/api/v1/scheduler/export?semester_batch_id=${encodeURIComponent(batch.id)}`,
@@ -618,28 +619,25 @@ const HistoryPage: React.FC = () => {
                         }
                       >
                         <Download size={16} />
-                      </button>
-                      <button
+                      </ActionButton>
+                      <ActionButton
                         type="button"
                         className="button-icon task-action--primary"
-                        title="Поделиться ссылкой на семестровый расчёт"
+                        label="Скопировать личную ссылку на семестр"
                         onClick={() =>
-                          void shareSchedule(
-                            semesterSchedulePath(batch.id),
-                            `Семестровое расписание #${displayId} · ${batch.periodName}`,
-                          )
+                          void shareSchedule(semesterSchedulePath(batch.id))
                         }
                       >
                         <Link2 size={16} />
-                      </button>
-                      <button
+                      </ActionButton>
+                      <ActionButton
                         type="button"
                         className="button-icon button-danger"
-                        title="Удалить семестровый расчёт"
+                        label="Удалить семестровый расчёт"
                         onClick={() => void deleteSemesterBatch(batch)}
                       >
                         <Trash2 size={16} />
-                      </button>
+                      </ActionButton>
                     </div>
                   </div>
                   {expanded && (

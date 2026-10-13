@@ -8,6 +8,21 @@ READ_CHUNK_BYTES = 1024 * 1024
 _UNSAFE_FILENAME_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 
 
+def purge_legacy_uploads(directory: Path) -> int:
+    """Remove pre-workspace uploads; personal files live in owner subfolders.
+
+    Call only after revision 20261013_0010 has cleared the old import records.
+    This is deliberately non-recursive so a restart never touches personal data.
+    """
+    removed = 0
+    if directory.exists():
+        for path in directory.iterdir():
+            if path.is_file() and path.suffix.lower() in {".csv", ".xls", ".xlsx"}:
+                path.unlink(missing_ok=True)
+                removed += 1
+    return removed
+
+
 def sanitize_upload_filename(filename: str | None) -> str:
     """Return a display-safe basename without trusting client path syntax."""
 

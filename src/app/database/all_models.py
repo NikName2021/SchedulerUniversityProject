@@ -13,52 +13,71 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.orm import declarative_base, relationship
 
+from .workspace import WorkspaceOwned
+
 DeclBase = declarative_base()
 
 
-class Department(DeclBase):
+class Department(WorkspaceOwned, DeclBase):
     __tablename__ = "department"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "code", name="uq_department_owner_code"),
+        UniqueConstraint("owner_id", "name", name="uq_department_owner_name"),
+    )
     id = Column(Integer, primary_key=True, autoincrement=True)
-    code = Column(String, nullable=True, unique=True)
-    name = Column(String, nullable=False, unique=True)
+    code = Column(String, nullable=True)
+    name = Column(String, nullable=False)
 
 
-class ActivityType(DeclBase):
+class ActivityType(WorkspaceOwned, DeclBase):
     __tablename__ = "activity_type"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "code", name="uq_activity_type_owner_code"),
+        UniqueConstraint("owner_id", "name", name="uq_activity_type_owner_name"),
+    )
     id = Column(Integer, primary_key=True, autoincrement=True)
-    code = Column(String, nullable=False, unique=True)
-    name = Column(String, nullable=False, unique=True)
+    code = Column(String, nullable=False)
+    name = Column(String, nullable=False)
     room_type = Column(String, nullable=True)
     is_shared_for_groups = Column(Boolean, nullable=False, default=False)
     color = Column(String, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
 
 
-class Discipline(DeclBase):
+class Discipline(WorkspaceOwned, DeclBase):
     __tablename__ = "discipline"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "full_name", name="uq_discipline_owner_full_name"),
+        UniqueConstraint("owner_id", "external_id", name="uq_discipline_owner_external_id"),
+    )
     id = Column(Integer, primary_key=True, autoincrement=True)
-    full_name = Column(String, nullable=False, unique=True)
+    full_name = Column(String, nullable=False)
     short_name = Column(String, nullable=True)
-    external_id = Column(String, nullable=True, unique=True)
+    external_id = Column(String, nullable=True)
 
 
-class Building(DeclBase):
+class Building(WorkspaceOwned, DeclBase):
     __tablename__ = "building"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "code", name="uq_building_owner_code"),
+        UniqueConstraint("owner_id", "name", name="uq_building_owner_name"),
+    )
     id = Column(Integer, primary_key=True, autoincrement=True)
-    code = Column(String, nullable=True, unique=True)
-    name = Column(String, nullable=False, unique=True)
+    code = Column(String, nullable=True)
+    name = Column(String, nullable=False)
     address = Column(String, nullable=True)
 
 
-class Room(DeclBase):
+class Room(WorkspaceOwned, DeclBase):
     __tablename__ = "room"
     __table_args__ = (
-        UniqueConstraint("building_id", "code"),
+        UniqueConstraint("owner_id", "building_id", "code", name="uq_room_owner_building_code"),
         CheckConstraint("capacity >= 0", name="ck_room_capacity"),
     )
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -82,14 +101,18 @@ class Room(DeclBase):
     )
 
 
-class RoomFeature(DeclBase):
+class RoomFeature(WorkspaceOwned, DeclBase):
     __tablename__ = "room_feature"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "code", name="uq_room_feature_owner_code"),
+        UniqueConstraint("owner_id", "name", name="uq_room_feature_owner_name"),
+    )
     id = Column(Integer, primary_key=True, autoincrement=True)
-    code = Column(String, nullable=False, unique=True)
-    name = Column(String, nullable=False, unique=True)
+    code = Column(String, nullable=False)
+    name = Column(String, nullable=False)
 
 
-class RoomFeatureLink(DeclBase):
+class RoomFeatureLink(WorkspaceOwned, DeclBase):
     __tablename__ = "room_feature_link"
     __table_args__ = (UniqueConstraint("room_id", "feature_id"),)
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -102,10 +125,13 @@ class RoomFeatureLink(DeclBase):
     feature = relationship("RoomFeature")
 
 
-class RuleProfile(DeclBase):
+class RuleProfile(WorkspaceOwned, DeclBase):
     __tablename__ = "rule_profile"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "name", name="uq_rule_profile_owner_name"),
+    )
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String, nullable=False, unique=True)
+    name = Column(String, nullable=False)
     description = Column(String, nullable=True)
     education_level = Column(String, nullable=True)
     is_default = Column(Boolean, nullable=False, default=False)
@@ -115,7 +141,7 @@ class RuleProfile(DeclBase):
     )
 
 
-class RuleSetting(DeclBase):
+class RuleSetting(WorkspaceOwned, DeclBase):
     __tablename__ = "rule_setting"
     __table_args__ = (
         UniqueConstraint("profile_id", "rule_code"),
@@ -139,7 +165,7 @@ class FileType(enum.Enum):
     ROOMS = "rooms"
 
 
-class ImportBatch(DeclBase):
+class ImportBatch(WorkspaceOwned, DeclBase):
     __tablename__ = "import_batch"
     id = Column(Integer, primary_key=True, autoincrement=True)
     filename = Column(String, nullable=False)
@@ -154,13 +180,16 @@ class ImportBatch(DeclBase):
     )
 
 
-class Teacher(DeclBase):
+class Teacher(WorkspaceOwned, DeclBase):
     __tablename__ = "teacher"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "name", name="uq_teacher_owner_name"),
+    )
     id = Column(Integer, primary_key=True, autoincrement=True)
     department_id = Column(
         Integer, ForeignKey("department.id", ondelete="SET NULL"), nullable=True
     )
-    name = Column(String, nullable=False, unique=True)
+    name = Column(String, nullable=False)
     position = Column(String, nullable=True)
     restrictions_json = Column(String, nullable=True)  # JSON string representation
 
@@ -168,7 +197,7 @@ class Teacher(DeclBase):
     department = relationship("Department")
 
 
-class Stream(DeclBase):
+class Stream(WorkspaceOwned, DeclBase):
     __tablename__ = "stream"
     id = Column(Integer, primary_key=True, autoincrement=True)
     import_batch_id = Column(
@@ -205,7 +234,7 @@ class Stream(DeclBase):
     )
 
 
-class StreamFeatureRequirement(DeclBase):
+class StreamFeatureRequirement(WorkspaceOwned, DeclBase):
     __tablename__ = "stream_feature_requirement"
     __table_args__ = (UniqueConstraint("stream_id", "feature_id"),)
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -221,7 +250,7 @@ class StreamFeatureRequirement(DeclBase):
     feature = relationship("RoomFeature")
 
 
-class StreamGroup(DeclBase):
+class StreamGroup(WorkspaceOwned, DeclBase):
     __tablename__ = "stream_group"
     __table_args__ = (Index("ix_stream_group_group_name", "group_name"),)
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -238,13 +267,14 @@ class StreamGroup(DeclBase):
     student_group = relationship("StudentGroup", back_populates="stream_links")
 
 
-class StudentGroup(DeclBase):
+class StudentGroup(WorkspaceOwned, DeclBase):
     __tablename__ = "student_group"
     __table_args__ = (
+        UniqueConstraint("owner_id", "name", name="uq_student_group_owner_name"),
         CheckConstraint("student_count >= 0", name="ck_student_group_size"),
     )
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String, nullable=False, unique=True)
+    name = Column(String, nullable=False)
     specialty = Column(String, nullable=True)
     course = Column(Integer, nullable=True)
     education_form = Column(String, nullable=True)
@@ -255,7 +285,7 @@ class StudentGroup(DeclBase):
     stream_links = relationship("StreamGroup", back_populates="student_group")
 
 
-class AvailabilityRule(DeclBase):
+class AvailabilityRule(WorkspaceOwned, DeclBase):
     __tablename__ = "availability_rule"
     __table_args__ = (
         CheckConstraint(
@@ -297,7 +327,7 @@ class AvailabilityRule(DeclBase):
     room = relationship("Room")
 
 
-class AcademicPeriod(DeclBase):
+class AcademicPeriod(WorkspaceOwned, DeclBase):
     __tablename__ = "academic_period"
     __table_args__ = (
         CheckConstraint("ends_on >= starts_on", name="ck_academic_period_dates"),
@@ -319,7 +349,7 @@ class AcademicPeriod(DeclBase):
     )
 
 
-class PlanningWeek(DeclBase):
+class PlanningWeek(WorkspaceOwned, DeclBase):
     __tablename__ = "planning_week"
     __table_args__ = (
         UniqueConstraint("period_id", "sequence_number"),
@@ -343,7 +373,7 @@ class PlanningWeek(DeclBase):
     generation_tasks = relationship("GenerationTask", back_populates="planning_week")
 
 
-class WeeklyLessonDemand(DeclBase):
+class WeeklyLessonDemand(WorkspaceOwned, DeclBase):
     __tablename__ = "weekly_lesson_demand"
     __table_args__ = (
         UniqueConstraint("week_id", "stream_id"),
@@ -368,11 +398,12 @@ class WeeklyLessonDemand(DeclBase):
     stream = relationship("Stream")
 
 
-class GenerationTask(DeclBase):
+class GenerationTask(WorkspaceOwned, DeclBase):
     __tablename__ = "generation_task"
     __table_args__ = (
         Index("ix_generation_task_planning_week_id", "planning_week_id"),
         Index("ix_generation_task_semester_batch_id", "semester_batch_id"),
+        {"sqlite_autoincrement": True},
     )
     id = Column(Integer, primary_key=True, index=True)
     planning_week_id = Column(
@@ -414,6 +445,41 @@ class GenerationTask(DeclBase):
     issues = relationship(
         "GenerationIssue", cascade="all,delete-orphan", back_populates="task"
     )
+
+
+class PublicSchedule(DeclBase):
+    """A safe snapshot visible to every authenticated employee."""
+
+    __tablename__ = "public_schedule"
+    __table_args__ = (
+        Index("ix_public_schedule_published_at", "published_at"),
+        Index("ix_public_schedule_owner_id", "owner_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source_task_id = Column(
+        Integer,
+        ForeignKey("generation_task.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    owner_id = Column(
+        Integer,
+        ForeignKey("user_account.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    owner_display_name = Column(String(120), nullable=False)
+    title = Column(String(255), nullable=False)
+    starts_on = Column(DateTime, nullable=True)
+    ends_on = Column(DateTime, nullable=True)
+    groups_json = Column(Text, nullable=False, default="[]")
+    entries_json = Column(Text, nullable=False, default="[]")
+    result_count = Column(Integer, nullable=False, default=0)
+    edit_revision = Column(Integer, nullable=False, default=0)
+    published_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
+
+
 class UserAccount(DeclBase):
     __tablename__ = "user_account"
     __table_args__ = (
@@ -471,7 +537,7 @@ class UserSession(DeclBase):
     user = relationship("UserAccount", back_populates="sessions")
 
 
-class GenerationLock(DeclBase):
+class GenerationLock(WorkspaceOwned, DeclBase):
     __tablename__ = "generation_lock"
     scope_key = Column(String, primary_key=True)
     task_id = Column(
@@ -482,7 +548,7 @@ class GenerationLock(DeclBase):
     task = relationship("GenerationTask", back_populates="locks")
 
 
-class GenerationIssue(DeclBase):
+class GenerationIssue(WorkspaceOwned, DeclBase):
     __tablename__ = "generation_issue"
     __table_args__ = (Index("ix_generation_issue_task_kind", "task_id", "kind"),)
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -502,7 +568,7 @@ class GenerationIssue(DeclBase):
     task = relationship("GenerationTask", back_populates="issues")
 
 
-class GenerationComponent(DeclBase):
+class GenerationComponent(WorkspaceOwned, DeclBase):
     __tablename__ = "generation_component"
     __table_args__ = (
         UniqueConstraint("task_id", "component_key"),
@@ -525,7 +591,7 @@ class GenerationComponent(DeclBase):
     task = relationship("GenerationTask", back_populates="components")
 
 
-class ScheduleEntry(DeclBase):
+class ScheduleEntry(WorkspaceOwned, DeclBase):
     __tablename__ = "schedule_entry"
     __table_args__ = (
         Index(

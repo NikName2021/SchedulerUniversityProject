@@ -54,6 +54,7 @@ async def test_scalable_pipeline_saves_parallel_components(
         db_session.bind,
         class_=AsyncSession,
         expire_on_commit=False,
+        info=dict(db_session.info),
     )
     monkeypatch.setattr(scalable_module, "sessionmaker", test_sessionmaker)
 
@@ -133,7 +134,14 @@ async def test_scalable_pipeline_saves_parallel_components(
     assert payload is not None
     assert payload["context"]["lessons"][-1] == MAX_LESSON_NUMBER == 6
     assert payload["context"]["immutable_before"] == "2026-09-07"
-    monkeypatch.setattr(scalable_module, "date", datetime.date)
+    class DateDuringPlanningPeriod(datetime.date):
+        @classmethod
+        def today(cls) -> "DateDuringPlanningPeriod":
+            return cls(2026, 9, 7)
+
+    # Incremental calculation must run during the week, independently of the
+    # wall clock on the machine running this test.
+    monkeypatch.setattr(scalable_module, "date", DateDuringPlanningPeriod)
     assert len(payload["components"]) == 2
     results = []
     for component in payload["components"]:

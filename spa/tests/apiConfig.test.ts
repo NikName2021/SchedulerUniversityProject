@@ -44,3 +44,22 @@ test("apiFetch does not add CSRF token to safe requests", async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test("apiFetch discards a response from the previous account", async () => {
+  const originalFetch = globalThis.fetch;
+  let resolveResponse: (response: Response) => void = () => {};
+  globalThis.fetch = () =>
+    new Promise<Response>((resolve) => {
+      resolveResponse = resolve;
+    });
+  try {
+    setCsrfToken("first-user");
+    const pending = apiFetch("/api/v1/scheduler/tasks");
+    setCsrfToken("second-user");
+    resolveResponse(new Response("[]", { status: 200 }));
+    await assert.rejects(pending, { name: "AbortError" });
+  } finally {
+    setCsrfToken(null);
+    globalThis.fetch = originalFetch;
+  }
+});

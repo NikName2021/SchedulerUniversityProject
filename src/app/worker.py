@@ -3,6 +3,7 @@ from typing import Any
 
 from celery import Celery, chord
 from core.config import REDIS_URL, engine
+from database.workspace import bind_task_workspace
 from services.scalable_generation_service import ScalableGenerationService
 from services.scalable_scheduler import solve_event_component
 
@@ -91,6 +92,7 @@ async def _mark_workflow_failed(task_id: int, message: str) -> None:
     from services.generation_lifecycle_service import GenerationLifecycleService
 
     async with sessionmaker() as session:
+        await bind_task_workspace(session, task_id)
         await GenerationLifecycleService.fail_active_task(task_id, message, session)
 
 

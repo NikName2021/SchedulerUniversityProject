@@ -4,9 +4,17 @@ import datetime
 import json
 from typing import Any
 
-from database import GenerationIssue, GenerationLock, GenerationTask
+from database import (
+    GenerationIssue,
+    GenerationLock,
+    GenerationTask,
+    PublicSchedule,
+    ScheduleEntry,
+    UserAccount,
+)
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 TERMINAL_STATUSES = {"success", "partial", "failed", "canceled"}
 ACTIVE_STATUSES = {"queued", "running"}
@@ -52,6 +60,8 @@ class GenerationLifecycleService:
             )
         )
         keys = cls.scope_keys(groups, planning_week_id, start_date, end_date)
+        owner_id = db.info["workspace_owner_id"]
+        keys = [f"owner:{owner_id}:{key}" for key in keys]
         conflict = await db.scalar(
             select(GenerationLock.scope_key).where(GenerationLock.scope_key.in_(keys))
         )
@@ -108,24 +118,108 @@ class GenerationLifecycleService:
                 & (GenerationTask.start_date == task.start_date)
                 & (GenerationTask.end_date == task.end_date)
             )
-        await db.execute(
-            update(GenerationTask)
-            .where(
-                scope,
-                GenerationTask.id != task.id,
-                GenerationTask.publication_status == "published",
-            )
-            .values(publication_status="archived")
+
+        previous_ids = list(
+            (
+                await db.scalars(
+                    select(GenerationTask.id).where(
+                        scope,
+                        GenerationTask.id != task.id,
+                        GenerationTask.publication_status == "published",
+                    )
+                )
+            ).all()
         )
+        if previous_ids:
+            await db.execute(
+                update(GenerationTask)
+                .where(GenerationTask.id.in_(previous_ids))
+                .values(publication_status="archived")
+            )
+            await db.execute(
+                delete(PublicSchedule).where(
+                    PublicSchedule.owner_id == task.owner_id,
+                    PublicSchedule.source_task_id.in_(previous_ids),
+                )
+            )
+
         task.publication_status = "published"
         task.published_at = datetime.datetime.utcnow()
+        await GenerationLifecycleService.sync_publication(task, db)
         await db.commit()
+
+    @staticmethod
+    async def sync_publication(task: GenerationTask, db: AsyncSession) -> None:
+        """Replace the shared snapshot after an owner edits a published task."""
+        if task.publication_status != "published":
+            return
+        entries = list(
+            (
+                await db.scalars(
+                    select(ScheduleEntry)
+                    .where(ScheduleEntry.task_id == task.id)
+                    .options(selectinload(ScheduleEntry.teacher))
+                    .order_by(ScheduleEntry.date, ScheduleEntry.lesson_number)
+                )
+            ).all()
+        )
+        payload = [
+            {
+                "id": index,
+                "group_name": entry.group_name,
+                "event_name": entry.event_name,
+                "stream_type": entry.stream_type,
+                "teacher": entry.teacher.name if entry.teacher else None,
+                "room_id": entry.room_id,
+                "date": entry.date.strftime("%Y-%m-%d") if entry.date else None,
+                "lesson_number": entry.lesson_number,
+            }
+            for index, entry in enumerate(entries, start=1)
+        ]
+        owner = await db.get(UserAccount, task.owner_id)
+        owner_name = owner.display_name if owner else "Сотрудник"
+        published = await db.scalar(
+            select(PublicSchedule).where(PublicSchedule.source_task_id == task.id)
+        )
+        now = datetime.datetime.utcnow()
+        if task.start_date and task.end_date:
+            title = (
+                f"Расписание {task.start_date:%d.%m.%Y} — "
+                f"{task.end_date:%d.%m.%Y}"
+            )
+        else:
+            title = "Опубликованное расписание"
+        if published is None:
+            published = PublicSchedule(
+                source_task_id=task.id,
+                owner_id=task.owner_id,
+                owner_display_name=owner_name,
+                title=title,
+                published_at=task.published_at or now,
+            )
+            db.add(published)
+        published.owner_display_name = owner_name
+        published.title = title
+        published.starts_on = task.start_date
+        published.ends_on = task.end_date
+        published.groups_json = task.groups_json or "[]"
+        published.entries_json = json.dumps(payload, ensure_ascii=False)
+        published.result_count = sum(1 for item in entries if item.date is not None)
+        published.edit_revision = task.edit_revision
+        published.updated_at = now
+        await db.flush()
 
     @staticmethod
     async def archive(task: GenerationTask, db: AsyncSession) -> None:
         if task.status in ACTIVE_STATUSES:
             raise ValueError("An active generation cannot be archived")
         task.publication_status = "archived"
+        await db.execute(
+            delete(PublicSchedule).where(
+                PublicSchedule.owner_id == task.owner_id,
+                PublicSchedule.source_task_id == task.id,
+            )
+        )
         await db.commit()
 
     @staticmethod

@@ -188,9 +188,25 @@ class RuleDescriptionRead(BaseModel):
     runtime_note: str | None = None
 
 
+class SolverStageTimingRead(BaseModel):
+    code: str
+    name: str
+    seconds: float
+    allocation: str
+    description: str
+
+
+class SolverTimingRead(BaseModel):
+    total_component_seconds: float
+    scope: str
+    stages: list[SolverStageTimingRead]
+    note: str
+
+
 class RuleProfileDetailsRead(BaseModel):
     profile: RuleProfileRead
     rules: list[RuleDescriptionRead]
+    solver_timing: SolverTimingRead
 
 
 class RuleSettingsUpdate(BaseModel):

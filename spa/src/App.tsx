@@ -10,6 +10,7 @@ import HistoryPage from "./pages/HistoryPage";
 import { SchedulePage } from "./pages/SchedulePage";
 import { ReferenceDataPage } from "./pages/ReferenceDataPage";
 import { LoginPage } from "./pages/LoginPage";
+import { PublishedSchedulesPage } from "./pages/PublishedSchedulesPage";
 
 function App() {
   return (
@@ -24,6 +25,10 @@ function App() {
               <Route path="calendar" element={<CalendarPage />} />
               <Route path="generation" element={<GenerationPage />} />
               <Route path="history" element={<HistoryPage />} />
+              <Route
+                path="published/:publicationId?"
+                element={<PublishedSchedulesPage />}
+              />
               <Route path="schedule/:taskId?" element={<SchedulePage />} />
               <Route path="reference" element={<ReferenceDataPage />} />
             </Route>

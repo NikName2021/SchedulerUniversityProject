@@ -37,6 +37,7 @@ from database import (
     StreamGroup,
     WeeklyLessonDemand,
 )
+from database.workspace import bind_task_workspace
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import selectinload
 
@@ -150,6 +151,7 @@ class ScalableGenerationService:
         planning_week_id: int | None,
     ) -> dict[str, Any] | None:
         async with sessionmaker() as session:
+            await bind_task_workspace(session, task_id)
             task = await session.get(GenerationTask, task_id)
             if task is None:
                 return None
@@ -670,8 +672,9 @@ class ScalableGenerationService:
     ) -> None:
         metrics = result.get("metrics", {})
         async with sessionmaker() as session:
+            await bind_task_workspace(session, task_id)
             component = await session.get(GenerationComponent, component_id)
-            if component is not None:
+            if component is not None and component.task_id == task_id:
                 component.status = result.get("status", "failed")
                 component.variable_count = int(metrics.get("variables", 0))
                 component.constraint_count = int(metrics.get("constraints", 0))
@@ -681,6 +684,7 @@ class ScalableGenerationService:
             await session.commit()
 
         async with sessionmaker() as session:
+            await bind_task_workspace(session, task_id)
             completed = await session.scalar(
                 select(func.count(GenerationComponent.id)).where(
                     GenerationComponent.task_id == task_id,
@@ -702,6 +706,7 @@ class ScalableGenerationService:
         task_id: int, workflow_id: str, component_ids: list[str]
     ) -> None:
         async with sessionmaker() as session:
+            await bind_task_workspace(session, task_id)
             await session.execute(
                 update(GenerationTask)
                 .where(
@@ -760,6 +765,7 @@ class ScalableGenerationService:
             room_assignments, room_warnings, room_metrics = room_solution
 
         async with sessionmaker() as session:
+            await bind_task_workspace(session, task_id)
             task = await session.get(GenerationTask, task_id)
             if task is None:
                 return False
@@ -1035,6 +1041,7 @@ class ScalableGenerationService:
     @staticmethod
     async def fail(task_id: int, error: str) -> None:
         async with sessionmaker() as session:
+            await bind_task_workspace(session, task_id)
             await session.execute(
                 update(GenerationTask)
                 .where(GenerationTask.id == task_id)

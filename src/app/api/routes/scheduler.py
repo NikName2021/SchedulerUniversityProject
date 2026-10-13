@@ -26,6 +26,7 @@ from database.all_models import (
     GenerationTask,
     ImportBatch,
     PlanningWeek,
+    PublicSchedule,
     ScheduleEntry,
     Stream,
     StreamGroup,
@@ -344,7 +345,9 @@ async def import_streams(
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     extension = Path(safe_filename).suffix.lower()
     unique_filename = f"{timestamp}_{uuid.uuid4().hex[:12]}{extension}"
-    file_path = UPLOAD_DIR / unique_filename
+    workspace_dir = UPLOAD_DIR / str(db.info["workspace_owner_id"])
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    file_path = workspace_dir / unique_filename
 
     try:
         file_path.write_bytes(content)
@@ -487,12 +490,13 @@ async def preview_group_selection(
 async def get_subjects_summary(
     groups: Annotated[str, Query(...)] = None,  # Comma separated
     types: Annotated[str, Query(...)] = None,  # Comma separated
+    db: AsyncSession = Depends(async_get_db),
 ) -> dict[str, list[str]]:
     selected_groups = groups.split(",")
     enabled_types = types.split(",")
     try:
         summary = await GenerationService.get_subjects_summary(
-            selected_groups, enabled_types
+            selected_groups, enabled_types, db
         )
         return summary
     except Exception:
@@ -506,10 +510,11 @@ async def get_subjects_summary(
 @router.post("/subjects-summary")
 async def post_subjects_summary(
     payload: SubjectsSummaryModel,
+    db: AsyncSession = Depends(async_get_db),
 ) -> dict[str, list[str]]:
     try:
         return await GenerationService.get_subjects_summary(
-            payload.groups, payload.types
+            payload.groups, payload.types, db
         )
     except Exception:
         logger.exception("Error getting subjects summary")
@@ -920,6 +925,65 @@ async def get_generation_tasks(
     ]
 
 
+@router.get("/publications")
+async def list_public_schedules(
+    db: Annotated[AsyncSession, Depends(async_get_db)] = None,
+) -> list[dict[str, Any]]:
+    owner_id = db.info["workspace_owner_id"]
+    publications = list(
+        (
+            await db.scalars(
+                select(PublicSchedule).order_by(PublicSchedule.updated_at.desc())
+            )
+        ).all()
+    )
+    return [
+        {
+            "id": item.id,
+            "title": item.title,
+            "owner_display_name": item.owner_display_name,
+            "starts_on": item.starts_on.isoformat() if item.starts_on else None,
+            "ends_on": item.ends_on.isoformat() if item.ends_on else None,
+            "groups": json.loads(item.groups_json or "[]"),
+            "result_count": item.result_count,
+            "edit_revision": item.edit_revision,
+            "published_at": _utc_isoformat(item.published_at),
+            "updated_at": _utc_isoformat(item.updated_at),
+            "can_edit": item.owner_id == owner_id,
+            "source_task_id": (
+                item.source_task_id if item.owner_id == owner_id else None
+            ),
+        }
+        for item in publications
+    ]
+
+
+@router.get("/publications/{publication_id}")
+async def get_public_schedule(
+    publication_id: int,
+    db: Annotated[AsyncSession, Depends(async_get_db)] = None,
+) -> dict[str, Any]:
+    item = await db.get(PublicSchedule, publication_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Published schedule not found")
+    can_edit = item.owner_id == db.info["workspace_owner_id"]
+    return {
+        "id": item.id,
+        "title": item.title,
+        "owner_display_name": item.owner_display_name,
+        "starts_on": item.starts_on.isoformat() if item.starts_on else None,
+        "ends_on": item.ends_on.isoformat() if item.ends_on else None,
+        "groups": json.loads(item.groups_json or "[]"),
+        "entries": json.loads(item.entries_json or "[]"),
+        "result_count": item.result_count,
+        "edit_revision": item.edit_revision,
+        "published_at": _utc_isoformat(item.published_at),
+        "updated_at": _utc_isoformat(item.updated_at),
+        "can_edit": can_edit,
+        "source_task_id": item.source_task_id if can_edit else None,
+    }
+
+
 @router.delete("/tasks/{task_id}", status_code=204)
 async def delete_generation_task(
     task_id: int,
@@ -1280,8 +1344,6 @@ async def update_schedule_entry(
     if not entry:
         raise HTTPException(status_code=404, detail="Schedule entry not found")
     task = await db.get(GenerationTask, entry.task_id)
-    if task and task.publication_status == "published":
-        raise HTTPException(status_code=409, detail="Published schedules are read-only")
 
     source_task = task
     target_task = task
@@ -1326,10 +1388,6 @@ async def update_schedule_entry(
                 raise HTTPException(
                     status_code=422,
                     detail="Для выбранной недели нет завершённого расчёта",
-                )
-            if target_task.publication_status == "published":
-                raise HTTPException(
-                    status_code=409, detail="Published schedules are read-only"
                 )
 
     entries_to_update = [entry]
@@ -1435,6 +1493,12 @@ async def update_schedule_entry(
         source_task.edit_revision += 1
     if target_task and target_task is not source_task:
         target_task.edit_revision += 1
+    for published_task in {
+        item
+        for item in (source_task, target_task)
+        if item is not None and item.publication_status == "published"
+    }:
+        await GenerationLifecycleService.sync_publication(published_task, db)
     await db.commit()
 
     if source_task and source_task.semester_batch_id:
@@ -1463,8 +1527,6 @@ async def delete_schedule_entry(
     if not entry:
         raise HTTPException(status_code=404, detail="Schedule entry not found")
     task = await db.get(GenerationTask, entry.task_id)
-    if task and task.publication_status == "published":
-        raise HTTPException(status_code=409, detail="Published schedules are read-only")
     if entry.is_locked:
         raise HTTPException(
             status_code=409, detail="Locked entries must be unlocked before deletion"
@@ -1472,14 +1534,16 @@ async def delete_schedule_entry(
 
     task_id = entry.task_id
     await db.delete(entry)
+    await db.flush()
     if task:
         task.edit_revision += 1
-    await db.commit()
 
     entries = []
     if task_id:
         await ScheduleService.refresh_task_warnings(task_id, db)
-        await db.commit()
+        if task and task.publication_status == "published":
+            await GenerationLifecycleService.sync_publication(task, db)
         entries = await ScheduleService.get_task_entries_json(task_id, db)
+    await db.commit()
 
     return {"detail": "Entry deleted successfully", "entries": entries}

@@ -816,7 +816,7 @@ export const GenerationPage: React.FC = () => {
         gap: "1.25rem",
         paddingBottom: "2rem",
       }}
-      className="enterprise-page generation-workspace animate-fade-in"
+      className="enterprise-page generation-workspace"
     >
       <header className="workspace-header calc-header">
         <div>
@@ -2457,8 +2457,8 @@ export const GenerationPage: React.FC = () => {
       </div>
 
       {editingWeek && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/50 p-6 backdrop-blur-sm">
-          <div className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/50 p-3 backdrop-blur-sm sm:p-6">
+          <div className="flex max-h-[calc(100dvh-1.5rem)] min-h-0 w-full max-w-5xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl sm:max-h-[90vh]">
             <div className="flex items-center justify-between border-b border-border-light px-6 py-5">
               <div>
                 <h2 className="text-lg font-black text-text-primary">
@@ -2490,8 +2490,8 @@ export const GenerationPage: React.FC = () => {
                 />
               </div>
             </div>
-            <div className="flex-1 overflow-y-auto px-6 py-3">
-              <table className="w-full border-collapse text-left">
+            <div className="min-h-0 flex-1 overflow-auto px-6 py-3">
+              <table className="w-full min-w-[720px] border-collapse text-left">
                 <thead className="sticky top-0 bg-white text-[10px] font-black uppercase text-text-tertiary">
                   <tr>
                     <th className="border-b border-border-light py-3 pr-4">

@@ -4,6 +4,7 @@ import pytest_asyncio
 from core.config import DATABASE_SCHEMA_REVISION, async_get_db
 from core.constants import AUTH_COOKIE_NAME
 from database import DeclBase, UserAccount, UserSession
+from database.workspace import bind_workspace
 from httpx import ASGITransport, AsyncClient
 from main import app
 from services.auth_service import hash_password, hash_session_token
@@ -44,6 +45,13 @@ async def db_session() -> AsyncSession:
         engine, class_=AsyncSession, expire_on_commit=False
     )
     async with TestAsyncSessionLocal() as session:
+        user = UserAccount(
+            username="testadmin", display_name="Test Administrator",
+            password_hash=hash_password("CorrectPassword123!"), role="admin",
+        )
+        session.add(user)
+        await session.commit()
+        bind_workspace(session, user.id)
         yield session
 
     # Удаляем все таблицы после завершения теста
@@ -55,16 +63,7 @@ async def db_session() -> AsyncSession:
 
 @pytest_asyncio.fixture
 async def test_user(db_session: AsyncSession) -> UserAccount:
-    user = UserAccount(
-        username="testadmin",
-        display_name="Test Administrator",
-        password_hash=hash_password("CorrectPassword123!"),
-        role="admin",
-    )
-    db_session.add(user)
-    await db_session.commit()
-    await db_session.refresh(user)
-    return user
+    return await db_session.get(UserAccount, db_session.info["workspace_owner_id"])
 
 
 @pytest_asyncio.fixture

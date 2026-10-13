@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.config import (
+    DEFAULT_COMPONENT_TIME_SECONDS,
+    PLACEMENT_STAGE_TIME_RATIO,
+    WINDOW_STAGE_TIME_RATIO,
+)
 from core.constants import ROOM_ASSIGNMENT_ENABLED, ROOM_FUND_ENABLED
 
 RULE_CATALOG: tuple[dict[str, Any], ...] = (
@@ -135,6 +140,55 @@ RULE_CATALOG: tuple[dict[str, Any], ...] = (
         "implemented": False,
     },
 )
+
+
+def describe_solver_timing() -> dict[str, Any]:
+    """Return the nominal lexicographic stage limits shown in rule profiles."""
+    total_seconds = float(DEFAULT_COMPONENT_TIME_SECONDS)
+    placement_seconds = round(total_seconds * PLACEMENT_STAGE_TIME_RATIO, 2)
+    window_seconds = round(total_seconds * WINDOW_STAGE_TIME_RATIO, 2)
+    quality_seconds = round(
+        max(0.0, total_seconds - placement_seconds - window_seconds), 2
+    )
+    return {
+        "total_component_seconds": total_seconds,
+        "scope": "На каждую независимую группу конфликтующих занятий",
+        "stages": [
+            {
+                "code": "placement",
+                "name": "Размещение занятий",
+                "seconds": placement_seconds,
+                "allocation": "maximum",
+                "description": (
+                    f"До {PLACEMENT_STAGE_TIME_RATIO:.0%} общего бюджета на "
+                    "минимизацию неразмещённых занятий."
+                ),
+            },
+            {
+                "code": "windows",
+                "name": "Минимизация окон",
+                "seconds": window_seconds,
+                "allocation": "maximum",
+                "description": (
+                    f"До {WINDOW_STAGE_TIME_RATIO:.0%} общего бюджета после "
+                    "фиксации результата размещения."
+                ),
+            },
+            {
+                "code": "quality",
+                "name": "Остальные критерии качества",
+                "seconds": quality_seconds,
+                "allocation": "remainder",
+                "description": "Получает всё время, оставшееся после первых двух этапов.",
+            },
+        ],
+        "note": (
+            "Первые два значения — верхние лимиты. Этап качества получает "
+            "фактический остаток: он будет больше 120 секунд, если предыдущие "
+            "этапы завершатся раньше, и меньше — если подготовка модели или поиск "
+            "займут больше времени."
+        ),
+    }
 
 
 def describe_rule_profile(settings: list[Any]) -> list[dict[str, Any]]:

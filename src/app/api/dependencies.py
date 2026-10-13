@@ -3,6 +3,7 @@ from typing import Annotated
 
 from core.config import async_get_db
 from core.constants import AUTH_COOKIE_NAME
+from database.workspace import bind_workspace
 from fastapi import Depends, HTTPException, Request, status
 from services.auth_service import AuthenticatedContext, AuthService
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,5 +36,6 @@ async def require_authenticated_request(
                 detail="CSRF validation failed",
             )
 
+    bind_workspace(db, context.user.id)
     request.state.auth = context
     return context

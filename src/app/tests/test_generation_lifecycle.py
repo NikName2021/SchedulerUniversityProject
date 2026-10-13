@@ -10,6 +10,7 @@ from database import (
     GenerationTask,
     ImportBatch,
     PlanningWeek,
+    PublicSchedule,
     ScheduleEntry,
     Stream,
     StreamGroup,
@@ -71,6 +72,9 @@ async def test_generation_lock_and_version_lifecycle(db_session: AsyncSession) -
     assert second.version_number == first.version_number + 1
     assert second.publication_status == "published"
     assert first.publication_status == "archived"
+    publication = await db_session.scalar(select(PublicSchedule))
+    assert publication is not None
+    assert publication.source_task_id == second.id
 
 
 @pytest.mark.asyncio

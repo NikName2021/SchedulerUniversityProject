@@ -42,7 +42,7 @@ from schemas.reference import (
     TeacherProfileUpdate,
 )
 from services.reference_service import ReferenceService
-from services.rule_catalog_service import describe_rule_profile
+from services.rule_catalog_service import describe_rule_profile, describe_solver_timing
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -272,6 +272,7 @@ async def get_rule_profile_details(
     return RuleProfileDetailsRead(
         profile=RuleProfileRead.model_validate(profile),
         rules=describe_rule_profile(profile.settings),
+        solver_timing=describe_solver_timing(),
     )
 
 

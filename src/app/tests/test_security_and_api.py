@@ -175,4 +175,4 @@ async def test_failed_stream_import_removes_saved_upload(
             files={"file": ("streams.csv", csv_content, "text/csv")},
         )
 
-    assert list(tmp_path.iterdir()) == []
+    assert not any(path.is_file() for path in tmp_path.rglob("*"))

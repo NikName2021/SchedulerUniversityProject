@@ -64,7 +64,7 @@ async def test_default_users_are_created_once_without_password_overwrite(
     accounts = list(
         (
             await db_session.execute(
-                select(UserAccount).order_by(UserAccount.username)
+                select(UserAccount).where(UserAccount.username.in_(["admin", "operator"])).order_by(UserAccount.username)
             )
         ).scalars()
     )

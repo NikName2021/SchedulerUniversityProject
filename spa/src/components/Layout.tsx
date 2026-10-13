@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Database,
   FolderInput,
+  Globe2,
   History,
   LayoutDashboard,
   LogOut,
@@ -36,7 +37,11 @@ const pageMeta: Record<string, { title: string; description: string }> = {
   },
   "/history": {
     title: "Журнал операций",
-    description: "Версии, результаты и публикации",
+    description: "Личные расчёты и результаты",
+  },
+  "/published": {
+    title: "Общий каталог",
+    description: "Опубликованные расписания сотрудников",
   },
   "/schedule": {
     title: "Расписание",
@@ -68,7 +73,9 @@ export const Layout: React.FC = () => {
     pageMeta[location.pathname] ??
     (location.pathname.startsWith("/schedule/")
       ? pageMeta["/schedule"]
-      : pageMeta["/"]);
+      : location.pathname.startsWith("/published/")
+        ? pageMeta["/published"]
+        : pageMeta["/"]);
   const userLabel = user?.display_name || user?.username || "Пользователь";
   const userRole = user?.role === "admin" ? "Администратор" : "Оператор";
 
@@ -118,7 +125,7 @@ export const Layout: React.FC = () => {
 
           <nav className="app-navigation" aria-label="Основная навигация">
             {!isCollapsed && (
-              <p className="app-navigation__label">РАБОЧАЯ ОБЛАСТЬ</p>
+              <p className="app-navigation__label">ЛИЧНОЕ ПРОСТРАНСТВО</p>
             )}
             {navItems.map((item) => (
               <NavLink
@@ -134,6 +141,17 @@ export const Layout: React.FC = () => {
                 {!isCollapsed && <span>{item.label}</span>}
               </NavLink>
             ))}
+            {!isCollapsed && <p className="app-navigation__label">ОБЩЕЕ</p>}
+            <NavLink
+              to="/published"
+              title={isCollapsed ? "Общий каталог" : undefined}
+              className={({ isActive }) =>
+                `app-nav-link ${isActive ? "app-nav-link--active" : ""}`
+              }
+            >
+              <Globe2 size={18} strokeWidth={1.8} />
+              {!isCollapsed && <span>Общий каталог</span>}
+            </NavLink>
           </nav>
         </div>
 
@@ -165,7 +183,9 @@ export const Layout: React.FC = () => {
       <main className="app-main">
         <header className="app-topbar">
           <div>
-            <div className="app-topbar__crumb">Рабочее место оператора</div>
+            <div className="app-topbar__crumb">
+              Личное пространство · {userLabel}
+            </div>
             <h1>{currentPage.title}</h1>
           </div>
           <div className="app-topbar__actions">
