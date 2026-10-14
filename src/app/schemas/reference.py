@@ -98,6 +98,7 @@ class RoomRead(BaseModel):
 
 
 class RoomImportRead(BaseModel):
+    batch_id: int
     rooms_found: int
     rooms_created: int
     rooms_updated: int

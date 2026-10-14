@@ -1041,6 +1041,17 @@ textarea:focus-visible {
   border-color: transparent;
   color: #8793a3;
 }
+.import-file-row__download {
+  width: 30px;
+  height: 30px;
+  border-color: transparent;
+  color: #64748b;
+}
+.import-file-row__download:hover {
+  border-color: #b8c9e5;
+  background: #eef5ff;
+  color: var(--brand);
+}
 .import-file-row__delete:hover {
   border-color: #f1c2bc;
   background: var(--danger-bg);
@@ -1974,13 +1985,15 @@ textarea:focus-visible {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 24px;
 }
 
 .published-grid-toolbar__period,
 .published-week-switcher,
 .published-week-switcher label,
-.published-grid-toolbar__group {
+.published-grid-toolbar__filters,
+.published-grid-toolbar__filter {
   display: flex;
   align-items: center;
 }
@@ -2045,18 +2058,60 @@ textarea:focus-visible {
   font-weight: 650;
 }
 
-.published-grid-toolbar__group {
+.published-grid-toolbar__filters {
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.published-view-switcher {
+  display: flex;
+  padding: 3px;
+  border-radius: 7px;
+  background: #eef2f6;
+}
+
+.published-view-switcher button {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.published-view-switcher button:hover:not(:disabled) {
+  color: var(--brand);
+}
+
+.published-view-switcher button.is-active {
+  background: #fff;
+  color: var(--brand);
+  box-shadow: 0 1px 3px rgb(15 23 42 / 10%);
+}
+
+.published-view-switcher button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.published-grid-toolbar__filter {
   gap: 8px;
   color: #526075;
   font-size: 13px;
 }
 
-.published-grid-toolbar__group span {
+.published-grid-toolbar__filter span {
   font-weight: 600;
 }
 
-.published-grid-toolbar__group select {
+.published-grid-toolbar__filter select {
   min-width: 180px;
+  max-width: 260px;
   height: 38px;
   padding: 0 30px 0 10px;
   border: 1px solid var(--border-light);
@@ -2275,7 +2330,18 @@ textarea:focus-visible {
     width: 100%;
   }
 
-  .published-grid-toolbar__group select {
+  .published-grid-toolbar__filters {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .published-view-switcher button {
     flex: 1;
+    justify-content: center;
+  }
+
+  .published-grid-toolbar__filter select {
+    flex: 1;
+    max-width: none;
   }
 }

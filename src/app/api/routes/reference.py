@@ -1,3 +1,6 @@
+import uuid
+from datetime import datetime
+from pathlib import Path
 from typing import Annotated, Any
 
 from core.config import async_get_db
@@ -7,6 +10,8 @@ from database import (
     Building,
     Department,
     Discipline,
+    FileType,
+    ImportBatch,
     Room,
     RoomFeature,
     Stream,
@@ -52,6 +57,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/reference", tags=["Reference data"])
+UPLOAD_DIR = Path(__file__).resolve().parents[2] / "uploads"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
 async def _commit_created(entity: Any, db: AsyncSession) -> Any:
@@ -207,14 +214,36 @@ async def import_rooms(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not rows:
         raise HTTPException(status_code=400, detail="В файле не найдены аудитории")
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    extension = Path(filename).suffix.lower()
+    unique_filename = f"{timestamp}_{uuid.uuid4().hex[:12]}{extension}"
+    workspace_dir = UPLOAD_DIR / str(db.info["workspace_owner_id"])
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    file_path = workspace_dir / unique_filename
+
     try:
+        file_path.write_bytes(content)
+        batch = ImportBatch(
+            filename=filename,
+            file_path=str(file_path),
+            file_type=FileType.ROOMS,
+            status="completed",
+        )
+        db.add(batch)
+        await db.flush()
         result = await ReferenceService.import_rooms(rows, db)
     except IntegrityError as exc:
         await db.rollback()
+        file_path.unlink(missing_ok=True)
         raise HTTPException(
             status_code=409, detail="Данные аудиторий конфликтуют со справочником"
         ) from exc
-    return RoomImportRead(**result)
+    except Exception:
+        await db.rollback()
+        file_path.unlink(missing_ok=True)
+        raise
+    return RoomImportRead(batch_id=batch.id, **result)
 
 
 @router.patch("/rooms/{room_id}", response_model=RoomRead)

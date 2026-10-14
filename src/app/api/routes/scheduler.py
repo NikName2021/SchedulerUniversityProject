@@ -41,7 +41,7 @@ from fastapi import (
     Response,
     UploadFile,
 )
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from services.availability_service import build_availability_context
 from services.export_service import escape_excel_formula, generate_excel_report
@@ -383,8 +383,13 @@ async def import_streams(
 
 
 @router.get("/import/history")
-async def get_import_history(db: AsyncSession = Depends(async_get_db)):
+async def get_import_history(
+    file_type: FileType | None = Query(default=None),
+    db: AsyncSession = Depends(async_get_db),
+):
     stmt = select(ImportBatch).order_by(ImportBatch.created_date.desc())
+    if file_type is not None:
+        stmt = stmt.where(ImportBatch.file_type == file_type)
     result = await db.execute(stmt)
     batches = result.scalars().all()
 
@@ -398,6 +403,20 @@ async def get_import_history(db: AsyncSession = Depends(async_get_db)):
         }
         for b in batches
     ]
+
+
+@router.get("/import/history/{batch_id}/download", response_class=FileResponse)
+async def download_import_batch(
+    batch_id: int, db: AsyncSession = Depends(async_get_db)
+) -> FileResponse:
+    batch = await db.get(ImportBatch, batch_id)
+    if batch is None or not batch.file_path:
+        raise HTTPException(status_code=404, detail="Import file not found")
+
+    candidate = Path(batch.file_path).resolve()
+    if not candidate.is_relative_to(UPLOAD_DIR.resolve()) or not candidate.is_file():
+        raise HTTPException(status_code=404, detail="Import file not found")
+    return FileResponse(candidate, filename=batch.filename)
 
 
 @router.delete("/import/history/{batch_id}")

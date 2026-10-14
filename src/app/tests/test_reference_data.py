@@ -2,6 +2,7 @@ import datetime
 import io
 
 import pytest
+from api.routes import reference, scheduler
 from database import AvailabilityRule, Room, RuleProfile, RuleSetting, StudentGroup
 from httpx import AsyncClient
 from openpyxl import Workbook
@@ -63,24 +64,48 @@ async def test_room_crud_and_structured_availability(
 @pytest.mark.asyncio
 async def test_room_workbook_import_recognizes_supplied_layout(
     api_client: AsyncClient,
+    monkeypatch,
+    tmp_path,
 ) -> None:
+    monkeypatch.setattr(reference, "UPLOAD_DIR", tmp_path)
+    monkeypatch.setattr(scheduler, "UPLOAD_DIR", tmp_path)
+    workbook_content = _rooms_workbook()
     response = await api_client.post(
         "/api/v1/reference/rooms/import",
         files={
             "file": (
                 "Помещения — копия.xlsx",
-                _rooms_workbook(),
+                workbook_content,
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
         },
     )
 
     assert response.status_code == 200, response.text
-    assert response.json() == {
+    payload = response.json()
+    batch_id = payload.pop("batch_id")
+    assert payload == {
         "rooms_found": 3,
         "rooms_created": 3,
         "rooms_updated": 0,
     }
+    history = await api_client.get(
+        "/api/v1/scheduler/import/history", params={"file_type": "rooms"}
+    )
+    assert history.status_code == 200
+    assert [item["id"] for item in history.json()] == [batch_id]
+    assert history.json()[0]["filename"] == "Помещения — копия.xlsx"
+    assert (
+        await api_client.get(
+            "/api/v1/scheduler/import/history", params={"file_type": "streams"}
+        )
+    ).json() == []
+    download = await api_client.get(
+        f"/api/v1/scheduler/import/history/{batch_id}/download"
+    )
+    assert download.status_code == 200
+    assert download.content == workbook_content
+    assert "filename*=utf-8''" in download.headers["content-disposition"].lower()
     rooms = {
         room["code"]: room
         for room in (await api_client.get("/api/v1/reference/rooms")).json()

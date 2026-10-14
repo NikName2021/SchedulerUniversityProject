@@ -46,6 +46,8 @@ interface PublicScheduleDetails extends PublicScheduleSummary {
   entries: PublicScheduleEntry[];
 }
 
+type ScheduleViewMode = "group" | "teacher";
+
 const DAYS = [
   { short: "ПН", full: "Понедельник" },
   { short: "ВТ", full: "Вторник" },
@@ -138,7 +140,9 @@ export const PublishedSchedulesPage = () => {
   const [details, setDetails] = useState<PublicScheduleDetails | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<ScheduleViewMode>("group");
   const [selectedGroup, setSelectedGroup] = useState("");
+  const [selectedTeacher, setSelectedTeacher] = useState("");
   const [selectedWeek, setSelectedWeek] = useState("");
 
   const load = useCallback(async () => {
@@ -153,7 +157,17 @@ export const PublishedSchedulesPage = () => {
       if (publicationId) {
         const payload = (await response.json()) as PublicScheduleDetails;
         setDetails(payload);
+        setViewMode("group");
         setSelectedGroup(payload.groups[0] || "");
+        setSelectedTeacher(
+          Array.from(
+            new Set(
+              payload.entries
+                .map((entry) => entry.teacher?.trim())
+                .filter((teacher): teacher is string => Boolean(teacher)),
+            ),
+          ).sort((left, right) => left.localeCompare(right, "ru"))[0] || "",
+        );
         const firstDatedEntry = payload.entries.find((entry) => entry.date);
         setSelectedWeek(
           firstDatedEntry?.date
@@ -164,7 +178,9 @@ export const PublishedSchedulesPage = () => {
         );
       } else {
         setDetails(null);
+        setViewMode("group");
         setSelectedGroup("");
+        setSelectedTeacher("");
         setSelectedWeek("");
         setItems((await response.json()) as PublicScheduleSummary[]);
       }
@@ -188,6 +204,18 @@ export const PublishedSchedulesPage = () => {
     return Array.from(weekKeys).sort();
   }, [details]);
 
+  const teachers = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (details?.entries || [])
+            .map((entry) => entry.teacher?.trim())
+            .filter((teacher): teacher is string => Boolean(teacher)),
+        ),
+      ).sort((left, right) => left.localeCompare(right, "ru")),
+    [details],
+  );
+
   const visibleEntries = useMemo(() => {
     const slotEntries = new Map<string, PublicScheduleEntry[]>();
     (details?.entries || []).forEach((entry) => {
@@ -195,8 +223,10 @@ export const PublishedSchedulesPage = () => {
         !entry.date ||
         !entry.lesson_number ||
         getWeekKey(entry.date) !== selectedWeek ||
-        (selectedGroup &&
-          !groupLabelIncludesBase(entry.group_name, selectedGroup))
+        (viewMode === "group"
+          ? selectedGroup &&
+            !groupLabelIncludesBase(entry.group_name, selectedGroup)
+          : entry.teacher?.trim() !== selectedTeacher)
       ) {
         return;
       }
@@ -206,7 +236,7 @@ export const PublishedSchedulesPage = () => {
       slotEntries.set(slotKey, entries);
     });
     return slotEntries;
-  }, [details, selectedGroup, selectedWeek]);
+  }, [details, selectedGroup, selectedTeacher, selectedWeek, viewMode]);
 
   const selectedWeekIndex = availableWeeks.indexOf(selectedWeek);
 
@@ -309,21 +339,69 @@ export const PublishedSchedulesPage = () => {
               </button>
             </div>
           </div>
-          <label className="published-grid-toolbar__group">
-            <Users size={16} />
-            <span>Группа</span>
-            <select
-              value={selectedGroup}
-              onChange={(event) => setSelectedGroup(event.target.value)}
+          <div className="published-grid-toolbar__filters">
+            <div
+              className="published-view-switcher"
+              aria-label="Режим просмотра расписания"
             >
-              <option value="">Все группы</option>
-              {details.groups.map((group) => (
-                <option value={group} key={group}>
-                  {group}
-                </option>
-              ))}
-            </select>
-          </label>
+              <button
+                type="button"
+                className={viewMode === "group" ? "is-active" : ""}
+                aria-pressed={viewMode === "group"}
+                onClick={() => setViewMode("group")}
+              >
+                <Users size={15} /> По группам
+              </button>
+              <button
+                type="button"
+                className={viewMode === "teacher" ? "is-active" : ""}
+                aria-pressed={viewMode === "teacher"}
+                disabled={teachers.length === 0}
+                title={
+                  teachers.length === 0
+                    ? "В расписании нет назначенных педагогов"
+                    : undefined
+                }
+                onClick={() => setViewMode("teacher")}
+              >
+                <UserRound size={15} /> По педагогам
+              </button>
+            </div>
+            {viewMode === "group" ? (
+              <label className="published-grid-toolbar__filter">
+                <Users size={16} />
+                <span>Группа</span>
+                <select
+                  aria-label="Группа"
+                  value={selectedGroup}
+                  onChange={(event) => setSelectedGroup(event.target.value)}
+                >
+                  <option value="">Все группы</option>
+                  {details.groups.map((group) => (
+                    <option value={group} key={group}>
+                      {group}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <label className="published-grid-toolbar__filter">
+                <UserRound size={16} />
+                <span>Педагог</span>
+                <select
+                  aria-label="Педагог"
+                  value={selectedTeacher}
+                  onChange={(event) => setSelectedTeacher(event.target.value)}
+                >
+                  {teachers.map((teacher) => (
+                    <option value={teacher} key={teacher}>
+                      {teacher}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
         </section>
 
         {selectedWeek ? (
@@ -377,12 +455,15 @@ export const PublishedSchedulesPage = () => {
                                       <MapPin size={13} />
                                       {entry.room_id || "Аудитория не указана"}
                                     </span>
-                                    <span>
-                                      <UserRound size={13} />
-                                      {entry.teacher ||
-                                        "Преподаватель не указан"}
-                                    </span>
-                                    {!selectedGroup && (
+                                    {viewMode === "group" && (
+                                      <span>
+                                        <UserRound size={13} />
+                                        {entry.teacher ||
+                                          "Преподаватель не указан"}
+                                      </span>
+                                    )}
+                                    {(viewMode === "teacher" ||
+                                      !selectedGroup) && (
                                       <span>
                                         <Users size={13} /> {entry.group_name}
                                       </span>

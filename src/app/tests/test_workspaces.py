@@ -194,6 +194,11 @@ async def test_foreign_ids_cannot_read_change_delete_or_export(spaces):
             ("PATCH", f"scheduler/streams/{foreign.stream.id}", {"is_ignored": True}),
             ("DELETE", f"scheduler/tasks/{foreign.task.id}", None),
             ("DELETE", f"scheduler/import/history/{foreign.batch.id}", None),
+            (
+                "GET",
+                f"scheduler/import/history/{foreign.batch.id}/download",
+                None,
+            ),
             ("POST", f"scheduler/tasks/{foreign.task.id}/cancel", None),
             ("POST", f"scheduler/tasks/{foreign.task.id}/retry", None),
             ("POST", f"scheduler/tasks/{foreign.task.id}/archive", None),
