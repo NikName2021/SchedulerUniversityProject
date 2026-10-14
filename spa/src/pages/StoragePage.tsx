@@ -15,7 +15,7 @@ import { API_BASE_URL, apiFetch, openDownload } from "../api/apiConfig";
 
 type FolderName =
   | "Учебные планы и потоки"
-  | "Нагрузка и аудитории"
+  | "Аудитории"
   | "Доступность преподавателей";
 
 interface FileItem {
@@ -41,11 +41,11 @@ const folders: Array<{
     note: "Импорт Excel и CSV",
   },
   {
-    title: "Нагрузка и аудитории",
-    description: "Данные для сверки учебной нагрузки и размещения занятий.",
+    title: "Аудитории",
+    description: "Помещения, вместимость и типы занятий для размещения пар.",
     icon: FolderOpen,
     accent: "slate",
-    note: "Единый каталог данных",
+    note: "Импорт справочника помещений",
   },
   {
     title: "Доступность преподавателей",
@@ -189,9 +189,12 @@ export const StoragePage: React.FC = () => {
       const formData = new FormData();
       formData.append("file", file);
       const isTeacherImport = selectedFolder === "Доступность преподавателей";
+      const isRoomImport = selectedFolder === "Аудитории";
       const endpoint = isTeacherImport
         ? `${API_BASE_URL}/api/v1/scheduler/teachers/import`
-        : `${API_BASE_URL}/api/v1/scheduler/import/streams`;
+        : isRoomImport
+          ? `${API_BASE_URL}/api/v1/reference/rooms/import`
+          : `${API_BASE_URL}/api/v1/scheduler/import/streams`;
 
       try {
         const response = await apiFetch(endpoint, {
@@ -206,9 +209,11 @@ export const StoragePage: React.FC = () => {
         setSuccessMsg(
           isTeacherImport
             ? `Доступность обновлена: преподавателей — ${payload.updated_teachers}.`
-            : `Файл загружен: потоков — ${payload.streams_added}, групп — ${payload.groups_added}.`,
+            : isRoomImport
+              ? `Аудитории загружены: распознано — ${payload.rooms_found}, добавлено — ${payload.rooms_created}, обновлено — ${payload.rooms_updated}.`
+              : `Файл загружен: потоков — ${payload.streams_added}, групп — ${payload.groups_added}.`,
         );
-        if (!isTeacherImport) await fetchHistory();
+        if (!isTeacherImport && !isRoomImport) await fetchHistory();
       } catch (requestError) {
         setError(
           requestError instanceof Error
@@ -223,7 +228,11 @@ export const StoragePage: React.FC = () => {
   );
 
   useEffect(() => {
-    if (selectedFolder) void fetchHistory();
+    if (selectedFolder === "Учебные планы и потоки") {
+      void fetchHistory();
+    } else {
+      setFiles([]);
+    }
   }, [fetchHistory, selectedFolder]);
 
   const removeFile = async (index: number) => {
@@ -294,6 +303,8 @@ export const StoragePage: React.FC = () => {
   }
 
   const isTeacherFolder = selectedFolder === "Доступность преподавателей";
+  const isRoomFolder = selectedFolder === "Аудитории";
+  const isSingleImportFolder = isTeacherFolder || isRoomFolder;
   return (
     <div className="enterprise-page animate-fade-in">
       <section className="enterprise-page__header">
@@ -321,9 +332,23 @@ export const StoragePage: React.FC = () => {
       {successMsg && <div className="notice notice--success">{successMsg}</div>}
 
       <div
-        className={`import-workspace ${isTeacherFolder ? "import-workspace--single" : ""}`}
+        className={`import-workspace ${isSingleImportFolder ? "import-workspace--single" : ""}`}
       >
         <div className="app-panel import-workspace__upload">
+          {isRoomFolder && (
+            <div className="availability-note availability-note--rooms">
+              <div className="availability-note__icon">
+                <FolderOpen size={20} />
+              </div>
+              <div>
+                <h3>Импорт аудиторий</h3>
+                <p>
+                  Файл должен содержать название аудитории, вместимость и, при
+                  наличии, тип учебного помещения.
+                </p>
+              </div>
+            </div>
+          )}
           {isTeacherFolder && (
             <div className="availability-note">
               <div className="availability-note__icon">
@@ -352,7 +377,7 @@ export const StoragePage: React.FC = () => {
           />
         </div>
 
-        {!isTeacherFolder && (
+        {!isSingleImportFolder && (
           <section className="app-panel import-history">
             <div className="import-history__header">
               <div>

@@ -13,7 +13,7 @@ from database import (
     StudentGroup,
     Teacher,
 )
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from schemas.reference import (
     ActivityTypeCreate,
     ActivityTypeRead,
@@ -21,6 +21,7 @@ from schemas.reference import (
     AvailabilityRuleRead,
     BuildingCreate,
     BuildingRead,
+    CurrentRulesRead,
     DepartmentCreate,
     DepartmentRead,
     DisciplineCreate,
@@ -28,6 +29,7 @@ from schemas.reference import (
     RoomCreate,
     RoomFeatureCreate,
     RoomFeatureRead,
+    RoomImportRead,
     RoomRead,
     RoomUpdate,
     RuleProfileCreate,
@@ -41,8 +43,10 @@ from schemas.reference import (
     TeacherProfileRead,
     TeacherProfileUpdate,
 )
+from services.parser_service import parse_rooms_content
 from services.reference_service import ReferenceService
 from services.rule_catalog_service import describe_rule_profile, describe_solver_timing
+from services.upload_service import read_upload_limited
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -189,6 +193,30 @@ async def create_room(
     return ReferenceService.room_to_schema(room)
 
 
+@router.post("/rooms/import", response_model=RoomImportRead)
+async def import_rooms(
+    file: Annotated[UploadFile, File(...)],
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+) -> RoomImportRead:
+    content, filename = await read_upload_limited(
+        file, allowed_extensions={".xls", ".xlsx", ".csv"}
+    )
+    try:
+        rows = parse_rooms_content(content, filename)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not rows:
+        raise HTTPException(status_code=400, detail="В файле не найдены аудитории")
+    try:
+        result = await ReferenceService.import_rooms(rows, db)
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409, detail="Данные аудиторий конфликтуют со справочником"
+        ) from exc
+    return RoomImportRead(**result)
+
+
 @router.patch("/rooms/{room_id}", response_model=RoomRead)
 async def update_room(
     room_id: int,
@@ -257,6 +285,14 @@ async def list_rule_profiles(
 ) -> list[RuleProfileRead]:
     profiles = await ReferenceService.list_rule_profiles(db)
     return [RuleProfileRead.model_validate(profile) for profile in profiles]
+
+
+@router.get("/rules/current", response_model=CurrentRulesRead)
+async def get_current_rules() -> CurrentRulesRead:
+    return CurrentRulesRead(
+        rules=describe_rule_profile([]),
+        solver_timing=describe_solver_timing(),
+    )
 
 
 @router.get(

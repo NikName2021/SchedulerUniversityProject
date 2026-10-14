@@ -97,6 +97,12 @@ class RoomRead(BaseModel):
     features: list[RoomFeatureRead]
 
 
+class RoomImportRead(BaseModel):
+    rooms_found: int
+    rooms_created: int
+    rooms_updated: int
+
+
 class AvailabilityRuleCreate(BaseModel):
     teacher_id: int | None = None
     student_group_id: int | None = None
@@ -205,6 +211,11 @@ class SolverTimingRead(BaseModel):
 
 class RuleProfileDetailsRead(BaseModel):
     profile: RuleProfileRead
+    rules: list[RuleDescriptionRead]
+    solver_timing: SolverTimingRead
+
+
+class CurrentRulesRead(BaseModel):
     rules: list[RuleDescriptionRead]
     solver_timing: SolverTimingRead
 

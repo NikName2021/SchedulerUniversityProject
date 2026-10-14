@@ -1,10 +1,11 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Building2,
   CheckCircle2,
   ChevronRight,
   Clock3,
   CircleOff,
+  FileUp,
   Loader2,
   LockKeyhole,
   Plus,
@@ -85,10 +86,15 @@ interface SolverTiming {
   note: string;
 }
 
-interface RuleProfileDetails {
-  profile: RuleProfile;
+interface RuleSetDetails {
   rules: RuleDescription[];
   solver_timing: SolverTiming;
+}
+
+interface OpenedRuleSet {
+  title: string;
+  description: string;
+  profile: RuleProfile | null;
 }
 
 const runtimeLabels: Record<RuleRuntimeState, string> = {
@@ -109,11 +115,20 @@ export const ReferenceDataPage: React.FC = () => {
   const [rooms, setRooms] = useState<Room[]>([]);
   const [activityTypes, setActivityTypes] = useState<ActivityType[]>([]);
   const [profiles, setProfiles] = useState<RuleProfile[]>([]);
+  const [currentRules, setCurrentRules] = useState<RuleSetDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [openedProfile, setOpenedProfile] = useState<RuleProfile | null>(null);
-  const [profileDetails, setProfileDetails] =
-    useState<RuleProfileDetails | null>(null);
+  const [roomImporting, setRoomImporting] = useState(false);
+  const [roomImportMessage, setRoomImportMessage] = useState<string | null>(
+    null,
+  );
+  const roomFileInputRef = useRef<HTMLInputElement>(null);
+  const [openedRuleSet, setOpenedRuleSet] = useState<OpenedRuleSet | null>(
+    null,
+  );
+  const [profileDetails, setProfileDetails] = useState<RuleSetDetails | null>(
+    null,
+  );
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [form, setForm] = useState({
@@ -126,18 +141,25 @@ export const ReferenceDataPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [roomsResponse, typesResponse, profilesResponse] =
+      const [roomsResponse, typesResponse, profilesResponse, rulesResponse] =
         await Promise.all([
           apiFetch(`${API_BASE_URL}/api/v1/reference/rooms`),
           apiFetch(`${API_BASE_URL}/api/v1/reference/activity-types`),
           apiFetch(`${API_BASE_URL}/api/v1/reference/rule-profiles`),
+          apiFetch(`${API_BASE_URL}/api/v1/reference/rules/current`),
         ]);
-      if (!roomsResponse.ok || !typesResponse.ok || !profilesResponse.ok) {
+      if (
+        !roomsResponse.ok ||
+        !typesResponse.ok ||
+        !profilesResponse.ok ||
+        !rulesResponse.ok
+      ) {
         throw new Error("Не удалось загрузить справочники");
       }
       setRooms(await roomsResponse.json());
       setActivityTypes(await typesResponse.json());
       setProfiles(await profilesResponse.json());
+      setCurrentRules(await rulesResponse.json());
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -154,16 +176,32 @@ export const ReferenceDataPage: React.FC = () => {
   }, [load]);
 
   useEffect(() => {
-    if (!openedProfile) return;
+    if (!openedRuleSet) return;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpenedProfile(null);
+      if (event.key === "Escape") setOpenedRuleSet(null);
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [openedProfile]);
+  }, [openedRuleSet]);
+
+  const openCurrentRules = () => {
+    if (!currentRules) return;
+    setOpenedRuleSet({
+      title: "Текущие правила генератора",
+      description: "Правила, которые фактически подключены в текущей версии.",
+      profile: null,
+    });
+    setProfileDetails(currentRules);
+    setProfileError(null);
+    setProfileLoading(false);
+  };
 
   const openProfile = async (profile: RuleProfile) => {
-    setOpenedProfile(profile);
+    setOpenedRuleSet({
+      title: profile.name,
+      description: profile.description || "Описание профиля не указано",
+      profile,
+    });
     setProfileDetails(null);
     setProfileError(null);
     setProfileLoading(true);
@@ -181,6 +219,42 @@ export const ReferenceDataPage: React.FC = () => {
       );
     } finally {
       setProfileLoading(false);
+    }
+  };
+
+  const importRooms = async (file: File) => {
+    setRoomImporting(true);
+    setRoomImportMessage(null);
+    setError(null);
+    const formData = new FormData();
+    formData.append("file", file);
+    try {
+      const response = await apiFetch(
+        `${API_BASE_URL}/api/v1/reference/rooms/import`,
+        { method: "POST", body: formData },
+      );
+      const payload = (await response.json()) as {
+        detail?: string;
+        rooms_found?: number;
+        rooms_created?: number;
+        rooms_updated?: number;
+      };
+      if (!response.ok) {
+        throw new Error(payload.detail || "Не удалось импортировать аудитории");
+      }
+      setRoomImportMessage(
+        `Распознано: ${payload.rooms_found}. Добавлено: ${payload.rooms_created}. Обновлено: ${payload.rooms_updated}.`,
+      );
+      await load();
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Не удалось импортировать аудитории",
+      );
+    } finally {
+      setRoomImporting(false);
+      if (roomFileInputRef.current) roomFileInputRef.current.value = "";
     }
   };
 
@@ -236,9 +310,42 @@ export const ReferenceDataPage: React.FC = () => {
 
       <section className="grid gap-6 lg:grid-cols-[2fr_1fr]">
         <div className="overflow-hidden rounded-2xl border border-border-light bg-white shadow-sm">
-          <div className="flex items-center gap-2 border-b border-border-light px-5 py-4 font-extrabold text-text-primary">
-            <Building2 size={19} className="text-brand" /> Аудитории
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-light px-5 py-4">
+            <div className="flex items-center gap-2 font-extrabold text-text-primary">
+              <Building2 size={19} className="text-brand" /> Аудитории
+              <span className="rounded-lg bg-bg-base px-2 py-0.5 text-xs text-text-secondary">
+                {rooms.length}
+              </span>
+            </div>
+            <input
+              ref={roomFileInputRef}
+              type="file"
+              hidden
+              accept=".xls,.xlsx,.csv"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) void importRooms(file);
+              }}
+            />
+            <button
+              type="button"
+              disabled={roomImporting}
+              onClick={() => roomFileInputRef.current?.click()}
+              className="flex items-center gap-2 rounded-xl border border-border-light bg-white px-3 py-2 text-xs font-extrabold text-brand hover:bg-blue-50 disabled:cursor-wait disabled:opacity-60"
+            >
+              {roomImporting ? (
+                <Loader2 size={15} className="animate-spin" />
+              ) : (
+                <FileUp size={15} />
+              )}
+              {roomImporting ? "Распознаём…" : "Импортировать Excel"}
+            </button>
           </div>
+          {roomImportMessage && (
+            <div className="border-b border-emerald-100 bg-emerald-50 px-5 py-3 text-xs font-bold text-emerald-700">
+              {roomImportMessage}
+            </div>
+          )}
           <div className="divide-y divide-border-light">
             {rooms.map((room) => (
               <div
@@ -264,6 +371,12 @@ export const ReferenceDataPage: React.FC = () => {
                 </span>
               </div>
             ))}
+            {rooms.length === 0 && (
+              <div className="px-5 py-12 text-center text-sm font-semibold text-text-secondary">
+                Аудиторий пока нет. Загрузите Excel или добавьте аудиторию
+                вручную.
+              </div>
+            )}
           </div>
         </div>
 
@@ -341,6 +454,34 @@ export const ReferenceDataPage: React.FC = () => {
             <ShieldCheck size={18} className="text-brand" /> Профили правил
           </h2>
           <div className="space-y-3">
+            {currentRules && (
+              <button
+                type="button"
+                onClick={openCurrentRules}
+                className="group w-full rounded-xl border border-blue-200 bg-blue-50/40 p-3 text-left transition-colors hover:border-blue-400 hover:bg-blue-50"
+              >
+                <div className="flex items-center justify-between gap-3 font-bold text-text-primary">
+                  <span>Текущие правила генератора</span>
+                  <span className="flex items-center gap-3">
+                    <span className="text-xs text-brand">Подключено</span>
+                    <ChevronRight
+                      size={17}
+                      className="text-brand transition-transform group-hover:translate-x-0.5"
+                    />
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-text-secondary">
+                  {
+                    currentRules.rules.filter((rule) => rule.effective_enabled)
+                      .length
+                  }{" "}
+                  правил применяются сейчас
+                </p>
+                <p className="mt-2 text-xs font-bold text-brand">
+                  Посмотреть подключённые правила
+                </p>
+              </button>
+            )}
             {profiles.map((profile) => (
               <button
                 type="button"
@@ -373,12 +514,12 @@ export const ReferenceDataPage: React.FC = () => {
         </div>
       </section>
 
-      {openedProfile && (
+      {openedRuleSet && (
         <div
           className="fixed inset-0 z-50 flex justify-end bg-slate-950/35"
           role="presentation"
           onMouseDown={(event) => {
-            if (event.currentTarget === event.target) setOpenedProfile(null);
+            if (event.currentTarget === event.target) setOpenedRuleSet(null);
           }}
         >
           <aside
@@ -397,15 +538,15 @@ export const ReferenceDataPage: React.FC = () => {
                     id="rule-profile-title"
                     className="text-2xl font-black text-text-primary"
                   >
-                    {openedProfile.name}
+                    {openedRuleSet.title}
                   </h2>
                   <p className="mt-1 text-sm text-text-secondary">
-                    {openedProfile.description || "Описание профиля не указано"}
+                    {openedRuleSet.description}
                   </p>
                 </div>
                 <button
                   type="button"
-                  onClick={() => setOpenedProfile(null)}
+                  onClick={() => setOpenedRuleSet(null)}
                   aria-label="Закрыть описание профиля"
                   className="rounded-xl border border-border-light p-2 text-text-secondary hover:bg-bg-base hover:text-text-primary"
                 >
@@ -440,10 +581,13 @@ export const ReferenceDataPage: React.FC = () => {
                   </div>
                   <div className="col-span-2 rounded-xl bg-blue-50 px-4 py-3 sm:col-span-1">
                     <div className="flex items-center gap-2 font-black text-brand">
-                      <SlidersHorizontal size={18} /> Просмотр
+                      <SlidersHorizontal size={18} />
+                      {openedRuleSet.profile ? "Профиль" : "Текущая версия"}
                     </div>
                     <div className="mt-1 text-xs font-bold text-blue-700/75">
-                      Настройка профилей будет добавлена позже
+                      {openedRuleSet.profile
+                        ? "Показаны настройки сохранённого профиля"
+                        : "Показаны фактически подключённые правила"}
                     </div>
                   </div>
                 </div>

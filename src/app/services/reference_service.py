@@ -103,6 +103,44 @@ class ReferenceService:
         return next(item for item in rooms if item.id == room.id)
 
     @staticmethod
+    async def import_rooms(
+        rows: list[dict[str, str | int]], db: AsyncSession
+    ) -> dict[str, int]:
+        codes = [str(row["code"]) for row in rows]
+        result = await db.execute(
+            select(Room).where(Room.building_id.is_(None), Room.code.in_(codes))
+        )
+        existing = {room.code: room for room in result.scalars()}
+        created = 0
+        updated = 0
+
+        for row in rows:
+            code = str(row["code"])
+            room = existing.get(code)
+            if room is None:
+                db.add(
+                    Room(
+                        code=code,
+                        capacity=int(row["capacity"]),
+                        room_type=str(row["room_type"]),
+                        is_active=True,
+                    )
+                )
+                created += 1
+                continue
+            room.capacity = int(row["capacity"])
+            room.room_type = str(row["room_type"])
+            room.is_active = True
+            updated += 1
+
+        await db.commit()
+        return {
+            "rooms_found": len(rows),
+            "rooms_created": created,
+            "rooms_updated": updated,
+        }
+
+    @staticmethod
     async def update_room(room: Room, payload: RoomUpdate, db: AsyncSession) -> Room:
         values = payload.model_dump(exclude_unset=True, exclude={"feature_ids"})
         await ReferenceService._require_entity(Building, values.get("building_id"), db)
