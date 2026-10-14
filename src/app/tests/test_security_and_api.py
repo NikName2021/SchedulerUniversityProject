@@ -100,8 +100,9 @@ async def test_upload_limit_is_enforced(
 
 @pytest.mark.asyncio
 async def test_stream_csv_upload_sanitizes_filename_and_imports_data(
-    api_client: AsyncClient, db_session
+    api_client: AsyncClient, db_session, monkeypatch, tmp_path
 ) -> None:
+    monkeypatch.setattr(scheduler_routes, "UPLOAD_DIR", tmp_path)
     csv_content = """Мероприятие;Вид потока;Преподаватель;Группа
 Математика;Л;Иванов И.И.;ГР-1 [20]
 """.encode()
@@ -116,6 +117,13 @@ async def test_stream_csv_upload_sanitizes_filename_and_imports_data(
     assert batch.filename == "streams.csv"
     assert (await db_session.execute(select(Stream))).scalar_one()
     assert (await db_session.execute(select(StreamGroup))).scalar_one()
+
+    download_response = await api_client.get(
+        f"/api/v1/scheduler/import/history/{batch.id}/download"
+    )
+    assert download_response.status_code == 200
+    assert download_response.content == csv_content
+    assert "streams.csv" in download_response.headers["content-disposition"]
 
     delete_response = await api_client.delete(
         f"/api/v1/scheduler/import/history/{batch.id}"

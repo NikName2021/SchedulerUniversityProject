@@ -153,7 +153,6 @@ export const GenerationPage: React.FC = () => {
   const [, setStats] = useState<Stats | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [ruleProfiles, setRuleProfiles] = useState<RuleProfileOption[]>([]);
   const [ruleProfileId, setRuleProfileId] = useState<number | null>(null);
   const [generationMode, setGenerationMode] = useState<"week" | "semester">(
     "week",
@@ -258,7 +257,6 @@ export const GenerationPage: React.FC = () => {
         setSelectedGroups([]);
       }
       setStats(statsData);
-      setRuleProfiles(profilesData);
       setPeriods(periodsData);
       if (periodsData.length > 0) {
         const firstPeriod = periodsData[0] as AcademicPeriod;
@@ -960,6 +958,7 @@ export const GenerationPage: React.FC = () => {
         </button>
       </section>
 
+      {/* Блок выбора профиля правил временно отключён.
       <section className="calc-rule-profile">
         <div>
           <h2 className="text-sm font-extrabold text-text-primary">
@@ -982,6 +981,7 @@ export const GenerationPage: React.FC = () => {
           ))}
         </select>
       </section>
+      */}
 
       <div
         className="calc-layout"

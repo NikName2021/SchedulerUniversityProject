@@ -1,3 +1,6 @@
+import uuid
+from datetime import datetime
+from pathlib import Path
 from typing import Annotated, Any
 
 from core.config import async_get_db
@@ -7,13 +10,15 @@ from database import (
     Building,
     Department,
     Discipline,
+    FileType,
+    ImportBatch,
     Room,
     RoomFeature,
     Stream,
     StudentGroup,
     Teacher,
 )
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from schemas.reference import (
     ActivityTypeCreate,
     ActivityTypeRead,
@@ -21,6 +26,7 @@ from schemas.reference import (
     AvailabilityRuleRead,
     BuildingCreate,
     BuildingRead,
+    CurrentRulesRead,
     DepartmentCreate,
     DepartmentRead,
     DisciplineCreate,
@@ -28,6 +34,7 @@ from schemas.reference import (
     RoomCreate,
     RoomFeatureCreate,
     RoomFeatureRead,
+    RoomImportRead,
     RoomRead,
     RoomUpdate,
     RuleProfileCreate,
@@ -41,13 +48,17 @@ from schemas.reference import (
     TeacherProfileRead,
     TeacherProfileUpdate,
 )
+from services.parser_service import parse_rooms_content
 from services.reference_service import ReferenceService
 from services.rule_catalog_service import describe_rule_profile, describe_solver_timing
+from services.upload_service import read_upload_limited
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/reference", tags=["Reference data"])
+UPLOAD_DIR = Path(__file__).resolve().parents[2] / "uploads"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
 async def _commit_created(entity: Any, db: AsyncSession) -> Any:
@@ -189,6 +200,52 @@ async def create_room(
     return ReferenceService.room_to_schema(room)
 
 
+@router.post("/rooms/import", response_model=RoomImportRead)
+async def import_rooms(
+    file: Annotated[UploadFile, File(...)],
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+) -> RoomImportRead:
+    content, filename = await read_upload_limited(
+        file, allowed_extensions={".xls", ".xlsx", ".csv"}
+    )
+    try:
+        rows = parse_rooms_content(content, filename)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not rows:
+        raise HTTPException(status_code=400, detail="В файле не найдены аудитории")
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    extension = Path(filename).suffix.lower()
+    unique_filename = f"{timestamp}_{uuid.uuid4().hex[:12]}{extension}"
+    workspace_dir = UPLOAD_DIR / str(db.info["workspace_owner_id"])
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    file_path = workspace_dir / unique_filename
+
+    try:
+        file_path.write_bytes(content)
+        batch = ImportBatch(
+            filename=filename,
+            file_path=str(file_path),
+            file_type=FileType.ROOMS,
+            status="completed",
+        )
+        db.add(batch)
+        await db.flush()
+        result = await ReferenceService.import_rooms(rows, db)
+    except IntegrityError as exc:
+        await db.rollback()
+        file_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=409, detail="Данные аудиторий конфликтуют со справочником"
+        ) from exc
+    except Exception:
+        await db.rollback()
+        file_path.unlink(missing_ok=True)
+        raise
+    return RoomImportRead(batch_id=batch.id, **result)
+
+
 @router.patch("/rooms/{room_id}", response_model=RoomRead)
 async def update_room(
     room_id: int,
@@ -257,6 +314,14 @@ async def list_rule_profiles(
 ) -> list[RuleProfileRead]:
     profiles = await ReferenceService.list_rule_profiles(db)
     return [RuleProfileRead.model_validate(profile) for profile in profiles]
+
+
+@router.get("/rules/current", response_model=CurrentRulesRead)
+async def get_current_rules() -> CurrentRulesRead:
+    return CurrentRulesRead(
+        rules=describe_rule_profile([]),
+        solver_timing=describe_solver_timing(),
+    )
 
 
 @router.get(

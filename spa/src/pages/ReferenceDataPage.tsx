@@ -33,15 +33,6 @@ interface Room {
   features: RoomFeature[];
 }
 
-interface ActivityType {
-  id: number;
-  code: string;
-  name: string;
-  room_type: string | null;
-  is_shared_for_groups: boolean;
-  is_active: boolean;
-}
-
 interface RuleProfile {
   id: number;
   name: string;
@@ -85,10 +76,15 @@ interface SolverTiming {
   note: string;
 }
 
-interface RuleProfileDetails {
-  profile: RuleProfile;
+interface RuleSetDetails {
   rules: RuleDescription[];
   solver_timing: SolverTiming;
+}
+
+interface OpenedRuleSet {
+  title: string;
+  description: string;
+  profile: RuleProfile | null;
 }
 
 const runtimeLabels: Record<RuleRuntimeState, string> = {
@@ -107,13 +103,16 @@ const runtimeStyles: Record<RuleRuntimeState, string> = {
 
 export const ReferenceDataPage: React.FC = () => {
   const [rooms, setRooms] = useState<Room[]>([]);
-  const [activityTypes, setActivityTypes] = useState<ActivityType[]>([]);
   const [profiles, setProfiles] = useState<RuleProfile[]>([]);
+  const [currentRules, setCurrentRules] = useState<RuleSetDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [openedProfile, setOpenedProfile] = useState<RuleProfile | null>(null);
-  const [profileDetails, setProfileDetails] =
-    useState<RuleProfileDetails | null>(null);
+  const [openedRuleSet, setOpenedRuleSet] = useState<OpenedRuleSet | null>(
+    null,
+  );
+  const [profileDetails, setProfileDetails] = useState<RuleSetDetails | null>(
+    null,
+  );
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [form, setForm] = useState({
@@ -126,18 +125,18 @@ export const ReferenceDataPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [roomsResponse, typesResponse, profilesResponse] =
+      const [roomsResponse, profilesResponse, rulesResponse] =
         await Promise.all([
           apiFetch(`${API_BASE_URL}/api/v1/reference/rooms`),
-          apiFetch(`${API_BASE_URL}/api/v1/reference/activity-types`),
           apiFetch(`${API_BASE_URL}/api/v1/reference/rule-profiles`),
+          apiFetch(`${API_BASE_URL}/api/v1/reference/rules/current`),
         ]);
-      if (!roomsResponse.ok || !typesResponse.ok || !profilesResponse.ok) {
+      if (!roomsResponse.ok || !profilesResponse.ok || !rulesResponse.ok) {
         throw new Error("Не удалось загрузить справочники");
       }
       setRooms(await roomsResponse.json());
-      setActivityTypes(await typesResponse.json());
       setProfiles(await profilesResponse.json());
+      setCurrentRules(await rulesResponse.json());
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -154,16 +153,32 @@ export const ReferenceDataPage: React.FC = () => {
   }, [load]);
 
   useEffect(() => {
-    if (!openedProfile) return;
+    if (!openedRuleSet) return;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpenedProfile(null);
+      if (event.key === "Escape") setOpenedRuleSet(null);
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [openedProfile]);
+  }, [openedRuleSet]);
+
+  const openCurrentRules = () => {
+    if (!currentRules) return;
+    setOpenedRuleSet({
+      title: "Текущие правила генератора",
+      description: "Правила, которые фактически подключены в текущей версии.",
+      profile: null,
+    });
+    setProfileDetails(currentRules);
+    setProfileError(null);
+    setProfileLoading(false);
+  };
 
   const openProfile = async (profile: RuleProfile) => {
-    setOpenedProfile(profile);
+    setOpenedRuleSet({
+      title: profile.name,
+      description: profile.description || "Описание профиля не указано",
+      profile,
+    });
     setProfileDetails(null);
     setProfileError(null);
     setProfileLoading(true);
@@ -217,7 +232,7 @@ export const ReferenceDataPage: React.FC = () => {
             Базовые данные
           </h1>
           <p className="mt-1 text-sm font-medium text-text-secondary">
-            Аудитории, виды занятий и профили правил генератора.
+            Аудитории и профили правил генератора.
           </p>
         </div>
         <button
@@ -236,8 +251,13 @@ export const ReferenceDataPage: React.FC = () => {
 
       <section className="grid gap-6 lg:grid-cols-[2fr_1fr]">
         <div className="overflow-hidden rounded-2xl border border-border-light bg-white shadow-sm">
-          <div className="flex items-center gap-2 border-b border-border-light px-5 py-4 font-extrabold text-text-primary">
-            <Building2 size={19} className="text-brand" /> Аудитории
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-light px-5 py-4">
+            <div className="flex items-center gap-2 font-extrabold text-text-primary">
+              <Building2 size={19} className="text-brand" /> Аудитории
+              <span className="rounded-lg bg-bg-base px-2 py-0.5 text-xs text-text-secondary">
+                {rooms.length}
+              </span>
+            </div>
           </div>
           <div className="divide-y divide-border-light">
             {rooms.map((room) => (
@@ -264,121 +284,140 @@ export const ReferenceDataPage: React.FC = () => {
                 </span>
               </div>
             ))}
+            {rooms.length === 0 && (
+              <div className="px-5 py-12 text-center text-sm font-semibold text-text-secondary">
+                Аудиторий пока нет. Загрузите Excel или добавьте аудиторию
+                вручную.
+              </div>
+            )}
           </div>
         </div>
 
-        <form
-          onSubmit={createRoom}
-          className="h-fit space-y-4 rounded-2xl border border-border-light bg-white p-5 shadow-sm"
-        >
-          <h2 className="flex items-center gap-2 font-extrabold text-text-primary">
-            <Plus size={18} className="text-brand" /> Новая аудитория
-          </h2>
-          <label className="block text-xs font-bold text-text-secondary">
-            Код
-            <input
-              required
-              value={form.code}
-              onChange={(event) =>
-                setForm({ ...form, code: event.target.value })
-              }
-              className="mt-1 w-full rounded-xl border border-border-light px-3 py-2 text-sm outline-none focus:border-brand"
-            />
-          </label>
-          <label className="block text-xs font-bold text-text-secondary">
-            Вместимость
-            <input
-              required
-              min={0}
-              type="number"
-              value={form.capacity}
-              onChange={(event) =>
-                setForm({ ...form, capacity: Number(event.target.value) })
-              }
-              className="mt-1 w-full rounded-xl border border-border-light px-3 py-2 text-sm outline-none focus:border-brand"
-            />
-          </label>
-          <label className="block text-xs font-bold text-text-secondary">
-            Тип
-            <select
-              value={form.room_type}
-              onChange={(event) =>
-                setForm({ ...form, room_type: event.target.value })
-              }
-              className="mt-1 w-full rounded-xl border border-border-light bg-white px-3 py-2 text-sm outline-none focus:border-brand"
-            >
-              <option value="mixed">Универсальная</option>
-              <option value="lec">Лекционная</option>
-              <option value="sem">Семинарская</option>
-              <option value="lab">Лаборатория</option>
-            </select>
-          </label>
-          <button className="w-full rounded-xl bg-brand px-4 py-2.5 text-sm font-extrabold text-white shadow-sm hover:opacity-90">
-            Добавить
-          </button>
-        </form>
+        <div className="space-y-6 self-start">
+          <form
+            onSubmit={createRoom}
+            className="space-y-4 rounded-2xl border border-border-light bg-white p-5 shadow-sm"
+          >
+            <h2 className="flex items-center gap-2 font-extrabold text-text-primary">
+              <Plus size={18} className="text-brand" /> Новая аудитория
+            </h2>
+            <label className="block text-xs font-bold text-text-secondary">
+              Код
+              <input
+                required
+                value={form.code}
+                onChange={(event) =>
+                  setForm({ ...form, code: event.target.value })
+                }
+                className="mt-1 w-full rounded-xl border border-border-light px-3 py-2 text-sm outline-none focus:border-brand"
+              />
+            </label>
+            <label className="block text-xs font-bold text-text-secondary">
+              Вместимость
+              <input
+                required
+                min={0}
+                type="number"
+                value={form.capacity}
+                onChange={(event) =>
+                  setForm({ ...form, capacity: Number(event.target.value) })
+                }
+                className="mt-1 w-full rounded-xl border border-border-light px-3 py-2 text-sm outline-none focus:border-brand"
+              />
+            </label>
+            <label className="block text-xs font-bold text-text-secondary">
+              Тип
+              <select
+                value={form.room_type}
+                onChange={(event) =>
+                  setForm({ ...form, room_type: event.target.value })
+                }
+                className="mt-1 w-full rounded-xl border border-border-light bg-white px-3 py-2 text-sm outline-none focus:border-brand"
+              >
+                <option value="mixed">Универсальная</option>
+                <option value="lec">Лекционная</option>
+                <option value="sem">Семинарская</option>
+                <option value="lab">Лаборатория</option>
+              </select>
+            </label>
+            <button className="w-full rounded-xl bg-brand px-4 py-2.5 text-sm font-extrabold text-white shadow-sm hover:opacity-90">
+              Добавить
+            </button>
+          </form>
+
+          <div className="rounded-2xl border border-border-light bg-white p-5 shadow-sm">
+            <h2 className="mb-4 flex items-center gap-2 font-extrabold text-text-primary">
+              <ShieldCheck size={18} className="text-brand" /> Профили правил
+            </h2>
+            <div className="space-y-3">
+              {currentRules && (
+                <button
+                  type="button"
+                  onClick={openCurrentRules}
+                  className="group w-full rounded-xl border border-blue-200 bg-blue-50/40 p-3 text-left transition-colors hover:border-blue-400 hover:bg-blue-50"
+                >
+                  <div className="flex items-center justify-between gap-3 font-bold text-text-primary">
+                    <span>Текущие правила генератора</span>
+                    <span className="flex items-center gap-3">
+                      <span className="text-xs text-brand">Подключено</span>
+                      <ChevronRight
+                        size={17}
+                        className="text-brand transition-transform group-hover:translate-x-0.5"
+                      />
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-text-secondary">
+                    {
+                      currentRules.rules.filter(
+                        (rule) => rule.effective_enabled,
+                      ).length
+                    }{" "}
+                    правил применяются сейчас
+                  </p>
+                  <p className="mt-2 text-xs font-bold text-brand">
+                    Посмотреть подключённые правила
+                  </p>
+                </button>
+              )}
+              {profiles.map((profile) => (
+                <button
+                  type="button"
+                  key={profile.id}
+                  onClick={() => void openProfile(profile)}
+                  className="group w-full rounded-xl border border-border-light p-3 text-left transition-colors hover:border-blue-300 hover:bg-blue-50/40"
+                >
+                  <div className="flex items-center justify-between gap-3 font-bold text-text-primary">
+                    <span>{profile.name}</span>
+                    <span className="flex items-center gap-3">
+                      {profile.is_default && (
+                        <span className="text-xs text-brand">По умолчанию</span>
+                      )}
+                      <ChevronRight
+                        size={17}
+                        className="text-text-tertiary transition-transform group-hover:translate-x-0.5 group-hover:text-brand"
+                      />
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-text-secondary">
+                    {profile.description ||
+                      `${profile.settings.filter((item) => item.enabled).length} активных правил`}
+                  </p>
+                  <p className="mt-2 text-xs font-bold text-brand">
+                    Посмотреть используемые правила
+                  </p>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
       </section>
 
-      <section className="grid gap-6 md:grid-cols-2">
-        <div className="rounded-2xl border border-border-light bg-white p-5 shadow-sm">
-          <h2 className="mb-4 font-extrabold text-text-primary">
-            Виды занятий
-          </h2>
-          <div className="flex flex-wrap gap-2">
-            {activityTypes.map((item) => (
-              <span
-                key={item.id}
-                className="rounded-xl border border-border-light bg-bg-base px-3 py-2 text-xs font-bold text-text-secondary"
-              >
-                {item.name}
-                {item.is_shared_for_groups ? " · общий поток" : ""}
-              </span>
-            ))}
-          </div>
-        </div>
-        <div className="rounded-2xl border border-border-light bg-white p-5 shadow-sm">
-          <h2 className="mb-4 flex items-center gap-2 font-extrabold text-text-primary">
-            <ShieldCheck size={18} className="text-brand" /> Профили правил
-          </h2>
-          <div className="space-y-3">
-            {profiles.map((profile) => (
-              <button
-                type="button"
-                key={profile.id}
-                onClick={() => void openProfile(profile)}
-                className="group w-full rounded-xl border border-border-light p-3 text-left transition-colors hover:border-blue-300 hover:bg-blue-50/40"
-              >
-                <div className="flex items-center justify-between gap-3 font-bold text-text-primary">
-                  <span>{profile.name}</span>
-                  <span className="flex items-center gap-3">
-                    {profile.is_default && (
-                      <span className="text-xs text-brand">По умолчанию</span>
-                    )}
-                    <ChevronRight
-                      size={17}
-                      className="text-text-tertiary transition-transform group-hover:translate-x-0.5 group-hover:text-brand"
-                    />
-                  </span>
-                </div>
-                <p className="mt-1 text-xs text-text-secondary">
-                  {profile.description ||
-                    `${profile.settings.filter((item) => item.enabled).length} активных правил`}
-                </p>
-                <p className="mt-2 text-xs font-bold text-brand">
-                  Посмотреть используемые правила
-                </p>
-              </button>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {openedProfile && (
+      {openedRuleSet && (
         <div
           className="fixed inset-0 z-50 flex justify-end bg-slate-950/35"
           role="presentation"
           onMouseDown={(event) => {
-            if (event.currentTarget === event.target) setOpenedProfile(null);
+            if (event.currentTarget === event.target) setOpenedRuleSet(null);
           }}
         >
           <aside
@@ -397,15 +436,15 @@ export const ReferenceDataPage: React.FC = () => {
                     id="rule-profile-title"
                     className="text-2xl font-black text-text-primary"
                   >
-                    {openedProfile.name}
+                    {openedRuleSet.title}
                   </h2>
                   <p className="mt-1 text-sm text-text-secondary">
-                    {openedProfile.description || "Описание профиля не указано"}
+                    {openedRuleSet.description}
                   </p>
                 </div>
                 <button
                   type="button"
-                  onClick={() => setOpenedProfile(null)}
+                  onClick={() => setOpenedRuleSet(null)}
                   aria-label="Закрыть описание профиля"
                   className="rounded-xl border border-border-light p-2 text-text-secondary hover:bg-bg-base hover:text-text-primary"
                 >
@@ -440,10 +479,13 @@ export const ReferenceDataPage: React.FC = () => {
                   </div>
                   <div className="col-span-2 rounded-xl bg-blue-50 px-4 py-3 sm:col-span-1">
                     <div className="flex items-center gap-2 font-black text-brand">
-                      <SlidersHorizontal size={18} /> Просмотр
+                      <SlidersHorizontal size={18} />
+                      {openedRuleSet.profile ? "Профиль" : "Текущая версия"}
                     </div>
                     <div className="mt-1 text-xs font-bold text-blue-700/75">
-                      Настройка профилей будет добавлена позже
+                      {openedRuleSet.profile
+                        ? "Показаны настройки сохранённого профиля"
+                        : "Показаны фактически подключённые правила"}
                     </div>
                   </div>
                 </div>

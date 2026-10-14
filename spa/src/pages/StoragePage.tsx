@@ -15,16 +15,19 @@ import { API_BASE_URL, apiFetch, openDownload } from "../api/apiConfig";
 
 type FolderName =
   | "Учебные планы и потоки"
-  | "Нагрузка и аудитории"
+  | "Аудитории"
   | "Доступность преподавателей";
 
 interface FileItem {
   id: number;
   name: string;
   size: string;
+  fileType: ImportFileType;
   status: string;
   date: string;
 }
+
+type ImportFileType = "streams" | "rooms";
 
 const folders: Array<{
   title: FolderName;
@@ -41,11 +44,11 @@ const folders: Array<{
     note: "Импорт Excel и CSV",
   },
   {
-    title: "Нагрузка и аудитории",
-    description: "Данные для сверки учебной нагрузки и размещения занятий.",
+    title: "Аудитории",
+    description: "Помещения, вместимость и типы занятий для размещения пар.",
     icon: FolderOpen,
     accent: "slate",
-    note: "Единый каталог данных",
+    note: "Импорт справочника помещений",
   },
   {
     title: "Доступность преподавателей",
@@ -112,10 +115,11 @@ const DragDropZone: React.FC<{
   );
 };
 
-const FileListItem: React.FC<{ file: FileItem; onRemove: () => void }> = ({
-  file,
-  onRemove,
-}) => (
+const FileListItem: React.FC<{
+  file: FileItem;
+  onDownload: () => void;
+  onRemove: () => void;
+}> = ({ file, onDownload, onRemove }) => (
   <div className="import-file-row">
     <div className="import-file-row__icon">
       <FileText size={19} />
@@ -132,6 +136,15 @@ const FileListItem: React.FC<{ file: FileItem; onRemove: () => void }> = ({
     <span className="status-badge status-badge--success">
       <CheckCircle2 size={13} /> Загружен
     </span>
+    <button
+      type="button"
+      onClick={onDownload}
+      className="button-icon import-file-row__download"
+      title="Скачать файл"
+      aria-label={`Скачать ${file.name}`}
+    >
+      <Download size={16} />
+    </button>
     <button
       type="button"
       onClick={onRemove}
@@ -152,10 +165,10 @@ export const StoragePage: React.FC = () => {
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [files, setFiles] = useState<FileItem[]>([]);
 
-  const fetchHistory = useCallback(async () => {
+  const fetchHistory = useCallback(async (fileType: ImportFileType) => {
     try {
       const response = await apiFetch(
-        `${API_BASE_URL}/api/v1/scheduler/import/history`,
+        `${API_BASE_URL}/api/v1/scheduler/import/history?file_type=${fileType}`,
       );
       if (!response.ok) return;
       const data = await response.json();
@@ -164,12 +177,13 @@ export const StoragePage: React.FC = () => {
           (item: {
             id: number;
             filename: string;
-            file_type: string;
+            file_type: ImportFileType;
             created_date: string;
           }) => ({
             id: item.id,
             name: item.filename,
-            size: item.file_type,
+            size: item.file_type === "rooms" ? "Аудитории" : "Потоки",
+            fileType: item.file_type,
             status: "ready",
             date: item.created_date,
           }),
@@ -189,9 +203,12 @@ export const StoragePage: React.FC = () => {
       const formData = new FormData();
       formData.append("file", file);
       const isTeacherImport = selectedFolder === "Доступность преподавателей";
+      const isRoomImport = selectedFolder === "Аудитории";
       const endpoint = isTeacherImport
         ? `${API_BASE_URL}/api/v1/scheduler/teachers/import`
-        : `${API_BASE_URL}/api/v1/scheduler/import/streams`;
+        : isRoomImport
+          ? `${API_BASE_URL}/api/v1/reference/rooms/import`
+          : `${API_BASE_URL}/api/v1/scheduler/import/streams`;
 
       try {
         const response = await apiFetch(endpoint, {
@@ -206,9 +223,13 @@ export const StoragePage: React.FC = () => {
         setSuccessMsg(
           isTeacherImport
             ? `Доступность обновлена: преподавателей — ${payload.updated_teachers}.`
-            : `Файл загружен: потоков — ${payload.streams_added}, групп — ${payload.groups_added}.`,
+            : isRoomImport
+              ? `Аудитории загружены: распознано — ${payload.rooms_found}, добавлено — ${payload.rooms_created}, обновлено — ${payload.rooms_updated}.`
+              : `Файл загружен: потоков — ${payload.streams_added}, групп — ${payload.groups_added}.`,
         );
-        if (!isTeacherImport) await fetchHistory();
+        if (!isTeacherImport) {
+          await fetchHistory(isRoomImport ? "rooms" : "streams");
+        }
       } catch (requestError) {
         setError(
           requestError instanceof Error
@@ -223,19 +244,28 @@ export const StoragePage: React.FC = () => {
   );
 
   useEffect(() => {
-    if (selectedFolder) void fetchHistory();
+    if (selectedFolder === "Учебные планы и потоки") {
+      void fetchHistory("streams");
+    } else if (selectedFolder === "Аудитории") {
+      void fetchHistory("rooms");
+    } else {
+      setFiles([]);
+    }
   }, [fetchHistory, selectedFolder]);
 
-  const removeFile = async (index: number) => {
-    const file = files[index];
+  const removeFile = async (file: FileItem) => {
     try {
       const response = await apiFetch(
         `${API_BASE_URL}/api/v1/scheduler/import/history/${file.id}`,
         { method: "DELETE" },
       );
       if (!response.ok) return;
-      setSuccessMsg("Файл и связанные данные удалены.");
-      await fetchHistory();
+      setSuccessMsg(
+        file.fileType === "streams"
+          ? "Файл и связанные данные удалены."
+          : "Файл удалён из истории импорта.",
+      );
+      await fetchHistory(file.fileType);
     } catch (requestError) {
       console.error(requestError);
     }
@@ -294,6 +324,8 @@ export const StoragePage: React.FC = () => {
   }
 
   const isTeacherFolder = selectedFolder === "Доступность преподавателей";
+  const isRoomFolder = selectedFolder === "Аудитории";
+  const isSingleImportFolder = isTeacherFolder;
   return (
     <div className="enterprise-page animate-fade-in">
       <section className="enterprise-page__header">
@@ -321,9 +353,23 @@ export const StoragePage: React.FC = () => {
       {successMsg && <div className="notice notice--success">{successMsg}</div>}
 
       <div
-        className={`import-workspace ${isTeacherFolder ? "import-workspace--single" : ""}`}
+        className={`import-workspace ${isSingleImportFolder ? "import-workspace--single" : ""}`}
       >
         <div className="app-panel import-workspace__upload">
+          {isRoomFolder && (
+            <div className="availability-note availability-note--rooms">
+              <div className="availability-note__icon">
+                <FolderOpen size={20} />
+              </div>
+              <div>
+                <h3>Импорт аудиторий</h3>
+                <p>
+                  Файл должен содержать название аудитории, вместимость и, при
+                  наличии, тип учебного помещения.
+                </p>
+              </div>
+            </div>
+          )}
           {isTeacherFolder && (
             <div className="availability-note">
               <div className="availability-note__icon">
@@ -352,7 +398,7 @@ export const StoragePage: React.FC = () => {
           />
         </div>
 
-        {!isTeacherFolder && (
+        {!isSingleImportFolder && (
           <section className="app-panel import-history">
             <div className="import-history__header">
               <div>
@@ -364,11 +410,16 @@ export const StoragePage: React.FC = () => {
               </span>
             </div>
             <div className="import-history__list">
-              {files.map((file, index) => (
+              {files.map((file) => (
                 <FileListItem
                   key={file.id}
                   file={file}
-                  onRemove={() => void removeFile(index)}
+                  onDownload={() =>
+                    openDownload(
+                      `${API_BASE_URL}/api/v1/scheduler/import/history/${file.id}/download`,
+                    )
+                  }
+                  onRemove={() => void removeFile(file)}
                 />
               ))}
               {files.length === 0 && (
