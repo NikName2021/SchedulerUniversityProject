@@ -20,10 +20,11 @@ import {
   PAIR_TIMES,
 } from "../store/useAppStore";
 import type { TimeInterval } from "../store/useAppStore";
+import { getDayRestrictionKeys } from "../utils/dayRestrictions";
 
 const TIMES = PAIR_TIMES.map((pair) => pair.label);
 
-const WEEK_DAYS = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"];
+const WEEK_DAYS = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ"];
 const MONTHS = [
   "Январь",
   "Февраль",
@@ -63,8 +64,7 @@ const getStartOfWeek = (date: Date) => {
 
 const getDaysOfWeek = (startDate: Date) => {
   const days = [];
-  for (let i = 0; i < 7; i++) {
-    // Mon - Sun
+  for (let i = 0; i < WEEK_DAYS.length; i++) {
     const d = new Date(startDate);
     d.setDate(startDate.getDate() + i);
     days.push(d);
@@ -95,6 +95,7 @@ export const CalendarPage: React.FC = () => {
     selectedTeacherId,
     setSelectedTeacherId,
     toggleRestriction,
+    toggleDayRestriction,
     setRestrictionMode,
     saveTeacherRestrictions,
     addInterval,
@@ -259,8 +260,8 @@ export const CalendarPage: React.FC = () => {
             Доступность преподавателей
           </h1>
           <p className="text-text-secondary mt-1 text-sm">
-            Отметьте окна (красным), когда преподаватель не может проводить
-            занятия.
+            Отмечайте отдельные пары или нажмите «Весь день» под датой.
+            Изменения сохраняются автоматически.
           </p>
         </div>
       </header>
@@ -750,6 +751,28 @@ export const CalendarPage: React.FC = () => {
 
                   {/* Days Header */}
                   {weekDays.map((dateObj, idx) => {
+                    const dateStr = formatDateFull(dateObj);
+                    const type =
+                      editMode === "recurring" ? "recurring" : "specific";
+                    const wholeDaySelected = getDayRestrictionKeys(
+                      dateStr,
+                      type,
+                    ).every((key) =>
+                      selectedTeacher.restrictions[type].includes(key),
+                    );
+                    const isWhitelist =
+                      selectedTeacher.restrictions.mode === "whitelist";
+                    const dayAction = wholeDaySelected
+                      ? isWhitelist
+                        ? "Снять допуск"
+                        : "Снять блок"
+                      : isWhitelist
+                        ? "Разрешить весь день"
+                        : "Заблокировать весь день";
+                    const dayLabel =
+                      type === "recurring"
+                        ? `${WEEK_DAYS_FULL[dateObj.getDay()]} (еженедельно)`
+                        : dateStr;
                     const isToday =
                       formatDateFull(dateObj) === formatDateFull(new Date());
                     return (
@@ -791,6 +814,36 @@ export const CalendarPage: React.FC = () => {
                         >
                           {dateObj.getDate()} {MONTHS_SHORT[dateObj.getMonth()]}
                         </div>
+                        <button
+                          type="button"
+                          aria-label={`${dayAction}: ${dayLabel}`}
+                          aria-pressed={wholeDaySelected}
+                          title={`${dayAction}: ${dayLabel}. Применяется к текущему режиму; остальные ограничения сохраняются.`}
+                          onClick={() => {
+                            toggleDayRestriction(
+                              selectedTeacher.id,
+                              type,
+                              dateStr,
+                            );
+                            void saveTeacherRestrictions(selectedTeacher.id);
+                          }}
+                          className="mt-2 w-full rounded-md px-1 py-1.5 text-xs font-semibold cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+                          style={{
+                            backgroundColor: wholeDaySelected
+                              ? isWhitelist
+                                ? "#dcfce7"
+                                : "#fee2e2"
+                              : "white",
+                            color: wholeDaySelected
+                              ? isWhitelist
+                                ? "#15803d"
+                                : "#b91c1c"
+                              : "var(--text-secondary)",
+                            border: "1px solid var(--border-light)",
+                          }}
+                        >
+                          {wholeDaySelected ? dayAction : "Весь день"}
+                        </button>
                       </div>
                     );
                   })}
