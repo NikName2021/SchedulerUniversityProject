@@ -1566,28 +1566,6 @@ textarea:focus-visible {
   background: #eff6ff !important;
   color: #1d4ed8 !important;
 }
-.generation-workspace .calc-priorities-panel > div:nth-child(2) {
-  max-height: 420px !important;
-  gap: 8px !important;
-  padding-right: 0 !important;
-}
-.generation-workspace .calc-priorities-panel > div:nth-child(2) > div {
-  border-radius: 6px !important;
-}
-.generation-workspace
-  .calc-priorities-panel
-  > div:nth-child(2)
-  > div
-  > div:first-child {
-  padding: 9px 11px !important;
-  background: #f8fafc !important;
-}
-.generation-workspace
-  .calc-priorities-panel
-  [style*="background-color: #f3f4f6"] {
-  border-radius: 5px !important;
-  background: #eef2f6 !important;
-}
 .generation-workspace .calc-preview-panel {
   overflow: hidden;
 }

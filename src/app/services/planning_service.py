@@ -11,6 +11,7 @@ from database import (
     ScheduleEntry,
     Stream,
     StreamGroup,
+    SubjectScheduleRule,
     WeeklyLessonDemand,
 )
 from schemas.planning import (
@@ -24,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from services.availability_service import build_availability_context
+from services.subject_rule_service import applies_to_week, subject_activity_code
 
 
 class PlanningService:
@@ -181,6 +183,11 @@ class PlanningService:
         if not streams:
             raise ValueError("No active streams found for selected groups and types")
 
+        await db.execute(
+            select(AcademicPeriod.id)
+            .where(AcademicPeriod.id == period_id)
+            .with_for_update()
+        )
         week_ids = [week.id for week in weeks]
         stream_ids = [stream.id for stream in streams]
         existing_result = await db.execute(
@@ -189,9 +196,40 @@ class PlanningService:
                 WeeklyLessonDemand.stream_id.in_(stream_ids),
             )
         )
+        existing_demands = list(existing_result.scalars())
         priorities: dict[int, int] = {}
-        for demand in existing_result.scalars():
+        for demand in existing_demands:
             priorities.setdefault(demand.stream_id, demand.priority)
+        subject_rules = list(
+            (
+                await db.execute(
+                    select(SubjectScheduleRule).where(
+                        SubjectScheduleRule.group_name.in_(groups),
+                        SubjectScheduleRule.starts_on <= period.ends_on,
+                        SubjectScheduleRule.ends_on >= period.starts_on,
+                    )
+                )
+            ).scalars()
+        )
+        rule_weeks: dict[tuple[str, str], set[int]] = defaultdict(set)
+        for rule in subject_rules:
+            rule_weeks[(rule.group_name, rule.subject)].update(
+                week.id
+                for week in weeks
+                if applies_to_week(rule, week.id, week.starts_on, week.ends_on)
+            )
+        fixed_demand_keys = {
+            (stream.id, week_id)
+            for stream in streams
+            if subject_activity_code(stream)
+            for group in stream.groups
+            for week_id in rule_weeks.get((group.group_name, stream.event_name), ())
+        }
+        fixed_demands = {
+            (demand.stream_id, demand.week_id): demand.lessons_count
+            for demand in existing_demands
+            if (demand.stream_id, demand.week_id) in fixed_demand_keys
+        }
 
         published_result = await db.execute(
             select(
@@ -281,16 +319,26 @@ class PlanningService:
                 group_capacity[key] = max(0, group_capacity[key] - 1)
 
         allocations: dict[tuple[int, int], int] = {
-            (stream.id, week.id): published_counts[(stream.id, week.id)]
+            (stream.id, week.id): max(
+                published_counts[(stream.id, week.id)],
+                fixed_demands.get((stream.id, week.id), 0),
+            )
             for stream in streams
             for week in weeks
         }
         week_loads: dict[int, int] = {
-            week.id: sum(
-                published_counts[(stream.id, week.id)] for stream in streams
-            )
+            week.id: sum(allocations[(stream.id, week.id)] for stream in streams)
             for week in weeks
         }
+        for (stream_id, week_id), count in fixed_demands.items():
+            remaining = max(0, count - published_counts[(stream_id, week_id)])
+            stream = streams_by_id[stream_id]
+            if stream.teacher:
+                key = (stream.teacher.name, week_id)
+                teacher_capacity[key] = max(0, teacher_capacity[key] - remaining)
+            for group_name in stream_groups[stream_id]:
+                key = (group_name, week_id)
+                group_capacity[key] = max(0, group_capacity[key] - remaining)
         week_slot_counts = {
             week.id: len(week_dates[week.id]) * len(GENERATION_LESSONS)
             for week in weeks
@@ -302,6 +350,8 @@ class PlanningService:
             ) and not (stream.ends_on is not None and stream.ends_on < week.starts_on)
 
         def has_capacity(stream: Stream, week: PlanningWeek) -> bool:
+            if (stream.id, week.id) in fixed_demand_keys:
+                return False
             if not week_dates[week.id] or not week_overlaps_stream(stream, week):
                 return False
             if stream.teacher and teacher_capacity[(stream.teacher.name, week.id)] <= 0:
@@ -324,15 +374,13 @@ class PlanningService:
         )
         for stream in streams:
             planned = max(0, int(stream.lessons_count or 0))
-            published = sum(
-                published_counts[(stream.id, week.id)] for week in weeks
-            )
-            if published > planned:
+            reserved = sum(allocations[(stream.id, week.id)] for week in weeks)
+            if reserved > planned:
                 errors.append(
-                    f"{stream.event_name}: published {published}, planned {planned}"
+                    f"{stream.event_name}: закреплено {reserved}, в плане {planned}"
                 )
                 continue
-            for _ in range(planned - published):
+            for _ in range(planned - reserved):
                 candidates = [week for week in weeks if has_capacity(stream, week)]
                 if not candidates:
                     missing = planned - sum(
@@ -347,10 +395,22 @@ class PlanningService:
                     # will create explicit unassigned entries for lessons that
                     # it cannot place into real slots.
                     fallback_weeks = [
-                        week for week in weeks if week_overlaps_stream(stream, week)
+                        week
+                        for week in weeks
+                        if (stream.id, week.id) not in fixed_demand_keys
+                        and week_overlaps_stream(stream, week)
                     ]
                     if not fallback_weeks:
-                        fallback_weeks = weeks
+                        fallback_weeks = [
+                            week
+                            for week in weeks
+                            if (stream.id, week.id) not in fixed_demand_keys
+                        ]
+                    if not fallback_weeks:
+                        warnings.append(
+                            f"{stream.event_name}: правила предмета закрепили нагрузку всех недель. Осталось распределить пар: {missing}."
+                        )
+                        break
                     for _ in range(missing):
                         week = min(
                             fallback_weeks,
@@ -418,7 +478,9 @@ class PlanningService:
                     streams_count=sum(count > 0 for count in counts),
                 )
             )
-        planned_lessons = sum(max(0, int(stream.lessons_count or 0)) for stream in streams)
+        planned_lessons = sum(
+            max(0, int(stream.lessons_count or 0)) for stream in streams
+        )
         published_lessons = len(published_slots)
         return SemesterDemandDistributionResult(
             period_id=period.id,

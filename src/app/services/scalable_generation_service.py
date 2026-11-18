@@ -48,6 +48,7 @@ from services.group_relation_service import (
     parse_group_label,
 )
 from services.scalable_scheduler import assign_rooms_matching, build_conflict_components
+from services.subject_rule_service import subject_activity_code
 
 logger = logging.getLogger(__name__)
 
@@ -213,6 +214,10 @@ class ScalableGenerationService:
                     demand.stream_id: demand.priority for demand in demands
                 }
 
+            subject_rule_counts = settings.get("subject_rule_counts", {})
+            if planning_week_id is not None:
+                weekly_counts.update({int(stream_id): count for stream_id, count in subject_rule_counts.items()})
+
             query = (
                 select(Stream)
                 .join(Stream.groups)
@@ -299,9 +304,7 @@ class ScalableGenerationService:
                         "id": room.id,
                         "capacity": room.capacity,
                         "type": room.room_type,
-                        "features": [
-                            link.feature.code for link in room.feature_links
-                        ],
+                        "features": [link.feature.code for link in room.feature_links],
                     }
                     for room in db_rooms
                 }
@@ -397,11 +400,7 @@ class ScalableGenerationService:
                     occupied_groups[entry.group_name].append(slot)
                     if entry.teacher:
                         occupied_teachers[entry.teacher.name].append(slot)
-                    if (
-                        ROOM_FUND_ENABLED
-                        and entry.room_id
-                        and entry.room_id in rooms
-                    ):
+                    if ROOM_FUND_ENABLED and entry.room_id and entry.room_id in rooms:
                         occupied_rooms[entry.room_id].append(slot)
 
             priorities = settings.get("priorities", {})
@@ -449,6 +448,8 @@ class ScalableGenerationService:
                         )
 
                 count = weekly_counts.get(stream.id, stream.lessons_count or 0)
+                if planning_week_id is None:
+                    count = subject_rule_counts.get(str(stream.id), count)
                 if count <= 0:
                     continue
                 teacher_name = stream.teacher.name if stream.teacher else None
@@ -462,6 +463,9 @@ class ScalableGenerationService:
 
                 base_event = {
                     "stream_id": stream.id,
+                    "rule_subject": stream.event_name
+                    if subject_activity_code(stream)
+                    else None,
                     "subject": (
                         stream.discipline.full_name
                         if stream.discipline
@@ -590,9 +594,7 @@ class ScalableGenerationService:
                 await session.commit()
                 return None
             max_component_seconds = int(
-                settings.get(
-                    "max_component_seconds", DEFAULT_COMPONENT_TIME_SECONDS
-                )
+                settings.get("max_component_seconds", DEFAULT_COMPONENT_TIME_SECONDS)
             )
             max_component_seconds = max(5, min(max_component_seconds, MAX_TIME_SECONDS))
             solver_workers = max(
@@ -612,6 +614,7 @@ class ScalableGenerationService:
                 "preferred": availability["preferred"],
                 "discouraged": availability["discouraged"],
                 "rule_settings": rule_settings,
+                "subject_rules": settings.get("subject_rules", []),
                 "group_sizes": group_sizes,
                 "group_lesson_loads": dict(group_lesson_loads),
                 "max_time_seconds": max_component_seconds,

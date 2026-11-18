@@ -398,6 +398,24 @@ class WeeklyLessonDemand(WorkspaceOwned, DeclBase):
     stream = relationship("Stream")
 
 
+class SubjectScheduleRule(WorkspaceOwned, DeclBase):
+    __tablename__ = "subject_schedule_rule"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "group_name", "subject", "scope_key", name="uq_subject_rule_scope"),
+        CheckConstraint("ends_on >= starts_on", name="ck_subject_rule_dates"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    group_name = Column(String(255), nullable=False)
+    subject = Column(String(500), nullable=False)
+    scope_key = Column(String(64), nullable=False)
+    starts_on = Column(Date, nullable=False)
+    ends_on = Column(Date, nullable=False)
+    week_ids_json = Column(Text, nullable=False, default="[]")
+    config_json = Column(Text, nullable=False)
+    updated_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
+
+
 class GenerationTask(WorkspaceOwned, DeclBase):
     __tablename__ = "generation_task"
     __table_args__ = (
