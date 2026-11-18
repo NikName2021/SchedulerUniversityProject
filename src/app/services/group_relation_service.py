@@ -3,7 +3,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-SUBGROUP_SUFFIX = re.compile(r"\s*\(([LlЛл])\s*([12])\)\s*$")
+SUBGROUP_SUFFIX = re.compile(
+    r"\s*\((?:[LlЛл]\s*([1-9][0-9]*)|([AaАаBbБбВвCcСс]))\)\s*$"
+)
+LETTER_SUBGROUPS = (
+    dict.fromkeys("aа", "L1") | dict.fromkeys("bбв", "L2") | dict.fromkeys("cс", "L3")
+)
 GROUP_SEPARATOR = re.compile(r"\s*[,;|+]\s*")
 
 
@@ -27,7 +32,8 @@ def parse_group_label(label: str) -> ParsedGroupLabel:
     subgroup: str | None = None
     match = SUBGROUP_SUFFIX.search(normalized)
     if match:
-        subgroup = f"L{match.group(2)}"
+        number, letter = match.groups()
+        subgroup = f"L{number}" if number else LETTER_SUBGROUPS[letter.lower()]
         normalized_without_suffix = normalized[: match.start()].strip()
     else:
         normalized_without_suffix = normalized
@@ -118,8 +124,7 @@ def expand_group_selection(
     joint_groups = sorted(
         label
         for label in selected_labels
-        if parsed_available[label].is_joint
-        and parsed_available[label].subgroup is None
+        if parsed_available[label].is_joint and parsed_available[label].subgroup is None
     )
     subgroup_groups = sorted(
         label for label in selected_labels if parsed_available[label].subgroup

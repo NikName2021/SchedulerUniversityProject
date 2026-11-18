@@ -25,6 +25,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from services.availability_service import build_availability_context
+from services.group_relation_service import (
+    collect_known_subgroups,
+    group_resource_keys,
+    parse_group_label,
+)
 from services.subject_rule_service import applies_to_week, subject_activity_code
 
 
@@ -174,7 +179,11 @@ class PlanningService:
                 StreamGroup.group_name.in_(groups),
                 Stream.is_ignored.is_(False),
             )
-            .options(selectinload(Stream.groups), selectinload(Stream.teacher))
+            .options(
+                selectinload(Stream.groups),
+                selectinload(Stream.teacher),
+                selectinload(Stream.activity_type),
+            )
         )
         if enabled_types:
             stream_query = stream_query.where(Stream.stream_type.in_(enabled_types))
@@ -237,6 +246,7 @@ class PlanningService:
                 ScheduleEntry.planning_week_id,
                 ScheduleEntry.date,
                 ScheduleEntry.lesson_number,
+                ScheduleEntry.group_name,
             )
             .join(GenerationTask, GenerationTask.id == ScheduleEntry.task_id)
             .where(
@@ -247,10 +257,13 @@ class PlanningService:
                 ScheduleEntry.lesson_number.is_not(None),
             )
         )
+        published_entries = [
+            (stream_id, week_id, scheduled_at.date(), lesson, group_name)
+            for stream_id, week_id, scheduled_at, lesson, group_name in published_result
+        ]
         published_slots = {
-            (int(stream_id), int(week_id), scheduled_at.date(), int(lesson))
-            for stream_id, week_id, scheduled_at, lesson in published_result
-            if stream_id is not None and week_id is not None
+            (stream_id, week_id, scheduled_on, lesson)
+            for stream_id, week_id, scheduled_on, lesson, _group in published_entries
         }
         published_counts: dict[tuple[int, int], int] = defaultdict(int)
         for stream_id, week_id, _scheduled_on, _lesson in published_slots:
@@ -259,13 +272,15 @@ class PlanningService:
         availability = await build_availability_context(
             db, period.starts_on.isoformat(), period.ends_on.isoformat()
         )
-        unavailable = availability["unavailable"]
-
-        def blocked_slots(category: str, resource: str) -> set[tuple[str, int]]:
-            return {
-                (str(day), int(lesson))
-                for day, lesson in unavailable.get(category, {}).get(resource, [])
+        unavailable = {
+            category: {
+                resource: {(day, lesson) for day, lesson in slots}
+                for resource, slots in resources.items()
             }
+            for category, resources in availability["unavailable"].items()
+        }
+        blocked_teachers = unavailable["teacher"]
+        global_blocks = unavailable["global"].get("*", set())
 
         week_dates: dict[int, list[date]] = {}
         for week in weeks:
@@ -278,6 +293,15 @@ class PlanningService:
             week_dates[week.id] = dates
 
         selected_groups = set(groups)
+        blocked_groups = {
+            label: set().union(
+                *(
+                    unavailable["group"].get(name, set())
+                    for name in (label, *parse_group_label(label).base_groups)
+                )
+            )
+            for label in selected_groups
+        }
         teacher_names = {
             stream.teacher.name for stream in streams if stream.teacher is not None
         }
@@ -291,32 +315,69 @@ class PlanningService:
             )
             for stream in streams
         }
+        streams_by_id = {stream.id: stream for stream in streams}
+        known_subgroups = collect_known_subgroups(
+            selected_groups | {group_name for *_, group_name in published_entries}
+        )
+        occupied_teacher_slots: dict[str, set[tuple[str, int]]] = defaultdict(set)
+        occupied_group_slots: dict[str, set[tuple[str, int]]] = defaultdict(set)
+        for stream_id, _week_id, scheduled_on, lesson, group_name in published_entries:
+            stream = streams_by_id[stream_id]
+            slot = (scheduled_on.isoformat(), lesson)
+            if stream.teacher:
+                occupied_teacher_slots[stream.teacher.name].add(slot)
+            for resource in group_resource_keys(group_name, known_subgroups):
+                occupied_group_slots[resource].add(slot)
+
+        for name, blocked in blocked_groups.items():
+            for resource in group_resource_keys(name, known_subgroups):
+                blocked.update(occupied_group_slots.get(resource, ()))
+
         teacher_capacity: dict[tuple[str, int], int] = {}
         group_capacity: dict[tuple[str, int], int] = {}
+        stream_capacity: dict[tuple[int, int], int] = {}
+        shared_streams = {
+            stream.id
+            for stream in streams
+            if subject_activity_code(stream) == "lec"
+            or (stream.activity_type and stream.activity_type.is_shared_for_groups)
+        }
         for week in weeks:
             slots = {
                 (current.isoformat(), lesson)
                 for current in week_dates[week.id]
                 for lesson in GENERATION_LESSONS
+            } - global_blocks
+            teacher_slots = {
+                name: slots.difference(
+                    blocked_teachers.get(name, ()), occupied_teacher_slots[name]
+                )
+                for name in teacher_names
+            }
+            group_slots = {
+                name: slots - blocked_groups[name] for name in selected_groups
             }
             for teacher_name in teacher_names:
                 teacher_capacity[(teacher_name, week.id)] = len(
-                    slots - blocked_slots("teacher", teacher_name)
+                    teacher_slots[teacher_name]
                 )
             for group_name in selected_groups:
-                group_capacity[(group_name, week.id)] = len(
-                    slots - blocked_slots("group", group_name)
+                group_capacity[(group_name, week.id)] = len(group_slots[group_name])
+            for stream in streams:
+                available = (
+                    teacher_slots[stream.teacher.name] if stream.teacher else slots
                 )
-
-        streams_by_id = {stream.id: stream for stream in streams}
-        for stream_id, week_id, _scheduled_on, _lesson in published_slots:
-            stream = streams_by_id[stream_id]
-            if stream.teacher:
-                key = (stream.teacher.name, week_id)
-                teacher_capacity[key] = max(0, teacher_capacity[key] - 1)
-            for group_name in stream_groups[stream_id]:
-                key = (group_name, week_id)
-                group_capacity[key] = max(0, group_capacity[key] - 1)
+                audience_slots = [
+                    group_slots[name] for name in stream_groups[stream.id]
+                ]
+                if stream.id in shared_streams:
+                    capacity = len(available.intersection(*audience_slots))
+                else:
+                    capacity = min(
+                        (len(available & audience) for audience in audience_slots),
+                        default=len(available),
+                    )
+                stream_capacity[(stream.id, week.id)] = capacity
 
         allocations: dict[tuple[int, int], int] = {
             (stream.id, week.id): max(
@@ -350,7 +411,11 @@ class PlanningService:
             ) and not (stream.ends_on is not None and stream.ends_on < week.starts_on)
 
         def has_capacity(stream: Stream, week: PlanningWeek) -> bool:
-            if (stream.id, week.id) in fixed_demand_keys:
+            key = (stream.id, week.id)
+            if (
+                key in fixed_demand_keys
+                or allocations[key] - published_counts[key] >= stream_capacity[key]
+            ):
                 return False
             if not week_dates[week.id] or not week_overlaps_stream(stream, week):
                 return False

@@ -1,9 +1,11 @@
 import datetime
+import json
+import re
 from collections import defaultdict
 from typing import Any
 
 from core.constants import ALL_LESSONS, STUDY_DAYS
-from database import AvailabilityRule
+from database import AvailabilityRule, Teacher
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -44,6 +46,43 @@ def _rule_slots(rule: AvailabilityRule, dates: list[datetime.date]) -> list[list
                 [current.isoformat(), lesson]
                 for lesson in range(rule.lesson_start, rule.lesson_end + 1)
             )
+    return result
+
+
+def _legacy_teacher_unavailable(
+    raw_restrictions: str, dates: list[datetime.date]
+) -> list[list[Any]]:
+    try:
+        restrictions = json.loads(raw_restrictions)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    if isinstance(restrictions, list):
+        restrictions = {"recurring": restrictions}
+    if not isinstance(restrictions, dict):
+        return []
+
+    recurring: set[tuple[int, int]] = set()
+    for value in restrictions.get("recurring") or []:
+        match = re.fullmatch(r"([0-6])[-_:]([1-7])", str(value))
+        if match:
+            recurring.add(((int(match[1]) - 1) % 7, int(match[2])))
+    specific: set[tuple[str, int]] = set()
+    for value in restrictions.get("specific") or []:
+        match = re.fullmatch(r"(\d{4}-\d{2}-\d{2})[-_:]([1-7])", str(value))
+        if match:
+            specific.add((match[1], int(match[2])))
+
+    whitelist = restrictions.get("mode") == "whitelist"
+    result = []
+    for day in dates:
+        date_key = day.isoformat()
+        for lesson in ALL_LESSONS:
+            marked = (day.weekday(), lesson) in recurring or (
+                date_key,
+                lesson,
+            ) in specific
+            if marked != whitelist:
+                result.append([date_key, lesson])
     return result
 
 
@@ -111,6 +150,18 @@ async def build_availability_context(
             [day, lesson] for day, lesson in sorted(all_slots - allowed)
         )
 
+    structured_teacher_ids = {rule.teacher_id for rule in rules if rule.teacher_id}
+    legacy_teachers = await db.execute(
+        select(Teacher.name, Teacher.restrictions_json).where(
+            Teacher.restrictions_json.is_not(None),
+            Teacher.id.not_in(structured_teacher_ids),
+        )
+    )
+    for teacher_name, restrictions in legacy_teachers:
+        blocked = _legacy_teacher_unavailable(restrictions, dates)
+        if blocked:
+            unavailable["teacher"][teacher_name].extend(blocked)
+
     return {
         "unavailable": {
             category: dict(resources) for category, resources in unavailable.items()
@@ -121,7 +172,4 @@ async def build_availability_context(
         "discouraged": {
             category: dict(resources) for category, resources in discouraged.items()
         },
-        "structured_teacher_names": sorted(
-            {rule.teacher.name for rule in rules if rule.teacher is not None}
-        ),
     }

@@ -11,7 +11,6 @@ MAX_TABLE_ROWS = 50_000
 MAX_TABLE_COLUMNS = 200
 MAX_WORKBOOK_FILES = 10_000
 MAX_WORKBOOK_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
-ALTERNATIVE_SUBGROUP_SUFFIX = re.compile(r"\s*\(([AaАаBbБб])\)\s*$")
 
 
 def _validate_xlsx_archive(file_bytes: bytes) -> None:
@@ -167,11 +166,10 @@ def _normalize_stream_label(value: object) -> str | None:
     label = " ".join(str(value).strip().split())
     if not label:
         return None
-    match = ALTERNATIVE_SUBGROUP_SUFFIX.search(label)
-    if not match:
+    parsed = parse_group_label(label)
+    if not parsed.subgroup:
         return label
-    subgroup = "L1" if match.group(1).lower() in {"a", "а"} else "L2"
-    return f"{label[: match.start()].strip()} ({subgroup})"
+    return f"{', '.join(parsed.base_groups)} ({parsed.subgroup})"
 
 
 def parse_streams_content(
@@ -246,14 +244,20 @@ def parse_streams_content(
             label_without_sizes = re.sub(r"\s*\[\d+\]", "", groups_raw).strip()
             parsed_label = parse_group_label(label_without_sizes)
             parsed_stream_label = parse_group_label(stream_label or "")
-            if stream_label and parsed_stream_label.subgroup:
+            subgroup = parsed_stream_label.subgroup or parsed_label.subgroup
+            if subgroup:
+                base_groups = (
+                    list(dict.fromkeys(match.group(1) for match in matches))
+                    or parsed_label.base_groups
+                    or parsed_stream_label.base_groups
+                )
                 groups_parsed = [
                     {
-                        "name": stream_label,
+                        "name": f"{', '.join(base_groups)} ({subgroup})",
                         "size": sum(int(match.group(2)) for match in matches),
                     }
                 ]
-            elif matches and (parsed_label.is_joint or parsed_label.subgroup):
+            elif matches and parsed_label.is_joint:
                 groups_parsed = [
                     {
                         "name": label_without_sizes,

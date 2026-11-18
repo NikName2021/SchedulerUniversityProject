@@ -1,12 +1,23 @@
 const COMPOSITE_GROUP_MARKERS = /[()[\]{},;|+]/u;
-const SUBGROUP_SUFFIX = /\s*\([LlЛл]\s*([12])\)\s*$/u;
+const SUBGROUP_SUFFIX =
+  /\s*\((?:[LlЛл]\s*([1-9][0-9]*)|([AaАаBbБбВвCcСс]))\)\s*$/u;
 const GROUP_SEPARATOR = /\s*[,;|+]\s*/u;
+const LETTER_SUBGROUPS: Readonly<Record<string, string>> = {
+  a: "L1",
+  а: "L1",
+  b: "L2",
+  б: "L2",
+  в: "L2",
+  c: "L3",
+  с: "L3",
+};
 
 export type KnownSubgroups = ReadonlyMap<string, ReadonlySet<string>>;
 
 export function getSubgroupCode(groupName: string): string | null {
   const match = groupName.trim().match(SUBGROUP_SUFFIX);
-  return match ? `L${match[1]}` : null;
+  if (!match) return null;
+  return match[1] ? `L${match[1]}` : LETTER_SUBGROUPS[match[2].toLowerCase()];
 }
 
 export function getBaseGroupNames(groupName: string): string[] {

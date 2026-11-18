@@ -146,9 +146,13 @@ def _event_slot_is_blocked(
     if recurring in teacher_slots or specific in teacher_slots:
         return True
 
-    for group in event.get("base_groups", event["groups"]):
+    for group in set(event["groups"]).union(event.get("base_groups", ())):
         group_slots = unavailable.get("group", {}).get(str(group), set())
         if recurring in group_slots or specific in group_slots:
+            return True
+    occupied_groups = unavailable.get("group_resource", {})
+    for resource in event.get("group_resources", event["groups"]):
+        if specific in occupied_groups.get(resource, ()):
             return True
     return False
 

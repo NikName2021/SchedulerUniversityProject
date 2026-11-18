@@ -435,8 +435,6 @@ async def check_subject_rule(
     }
     if errors:
         return result
-    from services.scalable_generation_service import _teacher_unavailable
-
     availability = await build_availability_context(
         db, payload.start_date.isoformat(), payload.end_date.isoformat()
     )
@@ -445,7 +443,7 @@ async def check_subject_rule(
         base
         for group in payload.groups
         for base in parse_group_label(group).base_groups
-    }
+    } | set(payload.groups)
     unavailable = {
         "teacher": {
             name: slots
@@ -459,16 +457,6 @@ async def check_subject_rule(
         },
         "global": availability["unavailable"]["global"],
     }
-    for stream in streams:
-        if (
-            stream.teacher
-            and stream.teacher.name not in availability["structured_teacher_names"]
-        ):
-            unavailable["teacher"].setdefault(stream.teacher.name, []).extend(
-                _teacher_unavailable(
-                    stream, payload.start_date.isoformat(), payload.end_date.isoformat()
-                )
-            )
     participating = sorted(
         {group.group_name for stream in streams for group in stream.groups}
         & set(payload.groups)

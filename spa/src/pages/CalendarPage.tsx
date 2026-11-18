@@ -172,7 +172,7 @@ export const CalendarPage: React.FC = () => {
   const handleMouseDown = (dateStr: string, slotIdx: number) => {
     if (!selectedTeacherId || !selectedTeacher) return;
 
-    const weekday = new Date(dateStr).getDay();
+    const weekday = new Date(`${dateStr}T00:00:00`).getDay();
     const recurringKey = `${weekday}-${slotIdx + 1}`;
     const specificKey = `${dateStr}-${slotIdx + 1}`;
 
@@ -200,7 +200,7 @@ export const CalendarPage: React.FC = () => {
     )
       return;
 
-    const weekday = new Date(dateStr).getDay();
+    const weekday = new Date(`${dateStr}T00:00:00`).getDay();
     const recurringKey = `${weekday}-${slotIdx + 1}`;
     const specificKey = `${dateStr}-${slotIdx + 1}`;
 

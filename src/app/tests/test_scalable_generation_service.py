@@ -1,6 +1,5 @@
 import datetime
 import json
-from types import SimpleNamespace
 
 import pytest
 import services.scalable_generation_service as scalable_module
@@ -16,11 +15,9 @@ from database import (
     WeeklyLessonDemand,
 )
 from schemas.planning import AcademicPeriodCreate
+from services.availability_service import _legacy_teacher_unavailable
 from services.planning_service import PlanningService
-from services.scalable_generation_service import (
-    ScalableGenerationService,
-    _teacher_unavailable,
-)
+from services.scalable_generation_service import ScalableGenerationService
 from services.scalable_scheduler import solve_event_component
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,19 +25,12 @@ from sqlalchemy.orm import sessionmaker
 
 
 def test_whitelist_specific_date_remains_available() -> None:
-    stream = SimpleNamespace(
-        teacher=SimpleNamespace(
-            restrictions_json=json.dumps(
-                {
-                    "mode": "whitelist",
-                    "recurring": [],
-                    "specific": ["2026-09-07-2"],
-                }
-            )
-        )
+    unavailable = _legacy_teacher_unavailable(
+        json.dumps(
+            {"mode": "whitelist", "recurring": [], "specific": ["2026-09-07-2"]}
+        ),
+        [datetime.date(2026, 9, 7)],
     )
-
-    unavailable = _teacher_unavailable(stream, "2026-09-07", "2026-09-07")
 
     assert ["2026-09-07", 1] in unavailable
     assert ["2026-09-07", 2] not in unavailable
@@ -134,6 +124,7 @@ async def test_scalable_pipeline_saves_parallel_components(
     assert payload is not None
     assert payload["context"]["lessons"][-1] == MAX_LESSON_NUMBER == 6
     assert payload["context"]["immutable_before"] == "2026-09-07"
+
     class DateDuringPlanningPeriod(datetime.date):
         @classmethod
         def today(cls) -> "DateDuringPlanningPeriod":

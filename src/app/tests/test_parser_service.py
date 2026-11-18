@@ -59,3 +59,19 @@ def test_excel_flow_column_keeps_separate_streams_and_subgroups() -> None:
         [{"name": "К1609-25/1 (L1)", "size": 12}],
         [{"name": "К1609-25/1 (L2)", "size": 13}],
     ]
+
+
+def test_language_stream_preserves_three_subgroups_and_their_member_groups() -> None:
+    csv = """Поток;Мероприятие;Вид потока;Преподаватель;Группа
+К0409-26(A);Иностранный язык;П;Первый;К0409-26/1 [4]К0409-26/2 [6]
+К0409-26(В);Иностранный язык;П;Второй;К0409-26/1 [3]К0409-26/2 [5]
+К0409-26(С);Иностранный язык;П;Третий;К0409-26/1 [2]К0409-26/2 [4]
+"""
+
+    streams = parse_streams_content(csv.encode(), "streams.csv")
+
+    assert [stream["groups"] for stream in streams] == [
+        [{"name": "К0409-26/1, К0409-26/2 (L1)", "size": 10}],
+        [{"name": "К0409-26/1, К0409-26/2 (L2)", "size": 8}],
+        [{"name": "К0409-26/1, К0409-26/2 (L3)", "size": 6}],
+    ]
