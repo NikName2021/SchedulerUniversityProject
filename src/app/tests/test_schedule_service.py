@@ -33,9 +33,7 @@ async def test_teacher_availability_import_updates_structured_rules(
         ]
     )
 
-    updated = await ScheduleService.import_teacher_availability(
-        dataframe, db_session
-    )
+    updated = await ScheduleService.import_teacher_availability(dataframe, db_session)
     await db_session.commit()
 
     rules = list((await db_session.execute(select(AvailabilityRule))).scalars())
@@ -112,3 +110,50 @@ async def test_warning_refresh_detects_room_conflicts_without_flagging_shared_st
     assert "Аудитория занята" in (conflicting_entries[1].warning or "")
     assert conflicting_entries[2].warning is None
     assert conflicting_entries[3].warning is None
+
+
+async def test_manual_schedule_accepts_three_language_subgroups_in_one_slot(
+    db_session,
+) -> None:
+    task = GenerationTask(status="success")
+    db_session.add(task)
+    await db_session.flush()
+    slot = datetime.datetime(2026, 9, 8)
+    entries = [
+        ScheduleEntry(
+            task_id=task.id,
+            group_name=group,
+            event_name="Иностранный язык",
+            stream_type="Семинар",
+            room_id=str(101 + index),
+            date=slot,
+            lesson_number=6,
+        )
+        for index, group in enumerate(["А (L1)", "А (В)", "А (С)"])
+    ]
+    db_session.add_all(entries)
+    await db_session.flush()
+
+    assert (
+        await ScheduleService.validate_manual_changes(
+            task.id, {entry.id for entry in entries}, db_session
+        )
+        == []
+    )
+    await ScheduleService.refresh_task_warnings(task.id, db_session)
+    assert not any(entry.warning for entry in entries)
+
+    whole_group = ScheduleEntry(
+        task_id=task.id,
+        group_name="А",
+        event_name="Общая лекция",
+        stream_type="Лекция",
+        date=slot,
+        lesson_number=6,
+    )
+    db_session.add(whole_group)
+    await db_session.flush()
+
+    assert await ScheduleService.validate_manual_changes(
+        task.id, {whole_group.id}, db_session
+    ) == ["Группа А уже занята: Иностранный язык"]

@@ -1,6 +1,8 @@
 import datetime
+import json
 
 import pytest
+import services.scalable_generation_service as scalable_module
 from database import (
     AvailabilityRule,
     FileType,
@@ -15,8 +17,110 @@ from database import (
 )
 from schemas.planning import AcademicPeriodCreate, WeeklyDemandItem
 from services.planning_service import PlanningService
+from services.scalable_generation_service import ScalableGenerationService
+from services.scalable_scheduler import solve_event_component
 from services.schedule_service import ScheduleService
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import sessionmaker
+
+
+@pytest.mark.parametrize("structured", [True, False])
+async def test_distribution_uses_tuesdays_with_a_common_sixth_lesson(
+    db_session, monkeypatch, structured
+) -> None:
+    period = await PlanningService.create_period(
+        AcademicPeriodCreate(
+            name="Три недели",
+            starts_on=datetime.date(2026, 9, 7),
+            ends_on=datetime.date(2026, 9, 27),
+        ),
+        db_session,
+    )
+    batch = ImportBatch(filename="streams.xlsx", file_type=FileType.STREAMS)
+    teacher = Teacher(
+        name="Преподаватель",
+        restrictions_json=json.dumps({"mode": "whitelist", "recurring": ["2-6"]}),
+    )
+    group = StudentGroup(name="А-101", student_count=20)
+    db_session.add_all([batch, teacher, group])
+    await db_session.flush()
+    if structured:
+        db_session.add(
+            AvailabilityRule(
+                teacher_id=teacher.id,
+                rule_kind="available",
+                recurrence="weekly",
+                weekday=1,
+                lesson_start=6,
+                lesson_end=6,
+                is_hard=True,
+            )
+        )
+    stream = Stream(
+        import_batch_id=batch.id,
+        teacher_id=teacher.id,
+        event_name="Математика",
+        stream_type="Семинар",
+        lessons_count=2,
+    )
+    db_session.add(stream)
+    await db_session.flush()
+    db_session.add_all(
+        [
+            StreamGroup(stream_id=stream.id, group_name=group.name, group_size=20),
+            AvailabilityRule(
+                student_group_id=group.id,
+                rule_kind="unavailable",
+                recurrence="specific",
+                specific_date=datetime.date(2026, 9, 8),
+                lesson_start=6,
+                lesson_end=6,
+                is_hard=True,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    result = await PlanningService.distribute_semester_demands(
+        period.id, [group.name], [stream.stream_type], set(), db_session
+    )
+
+    assert result.warnings == []
+    assert [week.lessons_count for week in result.weeks] == [0, 1, 1]
+
+    monkeypatch.setattr(
+        scalable_module,
+        "sessionmaker",
+        sessionmaker(
+            db_session.bind,
+            class_=AsyncSession,
+            expire_on_commit=False,
+            info=dict(db_session.info),
+        ),
+    )
+    for week, tuesday in zip(
+        period.weeks[1:], ["2026-09-15", "2026-09-22"], strict=True
+    ):
+        task = GenerationTask(planning_week_id=week.id, status="queued")
+        db_session.add(task)
+        await db_session.commit()
+        payload = await ScalableGenerationService.prepare(
+            task.id,
+            [group.name],
+            [],
+            [stream.stream_type],
+            week.starts_on.isoformat(),
+            week.ends_on.isoformat(),
+            week.id,
+        )
+        assert payload is not None
+        assert len(payload["components"]) == 1
+        schedule = solve_event_component(
+            payload["components"][0]["events"], payload["context"]
+        )
+        assert schedule["unassigned"] == []
+        assert [entry["slot"] for entry in schedule["assignments"]] == [[tuesday, 6]]
 
 
 @pytest.mark.asyncio
@@ -287,9 +391,7 @@ async def test_visiting_teacher_availability_overrides_week_load_balance(
         demand.week_id: demand.lessons_count for demand in demands_result.scalars()
     }
 
-    assert [
-        visiting_demands[week.id] for week in period.weeks
-    ] == [0, 0, 6, 0]
+    assert [visiting_demands[week.id] for week in period.weeks] == [0, 0, 6, 0]
     assert [week.lessons_count for week in summary.weeks] == [4, 4, 6, 4]
 
 

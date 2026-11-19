@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { MockAPI } from "../api/mockService";
 import type { Stream } from "../api/mockService";
 import { API_BASE_URL, apiFetch } from "../api/apiConfig";
+import { toggleDayRestrictions } from "../utils/dayRestrictions";
 import {
   getSlotsForInterval,
   minutesToTime,
@@ -66,6 +67,11 @@ interface AppState {
     teacherId: string,
     type: "specific" | "recurring",
     key: string,
+  ) => void;
+  toggleDayRestriction: (
+    teacherId: string,
+    type: "specific" | "recurring",
+    date: string,
   ) => void;
   addInterval: (
     teacherId: string,
@@ -192,6 +198,26 @@ export const useAppStore = create<AppState>((set) => ({
           restrictions: { ...t.restrictions, [type]: list },
         };
       }),
+    }));
+  },
+
+  toggleDayRestriction: (teacherId, type, date) => {
+    set((state) => ({
+      teachers: state.teachers.map((teacher) =>
+        teacher.id === teacherId
+          ? {
+              ...teacher,
+              restrictions: {
+                ...teacher.restrictions,
+                [type]: toggleDayRestrictions(
+                  teacher.restrictions[type],
+                  date,
+                  type,
+                ),
+              },
+            }
+          : teacher,
+      ),
     }));
   },
 

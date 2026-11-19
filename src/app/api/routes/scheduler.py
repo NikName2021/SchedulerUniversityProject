@@ -43,6 +43,7 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from schemas.subject_rules import SubjectRuleContext, SubjectRuleWrite
 from services.availability_service import build_availability_context
 from services.export_service import escape_excel_formula, generate_excel_report
 from services.generation_lifecycle_service import (
@@ -54,6 +55,11 @@ from services.group_relation_service import expand_group_selection, parse_group_
 from services.parser_service import parse_streams_content, read_tabular_content
 from services.quality_service import ScheduleQualityService
 from services.schedule_service import ScheduleService
+from services.subject_rule_service import (
+    check_subject_rule,
+    generation_subject_rules,
+    list_subject_rules,
+)
 from services.upload_service import read_upload_limited
 from sqlalchemy import delete, distinct, func, update
 from sqlalchemy.exc import IntegrityError
@@ -117,9 +123,7 @@ async def _delete_generation_tasks(
     await db.execute(
         delete(GenerationComponent).where(GenerationComponent.task_id.in_(task_ids))
     )
-    await db.execute(
-        delete(GenerationLock).where(GenerationLock.task_id.in_(task_ids))
-    )
+    await db.execute(delete(GenerationLock).where(GenerationLock.task_id.in_(task_ids)))
     await db.execute(delete(GenerationTask).where(GenerationTask.id.in_(task_ids)))
     await db.commit()
 
@@ -478,9 +482,7 @@ async def get_groups(
             .order_by(ScheduleEntry.group_name)
         )
     else:
-        stmt = select(distinct(StreamGroup.group_name)).order_by(
-            StreamGroup.group_name
-        )
+        stmt = select(distinct(StreamGroup.group_name)).order_by(StreamGroup.group_name)
     result = await db.execute(stmt)
     groups = result.scalars().all()
     if task_id is not None or semester_batch_id is not None:
@@ -541,6 +543,54 @@ async def post_subjects_summary(
             status_code=500,
             detail="Unable to build subjects summary",
         ) from None
+
+
+@router.post("/subject-rules/query")
+async def query_subject_rules(
+    payload: SubjectRuleContext,
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+) -> dict[str, Any]:
+    try:
+        return await list_subject_rules(payload, db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/subject-rules/check")
+async def preview_subject_rule(
+    payload: SubjectRuleWrite,
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+) -> dict[str, Any]:
+    try:
+        return await check_subject_rule(payload, db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.put("/subject-rules")
+async def save_subject_rule(
+    payload: SubjectRuleWrite,
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+) -> dict[str, Any]:
+    try:
+        result = await check_subject_rule(payload, db, save=True)
+        if not result["can_save"]:
+            raise HTTPException(status_code=422, detail=" ".join(result["errors"]))
+        return result
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Правило было изменено. Обновите настройки и повторите сохранение.",
+        ) from exc
 
 
 @router.get("/streams")
@@ -803,6 +853,28 @@ async def generate_schedule(
         if task.settings is not None
         else {}
     )
+    if start_dt and end_dt and (end_dt - start_dt).days <= 6:
+        try:
+            rules, counts = await generation_subject_rules(
+                SubjectRuleContext(
+                    groups=task.groups,
+                    start_date=start_dt.date(),
+                    end_date=end_dt.date(),
+                    week_ids=[task.planning_week_id] if task.planning_week_id else [],
+                    enabled_types=settings.get("enabled_types", []),
+                    holidays=task.holidays,
+                ),
+                db,
+            )
+            if rules:
+                if settings.get("affected_stream_ids"):
+                    raise ValueError(
+                        "Для правил предметов запустите расчёт всей недели"
+                    )
+                settings["subject_rules"] = rules
+                settings["subject_rule_counts"] = counts
+        except (ValueError, LookupError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     try:
         new_task = await GenerationLifecycleService.reserve_task(
             db,
@@ -1526,9 +1598,7 @@ async def update_schedule_entry(
             db=db,
         )
     else:
-        updated_entries = await ScheduleService.get_task_entries_json(
-            entry.task_id, db
-        )
+        updated_entries = await ScheduleService.get_task_entries_json(entry.task_id, db)
     return {
         "detail": "Entry updated successfully",
         "entries": updated_entries,

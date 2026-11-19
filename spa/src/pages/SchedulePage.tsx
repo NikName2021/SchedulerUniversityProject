@@ -1560,12 +1560,24 @@ export const SchedulePage: React.FC = () => {
                     <th className="p-4 text-left text-xs font-bold text-text-tertiary uppercase w-24">
                       Пара
                     </th>
-                    {DAYS.map((day) => (
+                    {DAYS.map((day, dayIdx) => (
                       <th
                         key={day}
                         className="p-4 text-center text-xs font-bold text-text-tertiary uppercase border-l border-border-light"
                       >
                         {day}
+                        {selectedWeek && (
+                          <time
+                            dateTime={getWeekDayDate(selectedWeek, dayIdx)}
+                            className="block mt-1 text-sm font-semibold text-text-primary normal-case"
+                          >
+                            {WEEK_DATE_FORMATTER.format(
+                              parseLocalDate(
+                                getWeekDayDate(selectedWeek, dayIdx),
+                              ),
+                            )}
+                          </time>
+                        )}
                       </th>
                     ))}
                   </tr>

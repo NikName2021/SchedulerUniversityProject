@@ -48,6 +48,7 @@ from services.group_relation_service import (
     parse_group_label,
 )
 from services.scalable_scheduler import assign_rooms_matching, build_conflict_components
+from services.subject_rule_service import subject_activity_code
 
 logger = logging.getLogger(__name__)
 
@@ -81,62 +82,6 @@ def _activity_code(stream: Stream) -> str | None:
             return "lab"
         return "sem"
     return _type_code(stream.stream_type)
-
-
-def _teacher_unavailable(
-    stream: Stream, start_date: str, end_date: str
-) -> list[list[Any]]:
-    if not stream.teacher or not stream.teacher.restrictions_json:
-        return []
-    try:
-        restrictions = json.loads(stream.teacher.restrictions_json)
-    except (TypeError, json.JSONDecodeError):
-        return []
-    if not isinstance(restrictions, dict):
-        return []
-
-    recurring: list[list[Any]] = []
-    for raw_value in restrictions.get("recurring", []):
-        value = str(raw_value)
-        for separator in ("-", "_", ":"):
-            if separator not in value:
-                continue
-            try:
-                js_day, lesson = value.split(separator, 1)
-                recurring.append([(int(js_day) - 1) % 7, int(lesson)])
-                break
-            except ValueError:
-                continue
-
-    specific: list[list[Any]] = []
-    for raw_value in restrictions.get("specific", []):
-        value = str(raw_value)
-        try:
-            date_string, lesson = value.rsplit("-", 1)
-            datetime.strptime(date_string, "%Y-%m-%d")
-            specific.append([date_string, int(lesson)])
-        except ValueError:
-            continue
-
-    mode = restrictions.get("mode", "blacklist")
-    if mode != "whitelist":
-        return recurring + specific
-
-    allowed_recurring = {(int(day), int(lesson)) for day, lesson in recurring}
-    allowed_specific = {(str(day), int(lesson)) for day, lesson in specific}
-    unavailable = []
-    current = datetime.fromisoformat(start_date).date()
-    last_date = datetime.fromisoformat(end_date).date()
-    while current <= last_date:
-        if current.weekday() in STUDY_DAYS:
-            for lesson in GENERATION_LESSONS:
-                if (current.weekday(), lesson) not in allowed_recurring and (
-                    current.isoformat(),
-                    lesson,
-                ) not in allowed_specific:
-                    unavailable.append([current.isoformat(), lesson])
-        current += timedelta(days=1)
-    return unavailable
 
 
 class ScalableGenerationService:
@@ -213,6 +158,15 @@ class ScalableGenerationService:
                     demand.stream_id: demand.priority for demand in demands
                 }
 
+            subject_rule_counts = settings.get("subject_rule_counts", {})
+            if planning_week_id is not None:
+                weekly_counts.update(
+                    {
+                        int(stream_id): count
+                        for stream_id, count in subject_rule_counts.items()
+                    }
+                )
+
             query = (
                 select(Stream)
                 .join(Stream.groups)
@@ -279,8 +233,6 @@ class ScalableGenerationService:
                 for group in stream.groups
                 if group.group_name in selected_groups
             }
-            known_subgroups = collect_known_subgroups(selected_group_labels)
-
             rooms: dict[str, dict[str, Any]] = {}
             if ROOM_FUND_ENABLED:
                 room_result = await session.execute(
@@ -299,9 +251,7 @@ class ScalableGenerationService:
                         "id": room.id,
                         "capacity": room.capacity,
                         "type": room.room_type,
-                        "features": [
-                            link.feature.code for link in room.feature_links
-                        ],
+                        "features": [link.feature.code for link in room.feature_links],
                     }
                     for room in db_rooms
                 }
@@ -397,20 +347,25 @@ class ScalableGenerationService:
                     occupied_groups[entry.group_name].append(slot)
                     if entry.teacher:
                         occupied_teachers[entry.teacher.name].append(slot)
-                    if (
-                        ROOM_FUND_ENABLED
-                        and entry.room_id
-                        and entry.room_id in rooms
-                    ):
+                    if ROOM_FUND_ENABLED and entry.room_id and entry.room_id in rooms:
                         occupied_rooms[entry.room_id].append(slot)
 
             priorities = settings.get("priorities", {})
             events: list[dict[str, Any]] = []
             group_sizes: dict[str, int] = {}
             unavailable = availability["unavailable"]
+            known_subgroups = collect_known_subgroups(
+                selected_group_labels | occupied_groups.keys()
+            )
+            occupied_group_resources: dict[str, list[list[Any]]] = (
+                collections.defaultdict(list)
+            )
+            for group, slots in occupied_groups.items():
+                for resource in group_resource_keys(group, known_subgroups):
+                    occupied_group_resources[resource].extend(slots)
+            unavailable["group_resource"] = dict(occupied_group_resources)
             for category, occupied in (
                 ("teacher", occupied_teachers),
-                ("group", occupied_groups),
                 ("room", occupied_rooms),
             ):
                 for resource, slots in occupied.items():
@@ -449,19 +404,17 @@ class ScalableGenerationService:
                         )
 
                 count = weekly_counts.get(stream.id, stream.lessons_count or 0)
+                if planning_week_id is None:
+                    count = subject_rule_counts.get(str(stream.id), count)
                 if count <= 0:
                     continue
                 teacher_name = stream.teacher.name if stream.teacher else None
-                if (
-                    teacher_name
-                    and teacher_name not in availability["structured_teacher_names"]
-                ):
-                    unavailable["teacher"].setdefault(teacher_name, []).extend(
-                        _teacher_unavailable(stream, start_date, end_date)
-                    )
 
                 base_event = {
                     "stream_id": stream.id,
+                    "rule_subject": stream.event_name
+                    if subject_activity_code(stream)
+                    else None,
                     "subject": (
                         stream.discipline.full_name
                         if stream.discipline
@@ -590,9 +543,7 @@ class ScalableGenerationService:
                 await session.commit()
                 return None
             max_component_seconds = int(
-                settings.get(
-                    "max_component_seconds", DEFAULT_COMPONENT_TIME_SECONDS
-                )
+                settings.get("max_component_seconds", DEFAULT_COMPONENT_TIME_SECONDS)
             )
             max_component_seconds = max(5, min(max_component_seconds, MAX_TIME_SECONDS))
             solver_workers = max(
@@ -612,6 +563,7 @@ class ScalableGenerationService:
                 "preferred": availability["preferred"],
                 "discouraged": availability["discouraged"],
                 "rule_settings": rule_settings,
+                "subject_rules": settings.get("subject_rules", []),
                 "group_sizes": group_sizes,
                 "group_lesson_loads": dict(group_lesson_loads),
                 "max_time_seconds": max_component_seconds,

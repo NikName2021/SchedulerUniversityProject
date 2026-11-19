@@ -44,21 +44,20 @@ test("bulk selection keeps only standalone groups", () => {
   );
 });
 
-test("whole groups overlap language subgroups but L1 and L2 can run together", () => {
-  const labels = ["К0109-23", "К0109-23 (L1)", "К0109-23 (L2)"];
+test("three language subgroups can run in parallel and still overlap the whole group", () => {
+  const labels = ["К0109-23", "К0109-23 (L1)", "К0109-23 (В)", "К0109-23 (С)"];
   const knownSubgroups = collectKnownSubgroups(labels);
 
+  const [whole, first, second, third] = labels;
+  assert.equal(groupLabelsOverlap(whole, first, knownSubgroups), true);
+  assert.equal(groupLabelsOverlap(whole, second, knownSubgroups), true);
+  assert.equal(groupLabelsOverlap(whole, third, knownSubgroups), true);
+  assert.equal(groupLabelsOverlap(first, second, knownSubgroups), false);
+  assert.equal(groupLabelsOverlap(first, third, knownSubgroups), false);
+  assert.equal(groupLabelsOverlap(second, third, knownSubgroups), false);
   assert.equal(
-    groupLabelsOverlap("К0109-23", "К0109-23 (L1)", knownSubgroups),
+    groupLabelsOverlap(third, "К0109-23 (L3)", knownSubgroups),
     true,
-  );
-  assert.equal(
-    groupLabelsOverlap("К0109-23", "К0109-23 (L2)", knownSubgroups),
-    true,
-  );
-  assert.equal(
-    groupLabelsOverlap("К0109-23 (L1)", "К0109-23 (L2)", knownSubgroups),
-    false,
   );
 });
 

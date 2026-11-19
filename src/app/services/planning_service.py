@@ -11,6 +11,7 @@ from database import (
     ScheduleEntry,
     Stream,
     StreamGroup,
+    SubjectScheduleRule,
     WeeklyLessonDemand,
 )
 from schemas.planning import (
@@ -24,6 +25,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from services.availability_service import build_availability_context
+from services.group_relation_service import (
+    collect_known_subgroups,
+    group_resource_keys,
+    parse_group_label,
+)
+from services.subject_rule_service import applies_to_week, subject_activity_code
 
 
 class PlanningService:
@@ -172,7 +179,11 @@ class PlanningService:
                 StreamGroup.group_name.in_(groups),
                 Stream.is_ignored.is_(False),
             )
-            .options(selectinload(Stream.groups), selectinload(Stream.teacher))
+            .options(
+                selectinload(Stream.groups),
+                selectinload(Stream.teacher),
+                selectinload(Stream.activity_type),
+            )
         )
         if enabled_types:
             stream_query = stream_query.where(Stream.stream_type.in_(enabled_types))
@@ -181,6 +192,11 @@ class PlanningService:
         if not streams:
             raise ValueError("No active streams found for selected groups and types")
 
+        await db.execute(
+            select(AcademicPeriod.id)
+            .where(AcademicPeriod.id == period_id)
+            .with_for_update()
+        )
         week_ids = [week.id for week in weeks]
         stream_ids = [stream.id for stream in streams]
         existing_result = await db.execute(
@@ -189,9 +205,40 @@ class PlanningService:
                 WeeklyLessonDemand.stream_id.in_(stream_ids),
             )
         )
+        existing_demands = list(existing_result.scalars())
         priorities: dict[int, int] = {}
-        for demand in existing_result.scalars():
+        for demand in existing_demands:
             priorities.setdefault(demand.stream_id, demand.priority)
+        subject_rules = list(
+            (
+                await db.execute(
+                    select(SubjectScheduleRule).where(
+                        SubjectScheduleRule.group_name.in_(groups),
+                        SubjectScheduleRule.starts_on <= period.ends_on,
+                        SubjectScheduleRule.ends_on >= period.starts_on,
+                    )
+                )
+            ).scalars()
+        )
+        rule_weeks: dict[tuple[str, str], set[int]] = defaultdict(set)
+        for rule in subject_rules:
+            rule_weeks[(rule.group_name, rule.subject)].update(
+                week.id
+                for week in weeks
+                if applies_to_week(rule, week.id, week.starts_on, week.ends_on)
+            )
+        fixed_demand_keys = {
+            (stream.id, week_id)
+            for stream in streams
+            if subject_activity_code(stream)
+            for group in stream.groups
+            for week_id in rule_weeks.get((group.group_name, stream.event_name), ())
+        }
+        fixed_demands = {
+            (demand.stream_id, demand.week_id): demand.lessons_count
+            for demand in existing_demands
+            if (demand.stream_id, demand.week_id) in fixed_demand_keys
+        }
 
         published_result = await db.execute(
             select(
@@ -199,6 +246,7 @@ class PlanningService:
                 ScheduleEntry.planning_week_id,
                 ScheduleEntry.date,
                 ScheduleEntry.lesson_number,
+                ScheduleEntry.group_name,
             )
             .join(GenerationTask, GenerationTask.id == ScheduleEntry.task_id)
             .where(
@@ -209,10 +257,13 @@ class PlanningService:
                 ScheduleEntry.lesson_number.is_not(None),
             )
         )
+        published_entries = [
+            (stream_id, week_id, scheduled_at.date(), lesson, group_name)
+            for stream_id, week_id, scheduled_at, lesson, group_name in published_result
+        ]
         published_slots = {
-            (int(stream_id), int(week_id), scheduled_at.date(), int(lesson))
-            for stream_id, week_id, scheduled_at, lesson in published_result
-            if stream_id is not None and week_id is not None
+            (stream_id, week_id, scheduled_on, lesson)
+            for stream_id, week_id, scheduled_on, lesson, _group in published_entries
         }
         published_counts: dict[tuple[int, int], int] = defaultdict(int)
         for stream_id, week_id, _scheduled_on, _lesson in published_slots:
@@ -221,13 +272,15 @@ class PlanningService:
         availability = await build_availability_context(
             db, period.starts_on.isoformat(), period.ends_on.isoformat()
         )
-        unavailable = availability["unavailable"]
-
-        def blocked_slots(category: str, resource: str) -> set[tuple[str, int]]:
-            return {
-                (str(day), int(lesson))
-                for day, lesson in unavailable.get(category, {}).get(resource, [])
+        unavailable = {
+            category: {
+                resource: {(day, lesson) for day, lesson in slots}
+                for resource, slots in resources.items()
             }
+            for category, resources in availability["unavailable"].items()
+        }
+        blocked_teachers = unavailable["teacher"]
+        global_blocks = unavailable["global"].get("*", set())
 
         week_dates: dict[int, list[date]] = {}
         for week in weeks:
@@ -240,6 +293,15 @@ class PlanningService:
             week_dates[week.id] = dates
 
         selected_groups = set(groups)
+        blocked_groups = {
+            label: set().union(
+                *(
+                    unavailable["group"].get(name, set())
+                    for name in (label, *parse_group_label(label).base_groups)
+                )
+            )
+            for label in selected_groups
+        }
         teacher_names = {
             stream.teacher.name for stream in streams if stream.teacher is not None
         }
@@ -253,44 +315,91 @@ class PlanningService:
             )
             for stream in streams
         }
+        streams_by_id = {stream.id: stream for stream in streams}
+        known_subgroups = collect_known_subgroups(
+            selected_groups | {group_name for *_, group_name in published_entries}
+        )
+        occupied_teacher_slots: dict[str, set[tuple[str, int]]] = defaultdict(set)
+        occupied_group_slots: dict[str, set[tuple[str, int]]] = defaultdict(set)
+        for stream_id, _week_id, scheduled_on, lesson, group_name in published_entries:
+            stream = streams_by_id[stream_id]
+            slot = (scheduled_on.isoformat(), lesson)
+            if stream.teacher:
+                occupied_teacher_slots[stream.teacher.name].add(slot)
+            for resource in group_resource_keys(group_name, known_subgroups):
+                occupied_group_slots[resource].add(slot)
+
+        for name, blocked in blocked_groups.items():
+            for resource in group_resource_keys(name, known_subgroups):
+                blocked.update(occupied_group_slots.get(resource, ()))
+
         teacher_capacity: dict[tuple[str, int], int] = {}
         group_capacity: dict[tuple[str, int], int] = {}
+        stream_capacity: dict[tuple[int, int], int] = {}
+        shared_streams = {
+            stream.id
+            for stream in streams
+            if subject_activity_code(stream) == "lec"
+            or (stream.activity_type and stream.activity_type.is_shared_for_groups)
+        }
         for week in weeks:
             slots = {
                 (current.isoformat(), lesson)
                 for current in week_dates[week.id]
                 for lesson in GENERATION_LESSONS
+            } - global_blocks
+            teacher_slots = {
+                name: slots.difference(
+                    blocked_teachers.get(name, ()), occupied_teacher_slots[name]
+                )
+                for name in teacher_names
+            }
+            group_slots = {
+                name: slots - blocked_groups[name] for name in selected_groups
             }
             for teacher_name in teacher_names:
                 teacher_capacity[(teacher_name, week.id)] = len(
-                    slots - blocked_slots("teacher", teacher_name)
+                    teacher_slots[teacher_name]
                 )
             for group_name in selected_groups:
-                group_capacity[(group_name, week.id)] = len(
-                    slots - blocked_slots("group", group_name)
+                group_capacity[(group_name, week.id)] = len(group_slots[group_name])
+            for stream in streams:
+                available = (
+                    teacher_slots[stream.teacher.name] if stream.teacher else slots
                 )
-
-        streams_by_id = {stream.id: stream for stream in streams}
-        for stream_id, week_id, _scheduled_on, _lesson in published_slots:
-            stream = streams_by_id[stream_id]
-            if stream.teacher:
-                key = (stream.teacher.name, week_id)
-                teacher_capacity[key] = max(0, teacher_capacity[key] - 1)
-            for group_name in stream_groups[stream_id]:
-                key = (group_name, week_id)
-                group_capacity[key] = max(0, group_capacity[key] - 1)
+                audience_slots = [
+                    group_slots[name] for name in stream_groups[stream.id]
+                ]
+                if stream.id in shared_streams:
+                    capacity = len(available.intersection(*audience_slots))
+                else:
+                    capacity = min(
+                        (len(available & audience) for audience in audience_slots),
+                        default=len(available),
+                    )
+                stream_capacity[(stream.id, week.id)] = capacity
 
         allocations: dict[tuple[int, int], int] = {
-            (stream.id, week.id): published_counts[(stream.id, week.id)]
+            (stream.id, week.id): max(
+                published_counts[(stream.id, week.id)],
+                fixed_demands.get((stream.id, week.id), 0),
+            )
             for stream in streams
             for week in weeks
         }
         week_loads: dict[int, int] = {
-            week.id: sum(
-                published_counts[(stream.id, week.id)] for stream in streams
-            )
+            week.id: sum(allocations[(stream.id, week.id)] for stream in streams)
             for week in weeks
         }
+        for (stream_id, week_id), count in fixed_demands.items():
+            remaining = max(0, count - published_counts[(stream_id, week_id)])
+            stream = streams_by_id[stream_id]
+            if stream.teacher:
+                key = (stream.teacher.name, week_id)
+                teacher_capacity[key] = max(0, teacher_capacity[key] - remaining)
+            for group_name in stream_groups[stream_id]:
+                key = (group_name, week_id)
+                group_capacity[key] = max(0, group_capacity[key] - remaining)
         week_slot_counts = {
             week.id: len(week_dates[week.id]) * len(GENERATION_LESSONS)
             for week in weeks
@@ -302,6 +411,12 @@ class PlanningService:
             ) and not (stream.ends_on is not None and stream.ends_on < week.starts_on)
 
         def has_capacity(stream: Stream, week: PlanningWeek) -> bool:
+            key = (stream.id, week.id)
+            if (
+                key in fixed_demand_keys
+                or allocations[key] - published_counts[key] >= stream_capacity[key]
+            ):
+                return False
             if not week_dates[week.id] or not week_overlaps_stream(stream, week):
                 return False
             if stream.teacher and teacher_capacity[(stream.teacher.name, week.id)] <= 0:
@@ -324,15 +439,13 @@ class PlanningService:
         )
         for stream in streams:
             planned = max(0, int(stream.lessons_count or 0))
-            published = sum(
-                published_counts[(stream.id, week.id)] for week in weeks
-            )
-            if published > planned:
+            reserved = sum(allocations[(stream.id, week.id)] for week in weeks)
+            if reserved > planned:
                 errors.append(
-                    f"{stream.event_name}: published {published}, planned {planned}"
+                    f"{stream.event_name}: закреплено {reserved}, в плане {planned}"
                 )
                 continue
-            for _ in range(planned - published):
+            for _ in range(planned - reserved):
                 candidates = [week for week in weeks if has_capacity(stream, week)]
                 if not candidates:
                     missing = planned - sum(
@@ -347,10 +460,22 @@ class PlanningService:
                     # will create explicit unassigned entries for lessons that
                     # it cannot place into real slots.
                     fallback_weeks = [
-                        week for week in weeks if week_overlaps_stream(stream, week)
+                        week
+                        for week in weeks
+                        if (stream.id, week.id) not in fixed_demand_keys
+                        and week_overlaps_stream(stream, week)
                     ]
                     if not fallback_weeks:
-                        fallback_weeks = weeks
+                        fallback_weeks = [
+                            week
+                            for week in weeks
+                            if (stream.id, week.id) not in fixed_demand_keys
+                        ]
+                    if not fallback_weeks:
+                        warnings.append(
+                            f"{stream.event_name}: правила предмета закрепили нагрузку всех недель. Осталось распределить пар: {missing}."
+                        )
+                        break
                     for _ in range(missing):
                         week = min(
                             fallback_weeks,
@@ -418,7 +543,9 @@ class PlanningService:
                     streams_count=sum(count > 0 for count in counts),
                 )
             )
-        planned_lessons = sum(max(0, int(stream.lessons_count or 0)) for stream in streams)
+        planned_lessons = sum(
+            max(0, int(stream.lessons_count or 0)) for stream in streams
+        )
         published_lessons = len(published_slots)
         return SemesterDemandDistributionResult(
             period_id=period.id,

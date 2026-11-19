@@ -1,5 +1,6 @@
 import datetime
 
+from services.group_relation_service import collect_known_subgroups, group_resource_keys
 from services.scalable_scheduler import (
     assign_rooms_matching,
     build_conflict_components,
@@ -127,17 +128,35 @@ def test_quality_stage_preserves_the_placement_result() -> None:
 def test_language_subgroups_can_run_in_parallel() -> None:
     context = _context()
     context["lessons"] = [1]
-    first = _event("event-1", ["A (L1)"], 1)
-    first["group_resources"] = ["A::L1"]
-    second = _event("event-2", ["A (L2)"], 2)
-    second["group_resources"] = ["A::L2"]
+    groups = ["A (L1)", "A (В)", "A (С)"]
+    known = collect_known_subgroups(groups)
+    events = []
+    for index, group in enumerate(groups, 1):
+        event = _event(f"event-{index}", [group], index)
+        event["group_resources"] = sorted(group_resource_keys(group, known))
+        events.append(event)
 
-    result = solve_event_component([first, second], context)
+    result = solve_event_component(events, context)
 
-    assert len(result["assignments"]) == 2
+    assert len(result["assignments"]) == 3
     assert {tuple(item["slot"]) for item in result["assignments"]} == {
         ("2026-09-07", 1)
     }
+
+
+def test_carried_subgroup_blocks_the_whole_group_but_not_another_subgroup() -> None:
+    context = _context()
+    context["lessons"] = [1]
+    context["unavailable"]["group_resource"] = {"A::L3": [["2026-09-07", 1]]}
+    whole_group = _event("event-1", ["A"], 1)
+    whole_group["group_resources"] = ["A::L1", "A::L2", "A::L3"]
+    subgroup = _event("event-2", ["A (L1)"], 2)
+    subgroup["group_resources"] = ["A::L1"]
+
+    result = solve_event_component([whole_group, subgroup], context)
+
+    assert [event["id"] for event in result["assignments"]] == ["event-2"]
+    assert [event["id"] for event in result["unassigned"]] == ["event-1"]
 
 
 def test_full_group_conflicts_with_language_subgroup() -> None:
@@ -213,8 +232,7 @@ def test_double_window_is_penalized() -> None:
     result = solve_event_component([first, second], context)
 
     lessons_by_event = {
-        assignment["id"]: assignment["slot"][1]
-        for assignment in result["assignments"]
+        assignment["id"]: assignment["slot"][1] for assignment in result["assignments"]
     }
     assert lessons_by_event == {"event-1": 1, "event-2": 2}
     assert result["metrics"]["window_objective"] == 0
