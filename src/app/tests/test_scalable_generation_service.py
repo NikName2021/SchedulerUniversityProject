@@ -1,8 +1,11 @@
+import asyncio
 import datetime
 import json
+from types import SimpleNamespace
 
 import pytest
 import services.scalable_generation_service as scalable_module
+import worker
 from core.config import MAX_LESSON_NUMBER
 from database import (
     FileType,
@@ -22,6 +25,39 @@ from services.scalable_scheduler import solve_event_component
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import sessionmaker
+
+
+def test_generation_chord_uses_context_from_storage(monkeypatch: pytest.MonkeyPatch) -> None:
+    events = [{"id": "event-1"}]
+
+    async def prepare(*_args):
+        return {
+            "context": {"rooms": {"101": {"capacity": 40}}},
+            "components": [{"component_id": 7, "events": events}],
+        }
+
+    async def save_workflow_id(task_id, workflow_id, component_ids):
+        assert (task_id, workflow_id, component_ids) == (1, "workflow", ["component"])
+
+    def chord(signatures):
+        assert [signature.args for signature in signatures] == [(1, 7, events)]
+
+        def dispatch(callback):
+            assert callback.args == (1,)
+            return SimpleNamespace(
+                id="workflow", parent=SimpleNamespace(results=[SimpleNamespace(id="component")])
+            )
+
+        return dispatch
+
+    monkeypatch.setattr(ScalableGenerationService, "prepare", staticmethod(prepare))
+    monkeypatch.setattr(ScalableGenerationService, "save_workflow_id", staticmethod(save_workflow_id))
+    monkeypatch.setattr(worker, "_run_async", asyncio.run)
+    monkeypatch.setattr(worker, "chord", chord)
+
+    result = worker.generate_schedule_task(1, [], [], [], None, None)
+
+    assert result == {"dispatched": 1, "task_id": 1, "workflow_id": "workflow"}
 
 
 def test_whitelist_specific_date_remains_available() -> None:
@@ -136,7 +172,11 @@ async def test_scalable_pipeline_saves_parallel_components(
     assert len(payload["components"]) == 2
     results = []
     for component in payload["components"]:
-        result = solve_event_component(component["events"], payload["context"])
+        context = await ScalableGenerationService.load_solver_context(
+            task.id, component["component_id"]
+        )
+        assert context == json.loads(json.dumps(payload["context"]))
+        result = solve_event_component(component["events"], context)
         results.append(result)
         await ScalableGenerationService.record_component_result(
             task.id, component["component_id"], result
@@ -144,6 +184,10 @@ async def test_scalable_pipeline_saves_parallel_components(
 
     assert await ScalableGenerationService.finalize(
         task.id, results, payload["context"]
+    )
+    assert await ScalableGenerationService.load_solver_context(task.id) is None
+    await ScalableGenerationService.record_component_result(
+        task.id, payload["components"][0]["component_id"], {"status": "failed"}
     )
     async with test_sessionmaker() as verification_session:
         entries = list(
@@ -161,7 +205,9 @@ async def test_scalable_pipeline_saves_parallel_components(
     assert all(entry.room_ref_id is None for entry in entries)
     assert refreshed_task is not None
     assert refreshed_task.status == "success"
+    assert refreshed_task.completed_components == 2
     assert refreshed_task.progress_percent == 100
+    assert refreshed_task.solver_context_json is None
 
     incremental_task = GenerationTask(
         planning_week_id=week.id,

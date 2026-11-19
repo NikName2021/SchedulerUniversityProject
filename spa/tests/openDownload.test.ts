@@ -1,35 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  getDownloadFilename,
-  openDownload,
-} from "../src/utils/openDownload.js";
-
-test("downloads open without exposing window.opener", () => {
-  const calls: unknown[][] = [];
-  Object.defineProperty(globalThis, "window", {
-    configurable: true,
-    value: {
-      open: (...args: unknown[]) => {
-        calls.push(args);
-        return null;
-      },
-    },
-  });
-
-  openDownload("/api/export");
-
-  assert.deepEqual(calls, [["/api/export", "_blank", "noopener,noreferrer"]]);
-  Reflect.deleteProperty(globalThis, "window");
-});
+import { getDownloadFilename } from "../src/utils/openDownload.js";
 
 test("download filenames cannot escape into a path", () => {
   assert.equal(
-    getDownloadFilename(
-      'attachment; filename="../../schedule.xlsx"',
-      "x",
-    ),
+    getDownloadFilename('attachment; filename="../../schedule.xlsx"', "x"),
     ".._.._schedule.xlsx",
+  );
+});
+
+test("malformed encoded filenames fall back to the provided name", () => {
+  assert.equal(
+    getDownloadFilename("attachment; filename*=UTF-8''%ZZ", "schedule.xlsx"),
+    "schedule.xlsx",
   );
 });

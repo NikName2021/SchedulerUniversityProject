@@ -1,13 +1,14 @@
 import datetime
 import io
+import json
 import re
 
 import pandas as pd
+from anyio.to_thread import run_sync
 from core.constants import ALL_LESSONS
-from database.all_models import GenerationTask, ScheduleEntry
+from database.all_models import GenerationTask, ScheduleEntry, Teacher
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
 WEEK = {
     0: "Понедельник",
@@ -52,10 +53,63 @@ def escape_excel_formula(value: str) -> str:
     return value
 
 
+def generate_teacher_availability_report(
+    teachers: list[tuple[str, str | None]],
+) -> io.BytesIO:
+    rows = []
+    for name, restrictions_json in teachers:
+        try:
+            restrictions = json.loads(restrictions_json) if restrictions_json else None
+        except (TypeError, ValueError):
+            restrictions = None
+        if isinstance(restrictions, list):
+            legacy_slots = [str(slot).replace("_", "-").replace(":", "-") for slot in restrictions]
+            restrictions = {
+                "recurring": [slot for slot in legacy_slots if re.fullmatch(r"[0-6]-[1-7]", slot)],
+                "specific": [slot for slot in legacy_slots if re.fullmatch(r"\d{4}-\d{2}-\d{2}-[1-7]", slot)],
+            }
+        if not isinstance(restrictions, dict):
+            restrictions = {"mode": "all"}
+        rows.append(
+            {
+                "ФИО преподавателя": escape_excel_formula(name),
+                "Режим": restrictions.get("mode", "blacklist"),
+                "Регулярные окна (День_Пара)": escape_excel_formula(
+                    ",".join(restrictions.get("recurring") or [])
+                ),
+                "Конкретные даты (ГГГГ-ММ-ДД_Пара)": escape_excel_formula(
+                    ",".join(restrictions.get("specific") or [])
+                ),
+            }
+        )
+
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        pd.DataFrame(rows).to_excel(writer, index=False, sheet_name="Доступность")
+    output.seek(0)
+    return output
+
+
 async def generate_excel_report(
     session, task_id: int | None = None, semester_batch_id: str | None = None
 ):
-    stmt = select(ScheduleEntry).options(selectinload(ScheduleEntry.teacher))
+    stmt = (
+        select(
+            ScheduleEntry.task_id,
+            ScheduleEntry.planning_week_id,
+            ScheduleEntry.source_stream_id,
+            ScheduleEntry.group_name,
+            ScheduleEntry.event_name,
+            ScheduleEntry.stream_type,
+            ScheduleEntry.room_id,
+            ScheduleEntry.date,
+            ScheduleEntry.lesson_number,
+            ScheduleEntry.warning,
+            Teacher.name.label("teacher_name"),
+        )
+        .select_from(ScheduleEntry)
+        .outerjoin(ScheduleEntry.teacher)
+    )
     if task_id is not None:
         stmt = stmt.filter(ScheduleEntry.task_id == task_id)
     elif semester_batch_id is not None:
@@ -69,11 +123,14 @@ async def generate_excel_report(
 
     stmt = stmt.order_by(ScheduleEntry.date, ScheduleEntry.lesson_number)
     result = await session.execute(stmt)
-    entries = result.scalars().all()
+    entries = result.all()
 
     if not entries:
         return None
+    return await run_sync(_write_schedule_workbook, entries)
 
+
+def _write_schedule_workbook(entries):
     rows = []
     unassigned: dict[tuple, dict] = {}
     for ev in entries:
@@ -86,7 +143,7 @@ async def generate_excel_report(
                 ev.group_name,
                 ev.event_name,
                 ev.stream_type,
-                ev.teacher.name if ev.teacher else "",
+                ev.teacher_name or "",
                 warning,
             )
             if key not in unassigned:
@@ -100,9 +157,7 @@ async def generate_excel_report(
                     "group": escape_excel_formula(ev.group_name),
                     "subject": escape_excel_formula(ev.event_name),
                     "type": escape_excel_formula(ev.stream_type),
-                    "teacher": escape_excel_formula(
-                        ev.teacher.name if ev.teacher else ""
-                    ),
+                    "teacher": escape_excel_formula(ev.teacher_name or ""),
                     "missing_lessons": missing,
                     "target_lessons": target,
                     "scheduled_lessons": (
@@ -116,7 +171,7 @@ async def generate_excel_report(
         wd = ev.date.weekday()
         subject_str = escape_excel_formula(
             f"{ev.event_name} ({ev.stream_type})\n"
-            f"{ev.teacher.name if ev.teacher else ''}\nАуд: {ev.room_id or ''}"
+            f"{ev.teacher_name or ''}\nАуд: {ev.room_id or ''}"
         )
 
         rows.append(

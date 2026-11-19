@@ -14,7 +14,9 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
-import { API_BASE_URL, apiFetch } from "../api/apiConfig";
+import { API_BASE_URL, apiFetchJson } from "../api/apiConfig";
+
+import { Modal } from "../components/Modal";
 
 interface RoomFeature {
   id: number;
@@ -125,18 +127,23 @@ export const ReferenceDataPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [roomsResponse, profilesResponse, rulesResponse] =
-        await Promise.all([
-          apiFetch(`${API_BASE_URL}/api/v1/reference/rooms`),
-          apiFetch(`${API_BASE_URL}/api/v1/reference/rule-profiles`),
-          apiFetch(`${API_BASE_URL}/api/v1/reference/rules/current`),
-        ]);
-      if (!roomsResponse.ok || !profilesResponse.ok || !rulesResponse.ok) {
-        throw new Error("Не удалось загрузить справочники");
-      }
-      setRooms(await roomsResponse.json());
-      setProfiles(await profilesResponse.json());
-      setCurrentRules(await rulesResponse.json());
+      const [roomsData, profilesData, rulesData] = await Promise.all([
+        apiFetchJson<Room[]>(
+          `${API_BASE_URL}/api/v1/reference/rooms`,
+          "Не удалось загрузить аудитории",
+        ),
+        apiFetchJson<RuleProfile[]>(
+          `${API_BASE_URL}/api/v1/reference/rule-profiles`,
+          "Не удалось загрузить профили правил",
+        ),
+        apiFetchJson<RuleSetDetails>(
+          `${API_BASE_URL}/api/v1/reference/rules/current`,
+          "Не удалось загрузить текущие правила",
+        ),
+      ]);
+      setRooms(roomsData);
+      setProfiles(profilesData);
+      setCurrentRules(rulesData);
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -151,15 +158,6 @@ export const ReferenceDataPage: React.FC = () => {
   useEffect(() => {
     void load();
   }, [load]);
-
-  useEffect(() => {
-    if (!openedRuleSet) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpenedRuleSet(null);
-    };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [openedRuleSet]);
 
   const openCurrentRules = () => {
     if (!currentRules) return;
@@ -183,11 +181,11 @@ export const ReferenceDataPage: React.FC = () => {
     setProfileError(null);
     setProfileLoading(true);
     try {
-      const response = await apiFetch(
+      const details = await apiFetchJson<RuleSetDetails>(
         `${API_BASE_URL}/api/v1/reference/rule-profiles/${profile.id}/details`,
+        "Не удалось загрузить правила профиля",
       );
-      if (!response.ok) throw new Error("Не удалось загрузить правила профиля");
-      setProfileDetails(await response.json());
+      setProfileDetails(details);
     } catch (requestError) {
       setProfileError(
         requestError instanceof Error
@@ -202,18 +200,23 @@ export const ReferenceDataPage: React.FC = () => {
   const createRoom = async (event: React.FormEvent) => {
     event.preventDefault();
     setError(null);
-    const response = await apiFetch(`${API_BASE_URL}/api/v1/reference/rooms`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...form, is_active: true, feature_ids: [] }),
-    });
-    if (!response.ok) {
-      const payload = (await response.json()) as { detail?: string };
-      setError(payload.detail || "Не удалось создать аудиторию");
-      return;
+    try {
+      await apiFetchJson(
+        `${API_BASE_URL}/api/v1/reference/rooms`,
+        "Не удалось создать аудиторию",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...form, is_active: true, feature_ids: [] }),
+        },
+      );
+      setForm({ code: "", capacity: 30, room_type: "mixed" });
+      await load();
+    } catch (error) {
+      setError(
+        error instanceof Error ? error.message : "Не удалось создать аудиторию",
+      );
     }
-    setForm({ code: "", capacity: 30, room_type: "mixed" });
-    await load();
   };
 
   if (loading) {
@@ -226,11 +229,9 @@ export const ReferenceDataPage: React.FC = () => {
 
   return (
     <div className="space-y-8 pb-16">
-      <header className="flex items-end justify-between">
+      <header className="workspace-header">
         <div>
-          <h1 className="text-3xl font-black tracking-tight text-text-primary">
-            Базовые данные
-          </h1>
+          <h1>Базовые данные</h1>
           <p className="mt-1 text-sm font-medium text-text-secondary">
             Аудитории и профили правил генератора.
           </p>
@@ -413,19 +414,12 @@ export const ReferenceDataPage: React.FC = () => {
       </section>
 
       {openedRuleSet && (
-        <div
-          className="fixed inset-0 z-50 flex justify-end bg-slate-950/35"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.currentTarget === event.target) setOpenedRuleSet(null);
-          }}
+        <Modal
+          className="app-dialog--drawer app-dialog--drawer-wide"
+          label={openedRuleSet.title}
+          onClose={() => setOpenedRuleSet(null)}
         >
-          <aside
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="rule-profile-title"
-            className="flex h-full w-full max-w-3xl flex-col bg-white shadow-2xl"
-          >
+          <div className="flex h-full flex-col bg-white">
             <header className="border-b border-border-light px-6 py-5 sm:px-8">
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -621,8 +615,8 @@ export const ReferenceDataPage: React.FC = () => {
                 </div>
               )}
             </div>
-          </aside>
-        </div>
+          </div>
+        </Modal>
       )}
     </div>
   );

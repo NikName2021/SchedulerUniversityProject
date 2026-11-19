@@ -11,7 +11,10 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
-import { API_BASE_URL, apiFetch, openDownload } from "../api/apiConfig";
+import { API_BASE_URL, apiFetchJson } from "../api/apiConfig";
+
+import { useFeedback } from "../components/feedbackContext";
+import "./StoragePage.css";
 
 type FolderName =
   | "Учебные планы и потоки"
@@ -28,6 +31,13 @@ interface FileItem {
 }
 
 type ImportFileType = "streams" | "rooms";
+
+interface ImportHistoryItem {
+  id: number;
+  filename: string;
+  file_type: ImportFileType;
+  created_date: string;
+}
 
 const folders: Array<{
   title: FolderName;
@@ -98,7 +108,9 @@ const DragDropZone: React.FC<{
         hidden
         accept=".xls,.xlsx,.csv"
         onChange={(event) => {
-          if (event.target.files?.length) onDrop(event.target.files);
+          const input = event.currentTarget;
+          if (input.files?.length) onDrop(input.files);
+          input.value = "";
         }}
       />
       <button
@@ -158,6 +170,7 @@ const FileListItem: React.FC<{
 );
 
 export const StoragePage: React.FC = () => {
+  const { download } = useFeedback();
   const [selectedFolder, setSelectedFolder] = useState<FolderName | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -167,30 +180,26 @@ export const StoragePage: React.FC = () => {
 
   const fetchHistory = useCallback(async (fileType: ImportFileType) => {
     try {
-      const response = await apiFetch(
+      const data = await apiFetchJson<ImportHistoryItem[]>(
         `${API_BASE_URL}/api/v1/scheduler/import/history?file_type=${fileType}`,
+        "Не удалось загрузить историю импорта",
       );
-      if (!response.ok) return;
-      const data = await response.json();
       setFiles(
-        data.map(
-          (item: {
-            id: number;
-            filename: string;
-            file_type: ImportFileType;
-            created_date: string;
-          }) => ({
-            id: item.id,
-            name: item.filename,
-            size: item.file_type === "rooms" ? "Аудитории" : "Потоки",
-            fileType: item.file_type,
-            status: "ready",
-            date: item.created_date,
-          }),
-        ),
+        data.map((item) => ({
+          id: item.id,
+          name: item.filename,
+          size: item.file_type === "rooms" ? "Аудитории" : "Потоки",
+          fileType: item.file_type,
+          status: "ready",
+          date: item.created_date,
+        })),
       );
     } catch (requestError) {
-      console.error(requestError);
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Не удалось загрузить историю импорта",
+      );
     }
   }, []);
 
@@ -211,15 +220,14 @@ export const StoragePage: React.FC = () => {
           : `${API_BASE_URL}/api/v1/scheduler/import/streams`;
 
       try {
-        const response = await apiFetch(endpoint, {
-          method: "POST",
-          body: formData,
-        });
-        if (!response.ok) {
-          const payload = await response.json();
-          throw new Error(payload.detail || "Не удалось загрузить файл");
-        }
-        const payload = await response.json();
+        const payload = await apiFetchJson<Record<string, number>>(
+          endpoint,
+          "Не удалось загрузить файл",
+          {
+            method: "POST",
+            body: formData,
+          },
+        );
         setSuccessMsg(
           isTeacherImport
             ? `Доступность обновлена: преподавателей — ${payload.updated_teachers}.`
@@ -254,12 +262,14 @@ export const StoragePage: React.FC = () => {
   }, [fetchHistory, selectedFolder]);
 
   const removeFile = async (file: FileItem) => {
+    setError(null);
+    setSuccessMsg(null);
     try {
-      const response = await apiFetch(
+      await apiFetchJson(
         `${API_BASE_URL}/api/v1/scheduler/import/history/${file.id}`,
+        "Не удалось удалить файл",
         { method: "DELETE" },
       );
-      if (!response.ok) return;
       setSuccessMsg(
         file.fileType === "streams"
           ? "Файл и связанные данные удалены."
@@ -267,12 +277,19 @@ export const StoragePage: React.FC = () => {
       );
       await fetchHistory(file.fileType);
     } catch (requestError) {
-      console.error(requestError);
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Не удалось удалить файл",
+      );
     }
   };
 
   const handleExportTeachers = () => {
-    openDownload(`${API_BASE_URL}/api/v1/scheduler/teachers/export`);
+    void download(
+      `${API_BASE_URL}/api/v1/scheduler/teachers/export`,
+      "teacher_availability.xlsx",
+    );
   };
 
   if (!selectedFolder) {
@@ -281,7 +298,7 @@ export const StoragePage: React.FC = () => {
         <section className="data-overview">
           <div>
             <span className="data-overview__eyebrow">КАТАЛОГ ДАННЫХ</span>
-            <h2>Подготовьте исходные данные</h2>
+            <h1>Подготовьте исходные данные</h1>
             <p>
               Загрузите и проверьте наборы данных перед распределением нагрузки
               и расчётом расписания.
@@ -337,7 +354,7 @@ export const StoragePage: React.FC = () => {
           >
             <ArrowLeft size={16} /> Все разделы данных
           </button>
-          <h2 className="enterprise-page__heading">{selectedFolder}</h2>
+          <h1 className="enterprise-page__heading">{selectedFolder}</h1>
           <p className="enterprise-page__description">
             Загружайте актуальные файлы и контролируйте историю импорта.
           </p>
@@ -415,8 +432,9 @@ export const StoragePage: React.FC = () => {
                   key={file.id}
                   file={file}
                   onDownload={() =>
-                    openDownload(
+                    void download(
                       `${API_BASE_URL}/api/v1/scheduler/import/history/${file.id}/download`,
+                      file.name,
                     )
                   }
                   onRemove={() => void removeFile(file)}

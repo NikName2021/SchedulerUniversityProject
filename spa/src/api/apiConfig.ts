@@ -1,4 +1,4 @@
-import { downloadResponse, openDownload } from "../utils/openDownload.js";
+import { downloadResponse } from "../utils/openDownload.js";
 
 const runtimeEnv = import.meta.env as ImportMetaEnv | undefined;
 
@@ -52,4 +52,97 @@ export const apiFetch = async (
   return response;
 };
 
-export { downloadResponse, openDownload };
+const hasJsonContentType = (response: Response): boolean => {
+  const mediaType = response.headers
+    .get("Content-Type")
+    ?.split(";", 1)[0]
+    ?.trim()
+    .toLowerCase();
+  return (
+    mediaType === "application/json" || mediaType?.endsWith("+json") === true
+  );
+};
+
+const getResponseErrorDetail = async (response: Response) => {
+  if (!hasJsonContentType(response)) return undefined;
+  const payload: unknown = await response.json().catch(() => null);
+  if (!payload || typeof payload !== "object" || !("detail" in payload)) return;
+
+  const { detail } = payload;
+  if (typeof detail === "string") return detail.trim() || undefined;
+  if (!detail || typeof detail !== "object") return;
+
+  if ("conflicts" in detail && Array.isArray(detail.conflicts)) {
+    const conflicts = detail.conflicts.filter(
+      (conflict): conflict is string =>
+        typeof conflict === "string" && Boolean(conflict.trim()),
+    );
+    if (conflicts.length) return conflicts.join("\n");
+  }
+  if ("message" in detail && typeof detail.message === "string") {
+    return detail.message.trim() || undefined;
+  }
+};
+
+const apiFetchChecked = async (
+  input: RequestInfo | URL,
+  errorMessage: string,
+  init?: RequestInit,
+): Promise<Response> => {
+  let response: Response;
+  try {
+    response = await apiFetch(input, init);
+  } catch (error) {
+    if (init?.signal?.aborted) throw error;
+    throw new Error(errorMessage, { cause: error });
+  }
+
+  if (!response.ok) {
+    const detail = await getResponseErrorDetail(response);
+    throw new Error(detail || `${errorMessage} (HTTP ${response.status})`);
+  }
+  return response;
+};
+
+export const apiFetchJson = async <T = unknown>(
+  input: RequestInfo | URL,
+  errorMessage: string,
+  init?: RequestInit,
+): Promise<T> => {
+  const response = await apiFetchChecked(input, errorMessage, init);
+  const invalidResponse = `${errorMessage}. Некорректный ответ сервера`;
+  if (!hasJsonContentType(response)) throw new Error(invalidResponse);
+  try {
+    return (await response.json()) as T;
+  } catch (error) {
+    throw new Error(invalidResponse, { cause: error });
+  }
+};
+
+export const apiFetchNoContent = async (
+  input: RequestInfo | URL,
+  errorMessage: string,
+  init?: RequestInit,
+): Promise<void> => {
+  const response = await apiFetchChecked(input, errorMessage, init);
+  if (response.status !== 204) {
+    throw new Error(`${errorMessage}. Некорректный ответ сервера`);
+  }
+};
+
+export const apiDownload = async (
+  url: string,
+  filename: string,
+): Promise<void> => {
+  const message = "Не удалось скачать файл";
+  const response = await apiFetchChecked(url, message);
+  const mediaType = response.headers.get("Content-Type")?.toLowerCase();
+  if (
+    response.status === 204 ||
+    hasJsonContentType(response) ||
+    mediaType?.startsWith("text/html")
+  ) {
+    throw new Error(`${message}. Некорректный ответ сервера`);
+  }
+  await downloadResponse(response, filename);
+};

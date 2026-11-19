@@ -3,6 +3,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
 
+from anyio.to_thread import run_sync
 from core.config import async_get_db
 from database import (
     ActivityType,
@@ -209,7 +210,7 @@ async def import_rooms(
         file, allowed_extensions={".xls", ".xlsx", ".csv"}
     )
     try:
-        rows = parse_rooms_content(content, filename)
+        rows = await run_sync(parse_rooms_content, content, filename)
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not rows:
@@ -223,7 +224,7 @@ async def import_rooms(
     file_path = workspace_dir / unique_filename
 
     try:
-        file_path.write_bytes(content)
+        await run_sync(file_path.write_bytes, content)
         batch = ImportBatch(
             filename=filename,
             file_path=str(file_path),

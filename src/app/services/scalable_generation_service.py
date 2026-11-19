@@ -42,6 +42,7 @@ from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import selectinload
 
 from services.availability_service import build_availability_context
+from services.generation_lifecycle_service import ACTIVE_STATUSES
 from services.group_relation_service import (
     collect_known_subgroups,
     group_resource_keys,
@@ -105,6 +106,7 @@ class ScalableGenerationService:
 
             task.status = "running"
             task.error_message = None
+            task.solver_context_json = None
             task.completed_components = 0
             task.progress_percent = 1
             await session.execute(
@@ -582,24 +584,29 @@ class ScalableGenerationService:
                 "carry_over_entries": carry_over_entries,
             }
 
-            component_payloads = []
-            for index, component_events in enumerate(components, start=1):
-                component = GenerationComponent(
+            component_rows = [
+                GenerationComponent(
                     task_id=task_id,
                     component_key=f"component-{index:04d}",
                     event_count=len(component_events),
                 )
-                session.add(component)
-                await session.flush()
-                component_payloads.append(
-                    {
-                        "component_id": component.id,
-                        "component_key": component.component_key,
-                        "events": component_events,
-                    }
+                for index, component_events in enumerate(components, start=1)
+            ]
+            session.add_all(component_rows)
+            await session.flush()
+            component_payloads = [
+                {
+                    "component_id": component.id,
+                    "component_key": component.component_key,
+                    "events": component_events,
+                }
+                for component, component_events in zip(
+                    component_rows, components, strict=True
                 )
+            ]
 
             task.total_components = len(component_payloads)
+            task.solver_context_json = json.dumps(context)
             task.metrics_json = json.dumps(
                 {
                     "events": len(events),
@@ -619,39 +626,58 @@ class ScalableGenerationService:
             }
 
     @staticmethod
+    async def load_solver_context(
+        task_id: int, component_id: int | None = None
+    ) -> dict[str, Any] | None:
+        async with sessionmaker() as session:
+            await bind_task_workspace(session, task_id)
+            stmt = select(GenerationTask.solver_context_json).where(
+                GenerationTask.id == task_id, GenerationTask.status == "running"
+            )
+            if component_id is not None:
+                stmt = stmt.where(
+                    GenerationTask.components.any(GenerationComponent.id == component_id)
+                )
+            row = (await session.execute(stmt)).one_or_none()
+            if row is None:
+                return None
+            if row.solver_context_json is None:
+                raise RuntimeError(f"Missing solver context for generation task {task_id}")
+            return json.loads(row.solver_context_json)
+
+    @staticmethod
     async def record_component_result(
         task_id: int, component_id: int, result: dict[str, Any]
     ) -> None:
         metrics = result.get("metrics", {})
         async with sessionmaker() as session:
             await bind_task_workspace(session, task_id)
+            task = await session.get(GenerationTask, task_id, with_for_update=True)
+            if task is None or task.status != "running":
+                return
             component = await session.get(GenerationComponent, component_id)
-            if component is not None and component.task_id == task_id:
-                component.status = result.get("status", "failed")
-                component.variable_count = int(metrics.get("variables", 0))
-                component.constraint_count = int(metrics.get("constraints", 0))
-                component.solve_seconds = metrics.get("solve_seconds")
-                component.objective = metrics.get("objective")
-                component.error_message = result.get("error")
-            await session.commit()
+            if component is None or component.task_id != task_id:
+                return
 
-        async with sessionmaker() as session:
-            await bind_task_workspace(session, task_id)
+            component.status = result.get("status", "failed")
+            component.variable_count = int(metrics.get("variables", 0))
+            component.constraint_count = int(metrics.get("constraints", 0))
+            component.solve_seconds = metrics.get("solve_seconds")
+            component.objective = metrics.get("objective")
+            component.error_message = result.get("error")
+            await session.flush()
             completed = await session.scalar(
                 select(func.count(GenerationComponent.id)).where(
                     GenerationComponent.task_id == task_id,
                     GenerationComponent.status.in_(("success", "failed")),
                 )
             )
-            task = await session.get(GenerationTask, task_id)
-            if task is not None and task.status != "canceled":
-                task.completed_components = int(completed or 0)
-                task.progress_percent = min(
-                    95,
-                    int(task.completed_components * 90 / max(1, task.total_components))
-                    + 5,
-                )
-                await session.commit()
+            task.completed_components = int(completed or 0)
+            task.progress_percent = min(
+                95,
+                task.completed_components * 90 // max(1, task.total_components) + 5,
+            )
+            await session.commit()
 
     @staticmethod
     async def save_workflow_id(
@@ -718,15 +744,11 @@ class ScalableGenerationService:
 
         async with sessionmaker() as session:
             await bind_task_workspace(session, task_id)
-            task = await session.get(GenerationTask, task_id)
+            task = await session.get(GenerationTask, task_id, with_for_update=True)
             if task is None:
                 return False
-            if task.status == "canceled":
-                await session.execute(
-                    delete(GenerationLock).where(GenerationLock.task_id == task_id)
-                )
-                await session.commit()
-                return False
+            if task.status != "running":
+                return task.status in {"success", "partial"}
             await session.execute(
                 delete(ScheduleEntry).where(ScheduleEntry.task_id == task_id)
             )
@@ -969,6 +991,7 @@ class ScalableGenerationService:
             task.result_count = len(entries)
             task.completed_components = task.total_components
             task.progress_percent = 100
+            task.solver_context_json = None
             if failed_results and entries:
                 task.status = "partial"
                 task.error_message = "; ".join(
@@ -996,8 +1019,16 @@ class ScalableGenerationService:
             await bind_task_workspace(session, task_id)
             await session.execute(
                 update(GenerationTask)
-                .where(GenerationTask.id == task_id)
-                .values(status="failed", error_message=error, progress_percent=100)
+                .where(
+                    GenerationTask.id == task_id,
+                    GenerationTask.status.in_(ACTIVE_STATUSES),
+                )
+                .values(
+                    status="failed",
+                    error_message=error,
+                    progress_percent=100,
+                    solver_context_json=None,
+                )
             )
             await session.execute(
                 delete(GenerationLock).where(GenerationLock.task_id == task_id)

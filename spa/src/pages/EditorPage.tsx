@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { Users, Search, BookOpen, Filter } from "lucide-react";
-import { API_BASE_URL, apiFetch } from "../api/apiConfig";
+import { useEffect, useRef, useState } from "react";
+import { Search } from "lucide-react";
+import { API_BASE_URL, apiFetchJson } from "../api/apiConfig";
+import "./EditorPage.css";
 
 interface StreamItem {
   id: number;
@@ -11,7 +12,7 @@ interface StreamItem {
   groups: { name: string; size: number }[];
 }
 
-const STREAM_TYPES = [
+const streamTypes = [
   "Лекция",
   "Семинар",
   "Лабораторная",
@@ -19,589 +20,278 @@ const STREAM_TYPES = [
   "Внеучебное мероприятие",
 ];
 
-export const EditorPage: React.FC = () => {
+export function EditorPage() {
   const [groups, setGroups] = useState<string[]>([]);
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
-
+  const [query, setQuery] = useState("");
   const [streams, setStreams] = useState<StreamItem[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [typeFilter, setTypeFilter] = useState<string>("Все типы");
+  const [loadedGroup, setLoadedGroup] = useState<string | null>(null);
+  const [typeFilter, setTypeFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState<ReadonlySet<number>>(new Set());
+  const updates = useRef(new Map<number, AbortController>());
 
-  const fetchGroups = useCallback(async () => {
-    try {
-      const res = await apiFetch(`${API_BASE_URL}/api/v1/scheduler/groups`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      setGroups(data.groups || []);
-    } catch {
-      setError("Не удалось загрузить список групп");
-    }
+  useEffect(() => {
+    const controller = new AbortController();
+    void apiFetchJson<{ groups: string[] }>(
+      `${API_BASE_URL}/api/v1/scheduler/groups`,
+      "Не удалось загрузить список групп",
+      { signal: controller.signal },
+    )
+      .then(({ groups }) => {
+        if (!controller.signal.aborted) setGroups(groups);
+      })
+      .catch((error: Error) => {
+        if (!controller.signal.aborted) setError(error.message);
+      });
+    return () => controller.abort();
   }, []);
 
-  const fetchStreams = useCallback(async (group: string) => {
-    setIsLoading(true);
-    try {
-      const res = await apiFetch(
-        `${API_BASE_URL}/api/v1/scheduler/streams?group_name=${encodeURIComponent(group)}`,
-      );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      setStreams(data);
-    } catch {
-      setError("Не удалось загрузить учебные потоки");
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  const updateStream = useCallback(
-    async (id: number, payload: Partial<StreamItem>) => {
-      const previous = streams.find((stream) => stream.id === id);
-      setError(null);
-      // Optimistic UI update
-      setStreams((prev) =>
-        prev.map((s) => (s.id === id ? { ...s, ...payload } : s)),
-      );
-
-      try {
-        const response = await apiFetch(
-          `${API_BASE_URL}/api/v1/scheduler/streams/${id}`,
-          {
-            method: "PATCH",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(payload),
-          },
-        );
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      } catch {
-        if (previous) {
-          setStreams((current) =>
-            current.map((stream) => (stream.id === id ? previous : stream)),
-          );
+  useEffect(() => {
+    if (!selectedGroup) return;
+    const controller = new AbortController();
+    void apiFetchJson<StreamItem[]>(
+      `${API_BASE_URL}/api/v1/scheduler/streams?group_name=${encodeURIComponent(selectedGroup)}`,
+      "Не удалось загрузить учебные потоки",
+      { signal: controller.signal },
+    )
+      .then((items) => {
+        if (!controller.signal.aborted) setStreams(items);
+      })
+      .catch((error: Error) => {
+        if (!controller.signal.aborted) {
+          setStreams([]);
+          setError(error.message);
         }
-        setError("Изменение не сохранено. Предыдущее значение восстановлено.");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoadedGroup(selectedGroup);
+      });
+    return () => controller.abort();
+  }, [selectedGroup]);
+
+  useEffect(() => {
+    const pending = updates.current;
+    return () => pending.forEach((controller) => controller.abort());
+  }, []);
+
+  const updateStream = async (
+    stream: StreamItem,
+    patch: Partial<Pick<StreamItem, "stream_type" | "is_ignored">>,
+  ) => {
+    if (updates.current.has(stream.id)) return;
+    const controller = new AbortController();
+    const update = (values: Partial<StreamItem>) => {
+      setStreams((current) =>
+        current.map((item) =>
+          item.id === stream.id ? { ...item, ...values } : item,
+        ),
+      );
+    };
+    updates.current.set(stream.id, controller);
+    setSaving(new Set(updates.current.keys()));
+    setError(null);
+    update(patch);
+
+    try {
+      await apiFetchJson(
+        `${API_BASE_URL}/api/v1/scheduler/streams/${stream.id}`,
+        "Не удалось сохранить изменение",
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch),
+          signal: controller.signal,
+        },
+      );
+      if (!controller.signal.aborted) update(patch);
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        update(stream);
+        setError(
+          error instanceof Error
+            ? error.message
+            : "Не удалось сохранить изменение",
+        );
       }
-    },
-    [streams],
-  );
-
-  useEffect(() => {
-    fetchGroups();
-  }, [fetchGroups]);
-
-  useEffect(() => {
-    if (selectedGroup) {
-      fetchStreams(selectedGroup);
+    } finally {
+      updates.current.delete(stream.id);
+      if (!controller.signal.aborted)
+        setSaving(new Set(updates.current.keys()));
     }
-  }, [selectedGroup, fetchStreams]);
+  };
 
-  const filteredGroups = groups.filter((g) =>
-    g.toLowerCase().includes(searchQuery.toLowerCase()),
+  const filteredGroups = groups.filter((group) =>
+    group.toLowerCase().includes(query.toLowerCase()),
   );
-
   const filteredStreams = streams.filter(
-    (s) => typeFilter === "Все типы" || s.stream_type === typeFilter,
+    (stream) => !typeFilter || stream.stream_type === typeFilter,
   );
 
   return (
-    <div
-      className="space-y-6"
-      style={{
-        height: "calc(100vh - 120px)",
-        display: "flex",
-        flexDirection: "column",
-      }}
-    >
-      <header className="flex justify-between items-end">
+    <div className="enterprise-page">
+      <header className="workspace-header">
         <div>
-          <h1 className="text-2xl font-bold text-text-primary">Редактор пар</h1>
-          <p className="text-text-secondary mt-1 text-sm">
-            Уточняйте типы пар и исключайте лишние дисциплины перед генерацией
-            расписания.
-          </p>
+          <h1>Редактор учебных потоков</h1>
+          <p>Уточняйте типы пар и выбирайте занятия для расчёта.</p>
         </div>
       </header>
       {error && (
-        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+        <p className="notice notice--danger" role="alert">
           {error}
-        </div>
+        </p>
       )}
-
-      <div
-        style={{ display: "flex", gap: "1.5rem", flex: 1, overflow: "hidden" }}
-      >
-        {/* Left Sidebar: List of groups */}
-        <div
-          style={{
-            width: "280px",
-            backgroundColor: "white",
-            borderRadius: "12px",
-            border: "1px solid var(--border-light)",
-            overflow: "hidden",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          <div
-            style={{
-              padding: "1rem",
-              borderBottom: "1px solid var(--border-light)",
-            }}
-          >
-            <div style={{ position: "relative" }}>
-              <Search
-                size={16}
-                style={{
-                  position: "absolute",
-                  left: "0.75rem",
-                  top: "50%",
-                  transform: "translateY(-50%)",
-                  color: "var(--text-tertiary)",
-                }}
-              />
-              <input
-                type="text"
-                placeholder="Поиск группы..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                style={{
-                  width: "100%",
-                  padding: "0.5rem 0.75rem 0.5rem 2.25rem",
-                  borderRadius: "8px",
-                  border: "1px solid var(--border-light)",
-                  backgroundColor: "var(--bg-base)",
-                  fontSize: "0.875rem",
-                }}
-              />
-            </div>
-          </div>
-          <div style={{ flex: 1, overflowY: "auto" }}>
+      <div className="editor-layout">
+        <aside className="app-panel editor-groups" aria-label="Учебные группы">
+          <label className="app-search">
+            <Search size={16} aria-hidden="true" />
+            <input
+              className="app-field"
+              type="search"
+              aria-label="Поиск групп"
+              placeholder="Поиск групп"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          </label>
+          <ul>
             {filteredGroups.map((group) => (
-              <button
-                key={group}
-                onClick={() => setSelectedGroup(group)}
-                style={{
-                  width: "100%",
-                  padding: "0.875rem 1rem",
-                  textAlign: "left",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  borderBottom: "1px solid var(--border-light)",
-                  backgroundColor:
-                    selectedGroup === group ? "#eef2ff" : "transparent",
-                  color:
-                    selectedGroup === group
-                      ? "var(--brand)"
-                      : "var(--text-primary)",
-                  fontWeight: selectedGroup === group ? 700 : 500,
-                  transition: "background-color 0.15s",
-                  cursor: "pointer",
-                }}
-                className="hover:bg-gray-50"
-              >
-                {group}
-              </button>
+              <li key={group}>
+                <button
+                  type="button"
+                  aria-pressed={selectedGroup === group}
+                  onClick={() => {
+                    setSelectedGroup(group);
+                    if (selectedGroup !== group) {
+                      setLoadedGroup(null);
+                      setError(null);
+                    }
+                  }}
+                >
+                  {group}
+                </button>
+              </li>
             ))}
-            {filteredGroups.length === 0 && (
-              <div
-                style={{
-                  padding: "2rem 1rem",
-                  textAlign: "center",
-                  color: "var(--text-tertiary)",
-                  fontSize: "0.875rem",
-                }}
-              >
-                Группы не найдены
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Right Content: Streams Editor */}
-        <div
-          style={{
-            flex: 1,
-            backgroundColor: "white",
-            borderRadius: "12px",
-            border: "1px solid var(--border-light)",
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-          }}
-        >
+          </ul>
+        </aside>
+        <section className="app-panel editor-streams">
           {selectedGroup ? (
             <>
-              <div
-                style={{
-                  padding: "1rem 1.25rem",
-                  borderBottom: "1px solid var(--border-light)",
-                  backgroundColor: "#fafafa",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "0.75rem",
-                  }}
-                >
-                  <div
-                    style={{
-                      width: "36px",
-                      height: "36px",
-                      borderRadius: "8px",
-                      backgroundColor: "var(--bg-base)",
-                      color: "var(--brand)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
+              <div className="app-section app-section--header">
+                <h2>{selectedGroup}</h2>
+                <label className="app-field-label">
+                  Тип занятия
+                  <select
+                    className="app-field"
+                    value={typeFilter}
+                    onChange={(event) => setTypeFilter(event.target.value)}
                   >
-                    <BookOpen size={18} />
-                  </div>
-                  <div>
-                    <h2 style={{ fontSize: "1.125rem", fontWeight: 700 }}>
-                      Учебный план: {selectedGroup}
-                    </h2>
-                    <p
-                      style={{
-                        fontSize: "0.75rem",
-                        color: "var(--text-tertiary)",
-                        marginTop: "0.125rem",
-                      }}
-                    >
-                      Найдено пар: {streams.length}
-                    </p>
-                  </div>
-                </div>
-
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "0.75rem",
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "0.5rem",
-                      backgroundColor: "white",
-                      padding: "0.375rem 0.75rem",
-                      borderRadius: "8px",
-                      border: "1px solid var(--border-light)",
-                    }}
-                  >
-                    <Filter
-                      size={14}
-                      style={{ color: "var(--text-secondary)" }}
-                    />
-                    <select
-                      value={typeFilter}
-                      onChange={(e) => setTypeFilter(e.target.value)}
-                      style={{
-                        border: "none",
-                        fontSize: "0.8125rem",
-                        fontWeight: 600,
-                        color: "var(--text-primary)",
-                        outline: "none",
-                        backgroundColor: "transparent",
-                      }}
-                    >
-                      <option>Все типы</option>
-                      {STREAM_TYPES.map((t) => (
-                        <option key={t} value={t}>
-                          {t}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
+                    <option value="">Все типы</option>
+                    {streamTypes.map((type) => (
+                      <option key={type}>{type}</option>
+                    ))}
+                  </select>
+                </label>
               </div>
-
-              <div style={{ flex: 1, overflowY: "auto", padding: "0" }}>
-                {isLoading ? (
-                  <div
-                    style={{
-                      padding: "3rem",
-                      textAlign: "center",
-                      color: "var(--text-tertiary)",
-                    }}
-                  >
-                    Загрузка...
-                  </div>
-                ) : streams.length === 0 ? (
-                  <div
-                    style={{
-                      padding: "3rem",
-                      textAlign: "center",
-                      color: "var(--text-tertiary)",
-                    }}
-                  >
-                    У этой группы нет пар.
-                  </div>
-                ) : (
-                  <table
-                    style={{
-                      width: "100%",
-                      borderCollapse: "collapse",
-                      textAlign: "left",
-                    }}
-                  >
-                    <thead
-                      style={{
-                        position: "sticky",
-                        top: 0,
-                        backgroundColor: "white",
-                        zIndex: 10,
-                        boxShadow: "0 1px 0 var(--border-light)",
-                      }}
-                    >
+              {loadedGroup !== selectedGroup ? (
+                <p className="loading-state" role="status">
+                  Загрузка учебных потоков…
+                </p>
+              ) : filteredStreams.length ? (
+                <div className="app-table-scroll">
+                  <table className="app-table editor-table">
+                    <thead>
                       <tr>
-                        <th
-                          style={{
-                            padding: "1rem 1.25rem",
-                            fontSize: "0.75rem",
-                            fontWeight: 600,
-                            color: "var(--text-secondary)",
-                            textTransform: "uppercase",
-                          }}
-                        >
-                          Дисциплина / Преподаватель
-                        </th>
-                        <th
-                          style={{
-                            padding: "1rem 1.25rem",
-                            fontSize: "0.75rem",
-                            fontWeight: 600,
-                            color: "var(--text-secondary)",
-                            textTransform: "uppercase",
-                          }}
-                        >
-                          Группы в потоке
-                        </th>
-                        <th
-                          style={{
-                            padding: "1rem 1.25rem",
-                            fontSize: "0.75rem",
-                            fontWeight: 600,
-                            color: "var(--text-secondary)",
-                            textTransform: "uppercase",
-                          }}
-                        >
-                          Тип пары
-                        </th>
-                        <th
-                          style={{
-                            padding: "1rem 1.25rem",
-                            fontSize: "0.75rem",
-                            fontWeight: 600,
-                            color: "var(--text-secondary)",
-                            textTransform: "uppercase",
-                            textAlign: "right",
-                          }}
-                        >
-                          Статус
-                        </th>
+                        <th scope="col">Дисциплина / Преподаватель</th>
+                        <th scope="col">Группы в потоке</th>
+                        <th scope="col">Тип пары</th>
+                        <th scope="col">Статус</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredStreams.map((stream) => (
-                        <tr
-                          key={stream.id}
-                          style={{
-                            borderBottom: "1px solid var(--border-light)",
-                            backgroundColor: stream.is_ignored
-                              ? "#fafafa"
-                              : "transparent",
-                            opacity: stream.is_ignored ? 0.6 : 1,
-                            transition: "all 0.2s",
-                          }}
-                          className="hover:bg-gray-50"
-                        >
-                          <td style={{ padding: "1rem 1.25rem" }}>
-                            <div
-                              style={{
-                                fontWeight: 600,
-                                fontSize: "0.875rem",
-                                color: "var(--text-primary)",
-                                marginBottom: "0.25rem",
-                              }}
-                            >
-                              {stream.event_name}
-                            </div>
-                            <div
-                              style={{
-                                fontSize: "0.75rem",
-                                color: "var(--text-tertiary)",
-                              }}
-                            >
-                              {stream.teacher || "Не назначен"}
-                            </div>
-                          </td>
-                          <td style={{ padding: "1rem 1.25rem" }}>
-                            <div
-                              style={{
-                                display: "flex",
-                                flexWrap: "wrap",
-                                gap: "0.25rem",
-                              }}
-                            >
-                              {stream.groups.map((g) => (
-                                <span
-                                  key={g.name}
-                                  style={{
-                                    fontSize: "0.65rem",
-                                    padding: "0.125rem 0.375rem",
-                                    backgroundColor:
-                                      g.name === selectedGroup
-                                        ? "var(--brand)"
-                                        : "var(--bg-base)",
-                                    color:
-                                      g.name === selectedGroup
-                                        ? "white"
-                                        : "var(--text-secondary)",
-                                    borderRadius: "4px",
-                                    fontWeight: 600,
-                                  }}
-                                >
-                                  {g.name}
-                                </span>
-                              ))}
-                            </div>
-                          </td>
-                          <td style={{ padding: "1rem 1.25rem" }}>
-                            <select
-                              value={stream.stream_type || "Не указан"}
-                              onChange={(e) =>
-                                updateStream(stream.id, {
-                                  stream_type:
-                                    e.target.value === "Не указан"
-                                      ? null
-                                      : e.target.value,
-                                })
-                              }
-                              disabled={stream.is_ignored}
-                              style={{
-                                padding: "0.375rem 0.75rem",
-                                borderRadius: "6px",
-                                border: "1px solid var(--border-light)",
-                                fontSize: "0.875rem",
-                                color: "var(--text-primary)",
-                                outline: "none",
-                                cursor: stream.is_ignored
-                                  ? "not-allowed"
-                                  : "pointer",
-                              }}
-                            >
-                              {STREAM_TYPES.map((t) => (
-                                <option key={t} value={t}>
-                                  {t}
-                                </option>
-                              ))}
-                            </select>
-                          </td>
-                          <td
-                            style={{
-                              padding: "1rem 1.25rem",
-                              textAlign: "right",
-                            }}
-                          >
-                            <label
-                              style={{
-                                display: "inline-flex",
-                                alignItems: "center",
-                                cursor: "pointer",
-                                gap: "0.5rem",
-                              }}
-                            >
-                              <span
-                                style={{
-                                  fontSize: "0.75rem",
-                                  fontWeight: 600,
-                                  color: stream.is_ignored
-                                    ? "#ef4444"
-                                    : "var(--brand)",
-                                }}
+                      {filteredStreams.map((stream) => {
+                        const pending = saving.has(stream.id);
+                        return (
+                          <tr key={stream.id}>
+                            <th scope="row">
+                              <strong>{stream.event_name}</strong>
+                              <small>{stream.teacher || "Не назначен"}</small>
+                            </th>
+                            <td>
+                              <ul className="app-control-row">
+                                {stream.groups.map(({ name }) => (
+                                  <li
+                                    className={
+                                      name === selectedGroup
+                                        ? "editor-group--current"
+                                        : undefined
+                                    }
+                                    key={name}
+                                  >
+                                    {name}
+                                  </li>
+                                ))}
+                              </ul>
+                            </td>
+                            <td>
+                              <select
+                                className="app-field"
+                                aria-label={`Тип пары: ${stream.event_name}`}
+                                value={stream.stream_type || ""}
+                                disabled={pending || stream.is_ignored}
+                                onChange={(event) =>
+                                  void updateStream(stream, {
+                                    stream_type: event.target.value || null,
+                                  })
+                                }
                               >
+                                <option value="">Не указан</option>
+                                {stream.stream_type &&
+                                  !streamTypes.includes(stream.stream_type) && (
+                                    <option>{stream.stream_type}</option>
+                                  )}
+                                {streamTypes.map((type) => (
+                                  <option key={type}>{type}</option>
+                                ))}
+                              </select>
+                            </td>
+                            <td>
+                              <label className="editor-table__status">
+                                <input
+                                  type="checkbox"
+                                  aria-label={`Включить в расписание: ${stream.event_name}`}
+                                  checked={!stream.is_ignored}
+                                  disabled={pending}
+                                  onChange={(event) =>
+                                    void updateStream(stream, {
+                                      is_ignored: !event.target.checked,
+                                    })
+                                  }
+                                />
                                 {stream.is_ignored
                                   ? "Исключена"
                                   : "В расписании"}
-                              </span>
-                              <div
-                                style={{
-                                  width: "36px",
-                                  height: "20px",
-                                  backgroundColor: stream.is_ignored
-                                    ? "#ef4444"
-                                    : "var(--brand)",
-                                  borderRadius: "100px",
-                                  position: "relative",
-                                  transition: "background-color 0.2s",
-                                }}
-                              >
-                                <div
-                                  style={{
-                                    width: "16px",
-                                    height: "16px",
-                                    backgroundColor: "white",
-                                    borderRadius: "50%",
-                                    position: "absolute",
-                                    top: "2px",
-                                    left: stream.is_ignored ? "2px" : "18px",
-                                    transition: "left 0.2s",
-                                  }}
-                                />
-                              </div>
-                              <input
-                                type="checkbox"
-                                checked={!stream.is_ignored}
-                                onChange={(e) =>
-                                  updateStream(stream.id, {
-                                    is_ignored: !e.target.checked,
-                                  })
-                                }
-                                style={{ display: "none" }}
-                              />
-                            </label>
-                          </td>
-                        </tr>
-                      ))}
+                              </label>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
-                )}
-              </div>
+                </div>
+              ) : (
+                <p className="app-section text-text-secondary">
+                  Нет пар, соответствующих фильтру.
+                </p>
+              )}
             </>
           ) : (
-            <div
-              style={{
-                flex: 1,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: "var(--text-tertiary)",
-                flexDirection: "column",
-                gap: "1rem",
-                backgroundColor: "#fafafa",
-              }}
-            >
-              <Users size={48} opacity={0.2} />
-              <div style={{ fontWeight: 600 }}>
-                Выберите группу слева для редактирования учебного плана
-              </div>
-            </div>
+            <p className="app-section text-text-secondary">
+              Выберите группу для просмотра пар.
+            </p>
           )}
-        </div>
+        </section>
       </div>
     </div>
   );
-};
+}

@@ -1,16 +1,7 @@
 import { create } from "zustand";
-import { MockAPI } from "../api/mockService";
-import type { Stream } from "../api/mockService";
-import { API_BASE_URL, apiFetch } from "../api/apiConfig";
+import { API_BASE_URL, apiFetchJson } from "../api/apiConfig";
 import { toggleDayRestrictions } from "../utils/dayRestrictions";
-import {
-  getSlotsForInterval,
-  minutesToTime,
-  PAIR_TIMES,
-  timeToMinutes,
-} from "../utils/scheduleTime";
-
-export { getSlotsForInterval, minutesToTime, PAIR_TIMES, timeToMinutes };
+import { getSlotsForInterval } from "../utils/scheduleTime";
 
 export interface TimeInterval {
   id: string;
@@ -38,24 +29,15 @@ export interface Teacher {
 interface AppState {
   // Data
   teachers: Teacher[];
-  streams: Stream[];
   isLoading: boolean;
   error: string | null;
 
   // Selection
   selectedTeacherId: string | null;
 
-  // Job Status
-  isGenerating: boolean;
-  jobId: string | null;
-  progress: number;
-  logs: string[];
-
   // Actions
   fetchInitialData: () => Promise<void>;
   setSelectedTeacherId: (id: string | null) => void;
-  updateJobProgress: (jobId: string) => Promise<void>;
-  resetJob: () => void;
   saveTeacherRestrictions: (teacherId: string) => Promise<void>;
 
   // Advanced Actions
@@ -78,33 +60,26 @@ interface AppState {
     intervalData: Omit<TimeInterval, "id">,
   ) => void;
   removeInterval: (teacherId: string, intervalId: string) => void;
-  startGeneration: () => Promise<void>;
 }
 
 let workspaceEpoch = 0;
+const pendingRestrictionSaves = new Map<string, Promise<void>>();
 
 export const useAppStore = create<AppState>((set) => ({
   teachers: [],
-  streams: [],
   isLoading: false,
   error: null,
 
   selectedTeacherId: null,
 
-  isGenerating: false,
-  jobId: null,
-  progress: 0,
-  logs: [],
-
   fetchInitialData: async () => {
     const epoch = workspaceEpoch;
     set({ isLoading: true, error: null });
     try {
-      const res = await apiFetch(`${API_BASE_URL}/api/v1/scheduler/teachers`);
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-      const payload: unknown = await res.json();
+      const payload = await apiFetchJson(
+        `${API_BASE_URL}/api/v1/scheduler/teachers`,
+        "Не удалось загрузить данные преподавателей",
+      );
       if (!Array.isArray(payload)) {
         throw new Error("Некорректный ответ сервера");
       }
@@ -305,73 +280,49 @@ export const useAppStore = create<AppState>((set) => ({
     }));
   },
 
-  startGeneration: async () => {
-    const epoch = workspaceEpoch;
-    set({ isGenerating: true, progress: 0, logs: ["Инициализация..."] });
-    try {
-      const { jobId } = await MockAPI.startGeneration();
-      if (epoch !== workspaceEpoch) return;
-      set({ jobId });
-    } catch {
-      if (epoch !== workspaceEpoch) return;
-      set({ error: "Failed to start generation", isGenerating: false });
-    }
-  },
-
-  updateJobProgress: async (jobId) => {
-    const epoch = workspaceEpoch;
-    try {
-      const { progress, logs } = await MockAPI.checkStatus(jobId);
-      if (epoch !== workspaceEpoch) return;
-      set({ progress, logs });
-      if (progress >= 100) {
-        set({ isGenerating: false, jobId: null });
-      }
-    } catch (err) {
-      console.error("Progress update failed", err);
-    }
-  },
-
-  resetJob: () =>
-    set({ isGenerating: false, jobId: null, progress: 0, logs: [] }),
-
   saveTeacherRestrictions: async (teacherId: string) => {
     const epoch = workspaceEpoch;
     const state = useAppStore.getState();
     const teacher = state.teachers.find((t) => t.id === teacherId);
     if (!teacher) return;
 
-    try {
-      const response = await apiFetch(
-        `${API_BASE_URL}/api/v1/scheduler/teachers/${teacherId}/restrictions`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ restrictions: teacher.restrictions }),
-        },
-      );
+    const body = JSON.stringify({ restrictions: teacher.restrictions });
+    const previous = pendingRestrictionSaves.get(teacherId);
+    const save = async () => {
+      if (previous) await previous;
       if (epoch !== workspaceEpoch) return;
-      if (!response.ok) {
-        const payload = (await response.json().catch(() => null)) as {
-          detail?: string;
-        } | null;
-        if (epoch !== workspaceEpoch) return;
-        set({
-          error:
-            payload?.detail || "Не удалось сохранить ограничения преподавателя",
-        });
-        return;
+      const message = "Не удалось сохранить ограничения преподавателя";
+      try {
+        await apiFetchJson(
+          `${API_BASE_URL}/api/v1/scheduler/teachers/${teacherId}/restrictions`,
+          message,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body,
+          },
+        );
+        if (epoch === workspaceEpoch) set({ error: null });
+      } catch (error) {
+        if (epoch === workspaceEpoch) {
+          set({ error: error instanceof Error ? error.message : message });
+        }
       }
-      set({ error: null });
-    } catch (e) {
-      if (epoch !== workspaceEpoch) return;
-      console.error("Failed to save restrictions", e);
-      set({ error: "Не удалось сохранить ограничения преподавателя" });
+    };
+    const pending = save();
+    pendingRestrictionSaves.set(teacherId, pending);
+    try {
+      await pending;
+    } finally {
+      if (pendingRestrictionSaves.get(teacherId) === pending) {
+        pendingRestrictionSaves.delete(teacherId);
+      }
     }
   },
 }));
 
 export const resetWorkspaceStore = () => {
   workspaceEpoch += 1;
+  pendingRestrictionSaves.clear();
   useAppStore.setState(useAppStore.getInitialState(), true);
 };

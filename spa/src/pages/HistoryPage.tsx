@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useNavigate } from "react-router-dom";
 import {
   AlertTriangle,
@@ -22,7 +28,15 @@ import {
   XCircle,
 } from "lucide-react";
 import { ActionButton } from "../components/ActionButton";
-import { API_BASE_URL, apiFetch, openDownload } from "../api/apiConfig";
+import {
+  API_BASE_URL,
+  apiFetchJson,
+  apiFetchNoContent,
+} from "../api/apiConfig";
+
+import { useFeedback } from "../components/feedbackContext";
+import { isActiveTask, usePolling } from "../hooks/usePolling";
+import "./HistoryPage.css";
 
 interface PlanningWeekSummary {
   id: number;
@@ -110,24 +124,48 @@ const HistoryPage: React.FC = () => {
     new Set(),
   );
   const navigate = useNavigate();
+  const { notify, showDialog, download } = useFeedback();
+  const pendingRequest = useRef<AbortController | null>(null);
 
-  const fetchTasks = useCallback(async () => {
-    try {
-      const response = await apiFetch(`${API_BASE_URL}/api/v1/scheduler/tasks`);
-      if (!response.ok) throw new Error("Не удалось загрузить задачи");
-      setTasks(await response.json());
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+  const fetchTasks = useCallback(
+    async (pollSignal?: AbortSignal) => {
+      pendingRequest.current?.abort();
+      const request = new AbortController();
+      pendingRequest.current = request;
+      const signal = pollSignal
+        ? AbortSignal.any([pollSignal, request.signal])
+        : request.signal;
+      try {
+        const data = await apiFetchJson<GenerationTask[]>(
+          `${API_BASE_URL}/api/v1/scheduler/tasks`,
+          "Не удалось загрузить задачи",
+          { signal },
+        );
+        if (!signal.aborted) setTasks(data);
+      } catch (error) {
+        if (!signal.aborted && !pollSignal) {
+          notify(
+            error instanceof Error
+              ? error.message
+              : "Не удалось загрузить задачи",
+          );
+        }
+      } finally {
+        if (!signal.aborted) setIsLoading(false);
+      }
+    },
+    [notify],
+  );
 
   useEffect(() => {
     void fetchTasks();
-    const intervalId = window.setInterval(() => void fetchTasks(), 3000);
-    return () => window.clearInterval(intervalId);
+    return () => pendingRequest.current?.abort();
   }, [fetchTasks]);
+
+  usePolling(
+    tasks.some((task) => isActiveTask(task.status)),
+    fetchTasks,
+  );
 
   const registryItems = useMemo(() => {
     const batches = new Map<string, GenerationTask[]>();
@@ -179,29 +217,38 @@ const HistoryPage: React.FC = () => {
     taskId: number,
     action: "cancel" | "retry" | "publish" | "archive",
   ) => {
-    const response = await apiFetch(
-      `${API_BASE_URL}/api/v1/scheduler/tasks/${taskId}/${action}`,
-      { method: "POST" },
-    );
-    if (!response.ok) {
-      const payload = (await response.json()) as { detail?: string };
-      alert(payload.detail || "Операция не выполнена");
-      return;
+    try {
+      await apiFetchJson(
+        `${API_BASE_URL}/api/v1/scheduler/tasks/${taskId}/${action}`,
+        "Операция не выполнена",
+        { method: "POST" },
+      );
+      await fetchTasks();
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Операция не выполнена");
     }
-    await fetchTasks();
   };
 
   const showDiagnostics = async (taskId: number) => {
-    const response = await apiFetch(
-      `${API_BASE_URL}/api/v1/scheduler/tasks/${taskId}/diagnostics`,
-    );
-    const payload = (await response.json()) as {
-      counts?: Record<string, number>;
-    };
-    const summary = Object.entries(payload.counts || {})
-      .map(([kind, count]) => `${kind}: ${count}`)
-      .join("\n");
-    alert(summary || "Проблем при генерации не обнаружено");
+    try {
+      const payload = await apiFetchJson<{ counts?: Record<string, number> }>(
+        `${API_BASE_URL}/api/v1/scheduler/tasks/${taskId}/diagnostics`,
+        "Не удалось загрузить диагностику",
+      );
+      const summary = Object.entries(payload.counts || {})
+        .map(([kind, count]) => `${kind}: ${count}`)
+        .join("\n");
+      showDialog({
+        title: "Диагностика расчёта",
+        message: summary || "Проблем при генерации не обнаружено",
+      });
+    } catch (error) {
+      notify(
+        error instanceof Error
+          ? error.message
+          : "Не удалось загрузить диагностику",
+      );
+    }
   };
 
   const handleInherit = (task: GenerationTask) => {
@@ -249,59 +296,51 @@ const HistoryPage: React.FC = () => {
     const url = new URL(path, window.location.origin).toString();
     try {
       await navigator.clipboard.writeText(url);
-      alert(
-        "Личная ссылка скопирована. Расписание доступно только в вашем аккаунте.",
+      notify(
+        "Личная ссылка скопирована. Расписание доступно в вашем аккаунте.",
+        "success",
       );
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
-      window.prompt("Скопируйте ссылку на расчёт", url);
+      showDialog({ title: "Скопируйте ссылку на расчёт", copyValue: url });
     }
   };
 
   const deleteTask = async (task: GenerationTask) => {
-    if (
-      !window.confirm(
-        `Удалить расчёт #${task.id} и всё связанное расписание? Это действие нельзя отменить.`,
-      )
-    ) {
-      return;
+    try {
+      await apiFetchNoContent(
+        `${API_BASE_URL}/api/v1/scheduler/tasks/${task.id}`,
+        "Не удалось удалить расчёт",
+        { method: "DELETE" },
+      );
+      await fetchTasks();
+    } catch (error) {
+      notify(
+        error instanceof Error ? error.message : "Не удалось удалить расчёт",
+      );
     }
-    const response = await apiFetch(
-      `${API_BASE_URL}/api/v1/scheduler/tasks/${task.id}`,
-      { method: "DELETE" },
-    );
-    if (!response.ok) {
-      const payload = (await response.json()) as { detail?: string };
-      alert(payload.detail || "Не удалось удалить расчёт");
-      return;
-    }
-    await fetchTasks();
   };
 
   const deleteSemesterBatch = async (batch: SemesterBatch) => {
-    const displayId = formatSemesterBatchId(batch.id);
-    if (
-      !window.confirm(
-        `Удалить семестровый расчёт #${displayId} и все ${batch.tasks.length} недель? Это действие нельзя отменить.`,
-      )
-    ) {
-      return;
+    try {
+      await apiFetchNoContent(
+        `${API_BASE_URL}/api/v1/scheduler/semester-batches/${encodeURIComponent(batch.id)}`,
+        "Не удалось удалить семестровый расчёт",
+        { method: "DELETE" },
+      );
+      setExpandedBatches((current) => {
+        const next = new Set(current);
+        next.delete(batch.id);
+        return next;
+      });
+      await fetchTasks();
+    } catch (error) {
+      notify(
+        error instanceof Error
+          ? error.message
+          : "Не удалось удалить семестровый расчёт",
+      );
     }
-    const response = await apiFetch(
-      `${API_BASE_URL}/api/v1/scheduler/semester-batches/${encodeURIComponent(batch.id)}`,
-      { method: "DELETE" },
-    );
-    if (!response.ok) {
-      const payload = (await response.json()) as { detail?: string };
-      alert(payload.detail || "Не удалось удалить семестровый расчёт");
-      return;
-    }
-    setExpandedBatches((current) => {
-      const next = new Set(current);
-      next.delete(batch.id);
-      return next;
-    });
-    await fetchTasks();
   };
 
   const renderTaskActions = (
@@ -374,8 +413,9 @@ const HistoryPage: React.FC = () => {
           className="button-icon task-action--primary"
           label="Скачать Excel"
           onClick={() =>
-            openDownload(
+            void download(
               `${API_BASE_URL}/api/v1/scheduler/export?task_id=${task.id}`,
+              "schedule.xlsx",
             )
           }
         >
@@ -416,7 +456,15 @@ const HistoryPage: React.FC = () => {
         type="button"
         className="button-icon button-danger"
         label="Удалить расчёт"
-        onClick={() => void deleteTask(task)}
+        onClick={() =>
+          showDialog({
+            title: `Удалить расчёт #${task.id}?`,
+            message:
+              "Связанное расписание будет удалено. Это действие нельзя отменить.",
+            confirmLabel: "Удалить",
+            onConfirm: () => void deleteTask(task),
+          })
+        }
       >
         <Trash2 size={16} />
       </ActionButton>
@@ -434,14 +482,14 @@ const HistoryPage: React.FC = () => {
     <div className="enterprise-page animate-fade-in">
       <section className="enterprise-page__header">
         <div>
-          <h2 className="enterprise-page__heading">Реестр расчётов</h2>
+          <h1 className="enterprise-page__heading">Реестр расчётов</h1>
           <p className="enterprise-page__description">
             Семестровые запуски объединены в одну операцию с детализацией по
             неделям. Исходные данные и черновики доступны только вам.
             Опубликованные версии появляются в общем каталоге.
           </p>
         </div>
-        <div style={{ display: "flex", gap: "0.75rem" }}>
+        <div className="app-control-row">
           <button
             type="button"
             className="btn-secondary"
@@ -613,8 +661,9 @@ const HistoryPage: React.FC = () => {
                         className="button-icon task-action--primary"
                         label="Скачать расписание семестра в Excel"
                         onClick={() =>
-                          openDownload(
+                          void download(
                             `${API_BASE_URL}/api/v1/scheduler/export?semester_batch_id=${encodeURIComponent(batch.id)}`,
+                            "semester-schedule.xlsx",
                           )
                         }
                       >
@@ -634,7 +683,14 @@ const HistoryPage: React.FC = () => {
                         type="button"
                         className="button-icon button-danger"
                         label="Удалить семестровый расчёт"
-                        onClick={() => void deleteSemesterBatch(batch)}
+                        onClick={() =>
+                          showDialog({
+                            title: `Удалить семестровый расчёт #${formatSemesterBatchId(batch.id)}?`,
+                            message: `Будут удалены расчёты всех недель (${batch.tasks.length}). Это действие нельзя отменить.`,
+                            confirmLabel: "Удалить",
+                            onConfirm: () => void deleteSemesterBatch(batch),
+                          })
+                        }
                       >
                         <Trash2 size={16} />
                       </ActionButton>

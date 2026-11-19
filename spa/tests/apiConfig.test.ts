@@ -1,7 +1,33 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { apiFetch, setCsrfToken } from "../src/api/apiConfig.js";
+import {
+  apiDownload,
+  apiFetch,
+  apiFetchJson,
+  apiFetchNoContent,
+  setCsrfToken,
+} from "../src/api/apiConfig.js";
+
+test("apiDownload rejects HTTP errors and HTML proxy pages before creating a file", async (t) => {
+  const endpoint = "/api/v1/scheduler/export";
+  const filename = "schedule.xlsx";
+  const fetchMock = t.mock.method(globalThis, "fetch", async () =>
+    Response.json({ detail: "Доступ запрещён" }, { status: 403 }),
+  );
+  await assert.rejects(apiDownload(endpoint, filename), {
+    message: "Доступ запрещён",
+  });
+  fetchMock.mock.mockImplementation(
+    async () =>
+      new Response("<html>Proxy</html>", {
+        headers: { "Content-Type": "text/html" },
+      }),
+  );
+  await assert.rejects(apiDownload(endpoint, filename), {
+    message: "Не удалось скачать файл. Некорректный ответ сервера",
+  });
+});
 
 test("apiFetch sends credentials and CSRF token for mutating requests", async () => {
   const originalFetch = globalThis.fetch;
@@ -62,4 +88,72 @@ test("apiFetch discards a response from the previous account", async () => {
     setCsrfToken(null);
     globalThis.fetch = originalFetch;
   }
+});
+
+test("apiFetchJson handles proxy errors and invalid JSON without exposing the body", async (t) => {
+  const endpoint = "/api/v1/scheduler/tasks";
+  const fallback = "Не удалось загрузить задачи";
+  for (const status of [502, 504]) {
+    const fetchMock = t.mock.method(
+      globalThis,
+      "fetch",
+      async () =>
+        new Response("<html>Gateway error</html>", {
+          status,
+          headers: { "Content-Type": "text/html" },
+        }),
+    );
+    await assert.rejects(apiFetchJson(endpoint, fallback), {
+      message: `${fallback} (HTTP ${status})`,
+    });
+    fetchMock.mock.restore();
+  }
+
+  for (const [body, mediaType] of [
+    ["<html>Proxy</html>", "text/html"],
+    ["{", "application/json"],
+  ]) {
+    const fetchMock = t.mock.method(
+      globalThis,
+      "fetch",
+      async () =>
+        new Response(body, { headers: { "Content-Type": mediaType } }),
+    );
+    await assert.rejects(apiFetchJson(endpoint, fallback), {
+      message: `${fallback}. Некорректный ответ сервера`,
+    });
+    fetchMock.mock.restore();
+  }
+});
+
+test("apiFetchJson preserves conflict messages and handles a rejected fetch", async (t) => {
+  const endpoint = "/api/v1/scheduler/schedule/1";
+  const fetchMock = t.mock.method(globalThis, "fetch", async () =>
+    Response.json(
+      { detail: { conflicts: ["Группа занята", "Аудитория занята"] } },
+      { status: 409 },
+    ),
+  );
+  await assert.rejects(apiFetchJson(endpoint, "Не удалось перенести занятие"), {
+    message: "Группа занята\nАудитория занята",
+  });
+  fetchMock.mock.mockImplementation(async () => {
+    throw new TypeError("Failed to fetch");
+  });
+  await assert.rejects(apiFetchJson(endpoint, "Не удалось перенести занятие"), {
+    message: "Не удалось перенести занятие",
+  });
+});
+
+test("apiFetchNoContent accepts a successful deletion with no body", async (t) => {
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async () => new Response(null, { status: 204 }),
+  );
+  await apiFetchNoContent(
+    "/api/v1/scheduler/tasks/1",
+    "Не удалось удалить расчёт",
+    { method: "DELETE" },
+  );
 });

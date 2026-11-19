@@ -260,12 +260,13 @@ class GenerationLifecycleService:
     async def fail_active_task(
         cls, task_id: int, message: str, db: AsyncSession
     ) -> None:
-        task = await db.get(GenerationTask, task_id)
+        task = await db.get(GenerationTask, task_id, with_for_update=True)
         if task is None or task.status not in ACTIVE_STATUSES:
             return
         task.status = "failed"
         task.progress_percent = 100
         task.error_message = message
+        task.solver_context_json = None
         db.add(
             GenerationIssue(
                 task_id=task_id,
