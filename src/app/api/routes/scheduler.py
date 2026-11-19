@@ -1,4 +1,3 @@
-import io
 import json
 import logging
 import re
@@ -8,6 +7,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import pandas as pd
+from anyio.to_thread import run_sync
 from core.config import (
     DEFAULT_COMPONENT_TIME_SECONDS,
     MAX_TIME_SECONDS,
@@ -45,7 +45,10 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from schemas.subject_rules import SubjectRuleContext, SubjectRuleWrite
 from services.availability_service import build_availability_context
-from services.export_service import escape_excel_formula, generate_excel_report
+from services.export_service import (
+    generate_excel_report,
+    generate_teacher_availability_report,
+)
 from services.generation_lifecycle_service import (
     ACTIVE_STATUSES,
     GenerationLifecycleService,
@@ -336,7 +339,7 @@ async def import_streams(
     )
 
     try:
-        parsed_data = parse_streams_content(content, safe_filename)
+        parsed_data = await run_sync(parse_streams_content, content, safe_filename)
     except (ValueError, TypeError, pd.errors.ParserError) as exc:
         raise HTTPException(
             status_code=400, detail=f"Error parsing file: {str(exc)}"
@@ -354,7 +357,7 @@ async def import_streams(
     file_path = workspace_dir / unique_filename
 
     try:
-        file_path.write_bytes(content)
+        await run_sync(file_path.write_bytes, content)
 
         batch = ImportBatch(
             filename=safe_filename,
@@ -402,7 +405,7 @@ async def get_import_history(
             "id": b.id,
             "filename": b.filename,
             "file_type": b.file_type.value,
-            "created_date": b.created_date,
+            "created_date": _utc_isoformat(b.created_date),
             "status": getattr(b, "status", "completed"),
         }
         for b in batches
@@ -768,36 +771,8 @@ async def export_teacher_availability(
     result = await db.execute(stmt)
     teachers = result.scalars().all()
 
-    data = []
-    for t in teachers:
-        try:
-            res = (
-                json.loads(t.restrictions_json)
-                if t.restrictions_json
-                else {"mode": "all", "recurring": [], "specific": []}
-            )
-        except Exception:
-            res = {"mode": "all", "recurring": [], "specific": []}
-
-        data.append(
-            {
-                "ФИО преподавателя": escape_excel_formula(t.name),
-                "Режим": res.get("mode", "blacklist"),
-                "Регулярные окна (День_Пара)": escape_excel_formula(
-                    ",".join(res.get("recurring", []))
-                ),
-                "Конкретные даты (ГГГГ-ММ-ДД_Пара)": escape_excel_formula(
-                    ",".join(res.get("specific", []))
-                ),
-            }
-        )
-
-    df = pd.DataFrame(data)
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Доступность")
-
-    output.seek(0)
+    rows = [(teacher.name, teacher.restrictions_json) for teacher in teachers]
+    output = await run_sync(generate_teacher_availability_report, rows)
 
     headers = {
         "Content-Disposition": 'attachment; filename="teacher_availability.xlsx"'
@@ -818,7 +793,7 @@ async def import_teacher_availability(
         file, allowed_extensions={".xls", ".xlsx", ".csv"}
     )
     try:
-        df = read_tabular_content(content, filename)
+        df = await run_sync(read_tabular_content, content, filename)
         required_columns = {"ФИО преподавателя", "Режим"}
         missing_columns = required_columns - set(df.columns)
         if missing_columns:
@@ -1111,18 +1086,19 @@ async def cancel_generation_task(
     task_id: int,
     db: Annotated[AsyncSession, Depends(async_get_db)] = None,
 ) -> dict[str, Any]:
-    task = await db.get(GenerationTask, task_id)
+    task = await db.get(GenerationTask, task_id, with_for_update=True)
     if task is None:
         raise HTTPException(status_code=404, detail="Generation task not found")
     if task.status not in ACTIVE_STATUSES:
         raise HTTPException(status_code=409, detail="Generation task is not active")
-    _revoke_generation_workflow(task)
     task.status = "canceled"
     task.canceled_at = datetime.utcnow()
     task.error_message = "Generation canceled by operator"
     task.progress_percent = 100
+    task.solver_context_json = None
     await GenerationLifecycleService.release_locks(task.id, db)
     await db.commit()
+    await run_sync(_revoke_generation_workflow, task)
     return {"status": task.status, "task_id": task.id}
 
 
@@ -1280,7 +1256,7 @@ async def get_schedule(
     teacher_id: int | None = None,
     db: Annotated[AsyncSession, Depends(async_get_db)] = None,
 ) -> list[dict[str, Any]]:
-    stmt = select(ScheduleEntry).options(selectinload(ScheduleEntry.teacher))
+    stmt = select(ScheduleEntry)
 
     if task_id is not None:
         stmt = stmt.where(ScheduleEntry.task_id == task_id)
@@ -1291,15 +1267,20 @@ async def get_schedule(
     if teacher_id is not None:
         stmt = stmt.where(ScheduleEntry.teacher_id == teacher_id)
 
-    stmt = stmt.order_by(ScheduleEntry.date, ScheduleEntry.lesson_number)
-    result = await db.execute(stmt)
-    entries = result.scalars().all()
     if group_name is not None:
-        entries = [
-            entry
-            for entry in entries
-            if group_name in parse_group_label(entry.group_name).base_groups
+        label_query = stmt.with_only_columns(ScheduleEntry.group_name).distinct()
+        labels = await db.scalars(label_query)
+        matching_labels = [
+            label for label in labels if group_name in parse_group_label(label).base_groups
         ]
+        if not matching_labels:
+            return []
+        stmt = stmt.where(ScheduleEntry.group_name.in_(matching_labels))
+
+    stmt = stmt.options(selectinload(ScheduleEntry.teacher)).order_by(
+        ScheduleEntry.date, ScheduleEntry.lesson_number
+    )
+    entries = (await db.scalars(stmt)).all()
 
     return [
         {
@@ -1521,6 +1502,17 @@ async def update_schedule_entry(
                 entries_to_update.append(r)
                 seen_groups.add(r.group_name)
 
+    if payload.teacher_id is not None:
+        if await db.get(Teacher, payload.teacher_id) is None:
+            raise HTTPException(status_code=404, detail="Teacher not found")
+    room_ref_id = None
+    if payload.room_id is not None:
+        try:
+            room = await ScheduleService.resolve_room(payload.room_id, db)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        room_ref_id = room.id if room else None
+
     for e in entries_to_update:
         if payload.lesson_number is not None:
             e.lesson_number = payload.lesson_number
@@ -1536,22 +1528,13 @@ async def update_schedule_entry(
             e.date = None
 
         if payload.teacher_id is not None:
-            if await db.get(Teacher, payload.teacher_id) is None:
-                raise HTTPException(status_code=404, detail="Teacher not found")
             e.teacher_id = payload.teacher_id
         elif "teacher_id" in payload.model_fields_set:
             e.teacher_id = None
 
-        if payload.room_id is not None:
-            try:
-                room = await ScheduleService.resolve_room(payload.room_id, db)
-            except LookupError as exc:
-                raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if "room_id" in payload.model_fields_set:
             e.room_id = payload.room_id
-            e.room_ref_id = room.id if room else None
-        elif "room_id" in payload.model_fields_set:
-            e.room_id = None
-            e.room_ref_id = None
+            e.room_ref_id = room_ref_id
 
         if payload.is_locked is not None:
             e.is_locked = payload.is_locked

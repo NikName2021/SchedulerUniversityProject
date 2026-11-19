@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { MockAPI } from "../api/mockService";
 import type { Stream } from "../api/mockService";
-import { API_BASE_URL, apiFetch } from "../api/apiConfig";
+import { API_BASE_URL, apiFetchJson } from "../api/apiConfig";
 import { toggleDayRestrictions } from "../utils/dayRestrictions";
 import {
   getSlotsForInterval,
@@ -82,6 +82,7 @@ interface AppState {
 }
 
 let workspaceEpoch = 0;
+const pendingRestrictionSaves = new Map<string, Promise<void>>();
 
 export const useAppStore = create<AppState>((set) => ({
   teachers: [],
@@ -100,11 +101,10 @@ export const useAppStore = create<AppState>((set) => ({
     const epoch = workspaceEpoch;
     set({ isLoading: true, error: null });
     try {
-      const res = await apiFetch(`${API_BASE_URL}/api/v1/scheduler/teachers`);
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-      const payload: unknown = await res.json();
+      const payload = await apiFetchJson(
+        `${API_BASE_URL}/api/v1/scheduler/teachers`,
+        "Не удалось загрузить данные преподавателей",
+      );
       if (!Array.isArray(payload)) {
         throw new Error("Некорректный ответ сервера");
       }
@@ -341,37 +341,43 @@ export const useAppStore = create<AppState>((set) => ({
     const teacher = state.teachers.find((t) => t.id === teacherId);
     if (!teacher) return;
 
-    try {
-      const response = await apiFetch(
-        `${API_BASE_URL}/api/v1/scheduler/teachers/${teacherId}/restrictions`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ restrictions: teacher.restrictions }),
-        },
-      );
+    const body = JSON.stringify({ restrictions: teacher.restrictions });
+    const previous = pendingRestrictionSaves.get(teacherId);
+    const save = async () => {
+      if (previous) await previous;
       if (epoch !== workspaceEpoch) return;
-      if (!response.ok) {
-        const payload = (await response.json().catch(() => null)) as {
-          detail?: string;
-        } | null;
-        if (epoch !== workspaceEpoch) return;
-        set({
-          error:
-            payload?.detail || "Не удалось сохранить ограничения преподавателя",
-        });
-        return;
+      const message = "Не удалось сохранить ограничения преподавателя";
+      try {
+        await apiFetchJson(
+          `${API_BASE_URL}/api/v1/scheduler/teachers/${teacherId}/restrictions`,
+          message,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body,
+          },
+        );
+        if (epoch === workspaceEpoch) set({ error: null });
+      } catch (error) {
+        if (epoch === workspaceEpoch) {
+          set({ error: error instanceof Error ? error.message : message });
+        }
       }
-      set({ error: null });
-    } catch (e) {
-      if (epoch !== workspaceEpoch) return;
-      console.error("Failed to save restrictions", e);
-      set({ error: "Не удалось сохранить ограничения преподавателя" });
+    };
+    const pending = save();
+    pendingRestrictionSaves.set(teacherId, pending);
+    try {
+      await pending;
+    } finally {
+      if (pendingRestrictionSaves.get(teacherId) === pending) {
+        pendingRestrictionSaves.delete(teacherId);
+      }
     }
   },
 }));
 
 export const resetWorkspaceStore = () => {
   workspaceEpoch += 1;
+  pendingRestrictionSaves.clear();
   useAppStore.setState(useAppStore.getInitialState(), true);
 };

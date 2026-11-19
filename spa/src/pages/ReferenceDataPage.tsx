@@ -14,7 +14,7 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
-import { API_BASE_URL, apiFetch } from "../api/apiConfig";
+import { API_BASE_URL, apiFetchJson } from "../api/apiConfig";
 
 interface RoomFeature {
   id: number;
@@ -125,18 +125,23 @@ export const ReferenceDataPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [roomsResponse, profilesResponse, rulesResponse] =
-        await Promise.all([
-          apiFetch(`${API_BASE_URL}/api/v1/reference/rooms`),
-          apiFetch(`${API_BASE_URL}/api/v1/reference/rule-profiles`),
-          apiFetch(`${API_BASE_URL}/api/v1/reference/rules/current`),
-        ]);
-      if (!roomsResponse.ok || !profilesResponse.ok || !rulesResponse.ok) {
-        throw new Error("Не удалось загрузить справочники");
-      }
-      setRooms(await roomsResponse.json());
-      setProfiles(await profilesResponse.json());
-      setCurrentRules(await rulesResponse.json());
+      const [roomsData, profilesData, rulesData] = await Promise.all([
+        apiFetchJson<Room[]>(
+          `${API_BASE_URL}/api/v1/reference/rooms`,
+          "Не удалось загрузить аудитории",
+        ),
+        apiFetchJson<RuleProfile[]>(
+          `${API_BASE_URL}/api/v1/reference/rule-profiles`,
+          "Не удалось загрузить профили правил",
+        ),
+        apiFetchJson<RuleSetDetails>(
+          `${API_BASE_URL}/api/v1/reference/rules/current`,
+          "Не удалось загрузить текущие правила",
+        ),
+      ]);
+      setRooms(roomsData);
+      setProfiles(profilesData);
+      setCurrentRules(rulesData);
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -183,11 +188,11 @@ export const ReferenceDataPage: React.FC = () => {
     setProfileError(null);
     setProfileLoading(true);
     try {
-      const response = await apiFetch(
+      const details = await apiFetchJson<RuleSetDetails>(
         `${API_BASE_URL}/api/v1/reference/rule-profiles/${profile.id}/details`,
+        "Не удалось загрузить правила профиля",
       );
-      if (!response.ok) throw new Error("Не удалось загрузить правила профиля");
-      setProfileDetails(await response.json());
+      setProfileDetails(details);
     } catch (requestError) {
       setProfileError(
         requestError instanceof Error
@@ -202,18 +207,23 @@ export const ReferenceDataPage: React.FC = () => {
   const createRoom = async (event: React.FormEvent) => {
     event.preventDefault();
     setError(null);
-    const response = await apiFetch(`${API_BASE_URL}/api/v1/reference/rooms`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...form, is_active: true, feature_ids: [] }),
-    });
-    if (!response.ok) {
-      const payload = (await response.json()) as { detail?: string };
-      setError(payload.detail || "Не удалось создать аудиторию");
-      return;
+    try {
+      await apiFetchJson(
+        `${API_BASE_URL}/api/v1/reference/rooms`,
+        "Не удалось создать аудиторию",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...form, is_active: true, feature_ids: [] }),
+        },
+      );
+      setForm({ code: "", capacity: 30, room_type: "mixed" });
+      await load();
+    } catch (error) {
+      setError(
+        error instanceof Error ? error.message : "Не удалось создать аудиторию",
+      );
     }
-    setForm({ code: "", capacity: 30, room_type: "mixed" });
-    await load();
   };
 
   if (loading) {

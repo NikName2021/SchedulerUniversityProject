@@ -1,5 +1,6 @@
 import json
 import logging
+from collections import defaultdict
 from typing import Any, Dict, List
 
 import pandas as pd
@@ -42,18 +43,27 @@ class ScheduleService:
             .execution_options(populate_existing=True)
         )
         entries = list((await db.execute(stmt)).scalars())
-        changed = [entry for entry in entries if entry.id in changed_ids]
+        by_slot = defaultdict(list)
+        changed = []
+        for entry in entries:
+            if entry.date is None or entry.lesson_number is None:
+                continue
+            by_slot[(entry.date, entry.lesson_number)].append(entry)
+            if entry.id in changed_ids:
+                changed.append(entry)
+        if not changed:
+            return []
+
+        dates = [entry.date.date().isoformat() for entry in changed]
+        availability = await build_availability_context(db, min(dates), max(dates))
+        unavailable = availability["unavailable"]
         known_subgroups = collect_known_subgroups(
             {entry.group_name for entry in entries}
         )
         errors: set[str] = set()
         for entry in changed:
-            if entry.date is None or entry.lesson_number is None:
-                continue
-            for other in entries:
-                if other.id == entry.id or other.date != entry.date:
-                    continue
-                if other.lesson_number != entry.lesson_number:
+            for other in by_slot[(entry.date, entry.lesson_number)]:
+                if other.id == entry.id:
                     continue
                 same_stream = bool(
                     entry.source_stream_id
@@ -89,11 +99,7 @@ class ScheduleService:
                     )
 
             date_string = entry.date.date().isoformat()
-            availability = await build_availability_context(
-                db, date_string, date_string
-            )
             slot = [date_string, entry.lesson_number]
-            unavailable = availability["unavailable"]
             if slot in unavailable.get("global", {}).get("*", []):
                 errors.add("Выбранный слот недоступен для университета")
             if entry.teacher and slot in unavailable.get("teacher", {}).get(

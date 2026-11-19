@@ -7,6 +7,7 @@ import {
   ChevronRight,
   ChevronLeft,
   CalendarDays,
+  Check,
   Repeat,
   ShieldCheck,
   ShieldAlert,
@@ -21,6 +22,7 @@ import {
 } from "../store/useAppStore";
 import type { TimeInterval } from "../store/useAppStore";
 import { getDayRestrictionKeys } from "../utils/dayRestrictions";
+import "./CalendarPage.css";
 
 const TIMES = PAIR_TIMES.map((pair) => pair.label);
 
@@ -169,8 +171,12 @@ export const CalendarPage: React.FC = () => {
     );
   }
 
-  const handleMouseDown = (dateStr: string, slotIdx: number) => {
-    if (!selectedTeacherId || !selectedTeacher) return;
+  const handleSlotPress = (
+    dateStr: string,
+    slotIdx: number,
+    startDrag: boolean,
+  ) => {
+    if (editMode === "time" || !selectedTeacherId || !selectedTeacher) return;
 
     const weekday = new Date(`${dateStr}T00:00:00`).getDay();
     const recurringKey = `${weekday}-${slotIdx + 1}`;
@@ -181,18 +187,24 @@ export const CalendarPage: React.FC = () => {
         ? selectedTeacher.restrictions.recurring.includes(recurringKey)
         : selectedTeacher.restrictions.specific.includes(specificKey);
 
-    const newMode = isCurrentlyActive ? "unblock" : "block";
-    setDragState({ isDragging: true, mode: newMode });
-
     toggleRestriction(
       selectedTeacherId,
       editMode,
       editMode === "recurring" ? recurringKey : specificKey,
     );
+    if (startDrag) {
+      setDragState({
+        isDragging: true,
+        mode: isCurrentlyActive ? "unblock" : "block",
+      });
+    } else {
+      void saveTeacherRestrictions(selectedTeacherId);
+    }
   };
 
   const handleMouseEnter = (dateStr: string, slotIdx: number) => {
     if (
+      editMode === "time" ||
       !dragState.isDragging ||
       !dragState.mode ||
       !selectedTeacherId ||
@@ -221,6 +233,12 @@ export const CalendarPage: React.FC = () => {
     }
   };
 
+  const handleRestrictionModeChange = (mode: "blacklist" | "whitelist") => {
+    if (!selectedTeacher || selectedTeacher.restrictions.mode === mode) return;
+    setRestrictionMode(selectedTeacher.id, mode);
+    void saveTeacherRestrictions(selectedTeacher.id);
+  };
+
   // Date Navigation
   const startOfWeek = getStartOfWeek(currentDate);
   const weekDays = getDaysOfWeek(startOfWeek);
@@ -246,22 +264,15 @@ export const CalendarPage: React.FC = () => {
   };
 
   return (
-    <div
-      className="space-y-6"
-      style={{
-        height: "calc(100vh - 120px)",
-        display: "flex",
-        flexDirection: "column",
-      }}
-    >
+    <div className="calendar-page space-y-6">
       <header className="flex justify-between items-end">
         <div>
           <h1 className="text-2xl font-bold text-text-primary">
             Доступность преподавателей
           </h1>
           <p className="text-text-secondary mt-1 text-sm">
-            Отмечайте отдельные пары или нажмите «Весь день» под датой.
-            Изменения сохраняются автоматически.
+            Отмечайте отдельные пары или используйте кнопку под датой, чтобы
+            выбрать весь день. Изменения сохраняются автоматически.
           </p>
         </div>
       </header>
@@ -271,13 +282,10 @@ export const CalendarPage: React.FC = () => {
         </div>
       )}
 
-      <div
-        style={{ display: "flex", gap: "1.5rem", flex: 1, overflow: "hidden" }}
-      >
+      <div className="calendar-layout">
         {/* Left Sidebar: List */}
         <div
           style={{
-            width: "280px",
             backgroundColor: "white",
             borderRadius: "12px",
             border: "1px solid var(--border-light)",
@@ -319,7 +327,7 @@ export const CalendarPage: React.FC = () => {
               />
             </div>
           </div>
-          <div style={{ flex: 1, overflowY: "auto" }}>
+          <div className="calendar-teacher-list">
             {filteredTeachers.map((teacher) => (
               <button
                 key={teacher.id}
@@ -369,14 +377,13 @@ export const CalendarPage: React.FC = () => {
 
         {/* Right Content: Grid */}
         <div
+          className="calendar-card"
           style={{
-            flex: 1,
             backgroundColor: "white",
             borderRadius: "12px",
             border: "1px solid var(--border-light)",
             display: "flex",
             flexDirection: "column",
-            overflow: "hidden",
           }}
         >
           {selectedTeacher ? (
@@ -384,19 +391,19 @@ export const CalendarPage: React.FC = () => {
               {/* Toolbar & Date Navigation */}
               <div
                 style={{
-                  padding: "0.75rem 1.25rem",
                   borderBottom: "1px solid var(--border-light)",
                   backgroundColor: "#fafafa",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "0.75rem",
                 }}
+                className="calendar-toolbar"
               >
                 <div
+                  className="calendar-teacher-toolbar"
                   style={{
                     display: "flex",
+                    flexWrap: "wrap",
                     justifyContent: "space-between",
                     alignItems: "center",
+                    gap: "0.75rem",
                   }}
                 >
                   <div
@@ -410,6 +417,7 @@ export const CalendarPage: React.FC = () => {
                       style={{
                         width: "40px",
                         height: "40px",
+                        flexShrink: 0,
                         borderRadius: "8px",
                         backgroundColor: "var(--brand)",
                         color: "white",
@@ -440,8 +448,10 @@ export const CalendarPage: React.FC = () => {
                   <div
                     style={{
                       display: "flex",
+                      flexWrap: "wrap",
                       alignItems: "center",
-                      gap: "1rem",
+                      columnGap: "1rem",
+                      rowGap: "0.5rem",
                     }}
                   >
                     <div
@@ -498,8 +508,6 @@ export const CalendarPage: React.FC = () => {
                       style={{
                         fontWeight: 700,
                         fontSize: "1rem",
-                        minWidth: "120px",
-                        textAlign: "right",
                       }}
                     >
                       {currentMonthName} {currentYear}
@@ -510,7 +518,8 @@ export const CalendarPage: React.FC = () => {
                 <div
                   style={{
                     display: "flex",
-                    gap: "2rem",
+                    flexWrap: "wrap",
+                    gap: "0.75rem 1.25rem",
                     alignItems: "center",
                     padding: "0.5rem",
                     backgroundColor: "white",
@@ -521,6 +530,7 @@ export const CalendarPage: React.FC = () => {
                   <div
                     style={{
                       display: "flex",
+                      flexWrap: "wrap",
                       alignItems: "center",
                       gap: "0.5rem",
                     }}
@@ -537,6 +547,7 @@ export const CalendarPage: React.FC = () => {
                     <div
                       style={{
                         display: "flex",
+                        flexWrap: "wrap",
                         backgroundColor: "var(--bg-base)",
                         padding: "2px",
                         borderRadius: "6px",
@@ -623,6 +634,7 @@ export const CalendarPage: React.FC = () => {
                   <div
                     style={{
                       display: "flex",
+                      flexWrap: "wrap",
                       alignItems: "center",
                       gap: "0.5rem",
                     }}
@@ -639,16 +651,14 @@ export const CalendarPage: React.FC = () => {
                     <div
                       style={{
                         display: "flex",
+                        flexWrap: "wrap",
                         backgroundColor: "var(--bg-base)",
                         padding: "2px",
                         borderRadius: "6px",
                       }}
                     >
                       <button
-                        onClick={() =>
-                          selectedTeacherId &&
-                          setRestrictionMode(selectedTeacherId, "blacklist")
-                        }
+                        onClick={() => handleRestrictionModeChange("blacklist")}
                         style={{
                           padding: "0.25rem 0.75rem",
                           borderRadius: "4px",
@@ -675,10 +685,7 @@ export const CalendarPage: React.FC = () => {
                         <ShieldAlert size={14} /> Черный список
                       </button>
                       <button
-                        onClick={() =>
-                          selectedTeacherId &&
-                          setRestrictionMode(selectedTeacherId, "whitelist")
-                        }
+                        onClick={() => handleRestrictionModeChange("whitelist")}
                         style={{
                           padding: "0.25rem 0.75rem",
                           borderRadius: "4px",
@@ -722,22 +729,11 @@ export const CalendarPage: React.FC = () => {
               </div>
 
               {/* Grid Content */}
-              <div
-                style={{
-                  flex: 1,
-                  padding: "1.5rem",
-                  overflowY: "auto",
-                  backgroundColor: "white",
-                }}
-              >
+              <div className="calendar-grid-content">
                 <div
+                  className="calendar-week"
                   style={{
-                    display: "grid",
-                    gridTemplateColumns: `80px repeat(${WEEK_DAYS.length}, minmax(92px, 1fr))`,
-                    minWidth: "820px",
-                    border: "1px solid var(--border-light)",
-                    borderRadius: "8px",
-                    overflow: "hidden",
+                    gridTemplateColumns: `var(--calendar-time-width) repeat(${WEEK_DAYS.length}, minmax(0, 1fr))`,
                   }}
                 >
                   {/* Empty top-left cell */}
@@ -778,11 +774,11 @@ export const CalendarPage: React.FC = () => {
                     return (
                       <div
                         key={idx}
+                        className="calendar-week__day"
                         style={{
                           backgroundColor: isToday
                             ? "#eef2ff"
                             : "var(--bg-base)",
-                          padding: "0.75rem",
                           textAlign: "center",
                           borderBottom: "1px solid var(--border-light)",
                           borderRight:
@@ -803,9 +799,9 @@ export const CalendarPage: React.FC = () => {
                           {WEEK_DAYS[idx]}
                         </div>
                         <div
+                          className="calendar-week__date"
                           style={{
                             fontWeight: 800,
-                            fontSize: "1.125rem",
                             color: isToday
                               ? "var(--brand)"
                               : "var(--text-primary)",
@@ -827,7 +823,7 @@ export const CalendarPage: React.FC = () => {
                             );
                             void saveTeacherRestrictions(selectedTeacher.id);
                           }}
-                          className="mt-2 w-full rounded-md px-1 py-1.5 text-xs font-semibold cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+                          className="calendar-week__day-toggle mt-2 w-full rounded-md px-1 py-1.5 text-xs font-semibold cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
                           style={{
                             backgroundColor: wholeDaySelected
                               ? isWhitelist
@@ -842,7 +838,22 @@ export const CalendarPage: React.FC = () => {
                             border: "1px solid var(--border-light)",
                           }}
                         >
-                          {wholeDaySelected ? dayAction : "Весь день"}
+                          <span className="calendar-week__day-toggle-label">
+                            {wholeDaySelected ? dayAction : "Весь день"}
+                          </span>
+                          {wholeDaySelected ? (
+                            <Check
+                              className="calendar-week__day-toggle-icon"
+                              size={14}
+                              aria-hidden="true"
+                            />
+                          ) : (
+                            <CalendarDays
+                              className="calendar-week__day-toggle-icon"
+                              size={14}
+                              aria-hidden="true"
+                            />
+                          )}
                         </button>
                       </div>
                     );
@@ -853,9 +864,9 @@ export const CalendarPage: React.FC = () => {
                     <React.Fragment key={time}>
                       {/* Time Label (Y-axis) */}
                       <div
+                        className="calendar-week__time"
                         style={{
                           backgroundColor: "#fafafa",
-                          padding: "0.75rem 0.5rem",
                           textAlign: "center",
                           borderRight: "1px solid var(--border-light)",
                           borderBottom:
@@ -930,17 +941,20 @@ export const CalendarPage: React.FC = () => {
                         return (
                           <button
                             key={idx}
+                            disabled={editMode === "time"}
                             aria-label={`${dateStr}, ${slotNum} пара: ${
                               isBlocked ? "недоступно" : "доступно"
                             }`}
                             aria-pressed={hasRecurring || hasSpecific}
-                            onMouseDown={() =>
-                              handleMouseDown(dateStr, slotIdx)
-                            }
+                            onMouseDown={(event) => {
+                              if (event.button === 0)
+                                handleSlotPress(dateStr, slotIdx, true);
+                            }}
                             onKeyDown={(event) => {
                               if (event.key === "Enter" || event.key === " ") {
                                 event.preventDefault();
-                                handleMouseDown(dateStr, slotIdx);
+                                if (!event.repeat)
+                                  handleSlotPress(dateStr, slotIdx, false);
                               }
                             }}
                             onMouseEnter={() =>
@@ -961,12 +975,12 @@ export const CalendarPage: React.FC = () => {
                                 idx !== weekDays.length - 1
                                   ? "1px solid var(--border-light)"
                                   : "none",
-                              cursor: "pointer",
+                              cursor:
+                                editMode === "time" ? "default" : "pointer",
                               display: "flex",
                               alignItems: "center",
                               justifyContent: "center",
                               transition: "all 0.1s",
-                              height: "64px",
                               padding: 0,
                               position: "relative",
                               border:
@@ -975,9 +989,7 @@ export const CalendarPage: React.FC = () => {
                                   : undefined,
                               zIndex: hasRecurring || hasSpecific ? 10 : 1,
                             }}
-                            className={
-                              isBlocked ? "grid-cell-blocked" : "grid-cell"
-                            }
+                            className={`calendar-week__slot ${isBlocked ? "grid-cell-blocked" : "grid-cell"}`}
                           >
                             {isBlocked && (
                               <div
@@ -1314,6 +1326,7 @@ export const CalendarPage: React.FC = () => {
                               <div
                                 style={{
                                   display: "flex",
+                                  flexWrap: "wrap",
                                   alignItems: "center",
                                   gap: "0.75rem",
                                 }}
@@ -1387,33 +1400,11 @@ export const CalendarPage: React.FC = () => {
               }}
             >
               <Users size={48} opacity={0.2} />
-              <div style={{ fontWeight: 600 }}>
-                Выберите преподавателя слева
-              </div>
+              <div style={{ fontWeight: 600 }}>Выберите преподавателя</div>
             </div>
           )}
         </div>
       </div>
-
-      <style
-        dangerouslySetInnerHTML={{
-          __html: `
-        .grid-cell:hover {
-          background-color: #f3f4f6 !important;
-        }
-        .grid-cell-blocked {
-          border: 1px solid #fca5a5 !important;
-          z-index: 1;
-        }
-        .grid-cell-blocked:hover {
-          background-color: #fee2e2 !important;
-        }
-        body {
-          user-select: none;
-        }
-      `,
-        }}
-      />
     </div>
   );
 };

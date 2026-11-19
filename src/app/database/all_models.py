@@ -24,6 +24,10 @@ from .workspace import WorkspaceOwned
 DeclBase = declarative_base()
 
 
+def _utc_now() -> datetime.datetime:
+    return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+
+
 class Department(WorkspaceOwned, DeclBase):
     __tablename__ = "department"
     __table_args__ = (
@@ -171,7 +175,7 @@ class ImportBatch(WorkspaceOwned, DeclBase):
     filename = Column(String, nullable=False)
     file_path = Column(String, nullable=True)
     file_type = Column(Enum(FileType), nullable=False)
-    created_date = Column(DateTime, default=datetime.datetime.now)
+    created_date = Column(DateTime, default=_utc_now)
     status = Column(String, default="completed")  # processing, completed, error
     error_message = Column(String, nullable=True)
 
@@ -339,7 +343,7 @@ class AcademicPeriod(WorkspaceOwned, DeclBase):
     starts_on = Column(Date, nullable=False)
     ends_on = Column(Date, nullable=False)
     status = Column(String, nullable=False, default="draft")
-    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=_utc_now, nullable=False)
 
     weeks = relationship(
         "PlanningWeek",
@@ -413,7 +417,7 @@ class SubjectScheduleRule(WorkspaceOwned, DeclBase):
     ends_on = Column(Date, nullable=False)
     week_ids_json = Column(Text, nullable=False, default="[]")
     config_json = Column(Text, nullable=False)
-    updated_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=_utc_now)
 
 
 class GenerationTask(WorkspaceOwned, DeclBase):
@@ -436,7 +440,7 @@ class GenerationTask(WorkspaceOwned, DeclBase):
     published_at = Column(DateTime, nullable=True)
     canceled_at = Column(DateTime, nullable=True)
     edit_revision = Column(Integer, nullable=False, default=0)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=_utc_now)
     status = Column(String, default="pending")  # pending, success, failed
     start_date = Column(DateTime, nullable=True)
     end_date = Column(DateTime, nullable=True)
@@ -452,6 +456,7 @@ class GenerationTask(WorkspaceOwned, DeclBase):
     celery_workflow_id = Column(String, nullable=True)
     celery_root_task_id = Column(String, nullable=True)
     celery_component_ids_json = Column(String, nullable=True)
+    solver_context_json = Column(Text, nullable=True)
 
     planning_week = relationship("PlanningWeek", back_populates="generation_tasks")
     components = relationship(
@@ -494,8 +499,8 @@ class PublicSchedule(DeclBase):
     entries_json = Column(Text, nullable=False, default="[]")
     result_count = Column(Integer, nullable=False, default=0)
     edit_revision = Column(Integer, nullable=False, default=0)
-    published_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
-    updated_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
+    published_at = Column(DateTime, nullable=False, default=_utc_now)
+    updated_at = Column(DateTime, nullable=False, default=_utc_now)
 
 
 class UserAccount(DeclBase):
@@ -519,10 +524,10 @@ class UserAccount(DeclBase):
     last_login_at = Column(DateTime, nullable=True)
     password_changed_at = Column(
         DateTime,
-        default=datetime.datetime.utcnow,
+        default=_utc_now,
         nullable=False,
     )
-    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=_utc_now, nullable=False)
 
     sessions = relationship(
         "UserSession",
@@ -548,8 +553,8 @@ class UserSession(DeclBase):
     token_hash = Column(String(64), nullable=False)
     csrf_token = Column(String(64), nullable=False)
     user_agent_hash = Column(String(64), nullable=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
-    last_seen_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=_utc_now, nullable=False)
+    last_seen_at = Column(DateTime, default=_utc_now, nullable=False)
     expires_at = Column(DateTime, nullable=False)
 
     user = relationship("UserAccount", back_populates="sessions")
@@ -561,7 +566,7 @@ class GenerationLock(WorkspaceOwned, DeclBase):
     task_id = Column(
         Integer, ForeignKey("generation_task.id", ondelete="CASCADE"), nullable=False
     )
-    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=_utc_now, nullable=False)
 
     task = relationship("GenerationTask", back_populates="locks")
 
@@ -581,7 +586,7 @@ class GenerationIssue(WorkspaceOwned, DeclBase):
     date = Column(Date, nullable=True)
     lesson_number = Column(Integer, nullable=True)
     details_json = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=_utc_now, nullable=False)
 
     task = relationship("GenerationTask", back_populates="issues")
 
@@ -646,7 +651,7 @@ class ScheduleEntry(WorkspaceOwned, DeclBase):
     lesson_number = Column(Integer, nullable=True)
     warning = Column(String, nullable=True)
     is_locked = Column(Boolean, nullable=False, default=False)
-    created_at = Column(DateTime, default=datetime.datetime.now)
+    created_at = Column(DateTime, default=_utc_now)
 
     teacher = relationship("Teacher")
     room = relationship("Room")

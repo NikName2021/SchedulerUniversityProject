@@ -1,9 +1,12 @@
 import asyncio
+from collections.abc import Coroutine
 from typing import Any
 
 from celery import Celery, chord
-from core.config import REDIS_URL, engine
+from celery.signals import worker_process_init, worker_process_shutdown
+from core.config import REDIS_URL, engine, sessionmaker
 from database.workspace import bind_task_workspace
+from services.generation_lifecycle_service import GenerationLifecycleService
 from services.scalable_generation_service import ScalableGenerationService
 from services.scalable_scheduler import solve_event_component
 
@@ -25,14 +28,43 @@ celery_app.conf.update(
 )
 
 
-def _run_async(coroutine: Any) -> Any:
-    async def run_and_dispose() -> Any:
-        try:
-            return await coroutine
-        finally:
-            await engine.dispose()
+_worker_loop: asyncio.AbstractEventLoop | None = None
 
-    return asyncio.run(run_and_dispose())
+
+@worker_process_init.connect
+def _init_worker_process(**_kwargs: Any) -> None:
+    global _worker_loop
+    # A prefork child must never reuse connections opened by its parent.
+    engine.sync_engine.dispose(close=False)
+    _worker_loop = asyncio.new_event_loop()
+
+
+@worker_process_shutdown.connect
+def _shutdown_worker_process(**_kwargs: Any) -> None:
+    global _worker_loop
+    if _worker_loop is None:
+        return
+    try:
+        _worker_loop.run_until_complete(engine.dispose())
+    finally:
+        _worker_loop.close()
+        _worker_loop = None
+
+
+def _run_async(coroutine: Coroutine[Any, Any, Any]) -> Any:
+    global _worker_loop
+    if _worker_loop is None:
+        _worker_loop = asyncio.new_event_loop()
+    task = _worker_loop.create_task(coroutine)
+    try:
+        return _worker_loop.run_until_complete(task)
+    finally:
+        # Celery's soft timeout can interrupt run_until_complete directly.
+        if not task.done():
+            task.cancel()
+            _worker_loop.run_until_complete(
+                asyncio.gather(task, return_exceptions=True)
+            )
 
 
 @celery_app.task(name="scheduler.solve_component")
@@ -40,8 +72,14 @@ def solve_schedule_component_task(
     task_id: int,
     component_id: int,
     events: list[dict[str, Any]],
-    context: dict[str, Any],
+    context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if context is None:
+        context = _run_async(
+            ScalableGenerationService.load_solver_context(task_id, component_id)
+        )
+    if context is None:
+        return {"status": "skipped"}
     try:
         result = solve_event_component(events, context)
     except Exception as exc:
@@ -62,9 +100,13 @@ def solve_schedule_component_task(
 def finalize_schedule_task(
     component_results: list[dict[str, Any]],
     task_id: int,
-    context: dict[str, Any],
+    context: dict[str, Any] | None = None,
 ) -> bool:
     try:
+        if context is None:
+            context = _run_async(ScalableGenerationService.load_solver_context(task_id))
+        if context is None:
+            return False
         return _run_async(
             ScalableGenerationService.finalize(task_id, component_results, context)
         )
@@ -88,9 +130,6 @@ def handle_workflow_error_task(task_id: int) -> None:
 
 
 async def _mark_workflow_failed(task_id: int, message: str) -> None:
-    from core.config import sessionmaker
-    from services.generation_lifecycle_service import GenerationLifecycleService
-
     async with sessionmaker() as session:
         await bind_task_workspace(session, task_id)
         await GenerationLifecycleService.fail_active_task(task_id, message, session)
@@ -128,18 +167,16 @@ def generate_schedule_task(
     if payload is None:
         return {"dispatched": 0, "task_id": task_id}
 
-    context = payload["context"]
     signatures = [
         solve_schedule_component_task.s(
             task_id,
             component["component_id"],
             component["events"],
-            context,
         )
         for component in payload["components"]
     ]
     try:
-        callback = finalize_schedule_task.s(task_id, context).on_error(
+        callback = finalize_schedule_task.s(task_id).on_error(
             handle_workflow_error_task.si(task_id)
         )
         workflow = chord(signatures)(callback)

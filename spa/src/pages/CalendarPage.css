@@ -1,0 +1,114 @@
+.calendar-page {
+  container: calendar-page / inline-size;
+}
+
+.calendar-layout {
+  display: grid;
+  grid-template-columns: clamp(12rem, 23%, 17.5rem) minmax(0, 1fr);
+  align-items: start;
+  gap: 1.5rem;
+}
+
+.calendar-teacher-list {
+  max-height: 32rem;
+  overflow-y: auto;
+}
+
+.calendar-card {
+  container: calendar-card / inline-size;
+  min-width: 0;
+  min-height: 18rem;
+}
+
+.calendar-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.75rem clamp(0.625rem, 3cqi, 1.25rem);
+  border-radius: 11px 11px 0 0;
+}
+
+.calendar-teacher-toolbar h2 {
+  overflow-wrap: anywhere;
+}
+
+.calendar-grid-content {
+  padding: clamp(0.5rem, 3cqi, 1.5rem);
+}
+
+.calendar-week {
+  --calendar-time-width: clamp(2.75rem, 13%, 5rem);
+  display: grid;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  overflow: clip;
+}
+
+.calendar-week__day {
+  min-width: 0;
+  padding: 0.625rem clamp(0.125rem, 1.4cqi, 0.75rem);
+  overflow-wrap: anywhere;
+}
+
+.calendar-week__date {
+  font-size: clamp(0.75rem, 2.5cqi, 1.125rem);
+  line-height: 1.25;
+}
+
+.calendar-week__day-toggle-icon {
+  display: none;
+}
+
+.calendar-week__time {
+  padding: 0.375rem clamp(0.125rem, 1cqi, 0.5rem);
+  line-height: 1.25;
+}
+
+.calendar-week__slot {
+  min-height: 3rem;
+  user-select: none;
+}
+
+.calendar-week__slot:focus-visible {
+  outline-offset: -3px;
+}
+
+.calendar-week .grid-cell:hover {
+  background-color: #f3f4f6 !important;
+}
+
+.calendar-week .grid-cell-blocked {
+  border: 1px solid #fca5a5 !important;
+  z-index: 1;
+}
+
+.calendar-week .grid-cell-blocked:hover {
+  background-color: #fee2e2 !important;
+}
+
+@container calendar-page (max-width: 48rem) {
+  .calendar-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1rem;
+  }
+
+  .calendar-teacher-list {
+    max-height: 10rem;
+  }
+}
+
+@container calendar-card (max-width: 27rem) {
+  .calendar-week__day-toggle {
+    display: grid;
+    place-items: center;
+    min-height: 2.25rem;
+  }
+
+  .calendar-week__day-toggle-label {
+    display: none;
+  }
+
+  .calendar-week__day-toggle-icon {
+    display: block;
+  }
+}

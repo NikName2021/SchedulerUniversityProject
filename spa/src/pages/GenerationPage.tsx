@@ -19,7 +19,7 @@ import {
   RotateCcw,
   FlaskConical,
 } from "lucide-react";
-import { API_BASE_URL, apiFetch, openDownload } from "../api/apiConfig";
+import { API_BASE_URL, apiFetchJson, openDownload } from "../api/apiConfig";
 import { SubjectRulesPanel } from "../components/SubjectRulesPanel";
 import {
   getStandaloneGroups,
@@ -209,8 +209,9 @@ export const GenerationPage: React.FC = () => {
   const fetchSubjectSummary = useCallback(async () => {
     setIsSummaryLoading(true);
     try {
-      const res = await apiFetch(
+      const data = await apiFetchJson<Record<string, string[]>>(
         `${API_BASE_URL}/api/v1/scheduler/subjects-summary`,
+        "Не удалось загрузить сводку дисциплин",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -220,11 +221,6 @@ export const GenerationPage: React.FC = () => {
           }),
         },
       );
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || "Failed to fetch summary");
-      }
-      const data = await res.json();
       setSubjectSummary(data);
     } catch {
       console.error("Subject summary error");
@@ -237,17 +233,25 @@ export const GenerationPage: React.FC = () => {
   const fetchInitialData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [groupsRes, statsRes, profilesRes, periodsRes] = await Promise.all([
-        apiFetch(`${API_BASE_URL}/api/v1/scheduler/groups`),
-        apiFetch(`${API_BASE_URL}/api/v1/scheduler/stats`),
-        apiFetch(`${API_BASE_URL}/api/v1/reference/rule-profiles`),
-        apiFetch(`${API_BASE_URL}/api/v1/planning/periods`),
-      ]);
-
-      const groupsData = await groupsRes.json();
-      const statsData = await statsRes.json();
-      const profilesData = profilesRes.ok ? await profilesRes.json() : [];
-      const periodsData = periodsRes.ok ? await periodsRes.json() : [];
+      const [groupsData, statsData, profilesData, periodsData] =
+        await Promise.all([
+          apiFetchJson<{ groups?: string[] }>(
+            `${API_BASE_URL}/api/v1/scheduler/groups`,
+            "Не удалось загрузить группы",
+          ),
+          apiFetchJson<Stats>(
+            `${API_BASE_URL}/api/v1/scheduler/stats`,
+            "Не удалось загрузить статистику",
+          ),
+          apiFetchJson<RuleProfileOption[]>(
+            `${API_BASE_URL}/api/v1/reference/rule-profiles`,
+            "Не удалось загрузить профили правил",
+          ).catch(() => []),
+          apiFetchJson<AcademicPeriod[]>(
+            `${API_BASE_URL}/api/v1/planning/periods`,
+            "Не удалось загрузить учебные периоды",
+          ).catch(() => []),
+        ]);
 
       setGroups(groupsData.groups || []);
       // If no inherited groups, don't auto-select all
@@ -257,7 +261,7 @@ export const GenerationPage: React.FC = () => {
       setStats(statsData);
       setPeriods(periodsData);
       if (periodsData.length > 0) {
-        const firstPeriod = periodsData[0] as AcademicPeriod;
+        const firstPeriod = periodsData[0];
         setSelectedPeriodId((current) => current || firstPeriod.id);
         setSelectedWeekIds((current) =>
           current.length > 0
@@ -266,12 +270,18 @@ export const GenerationPage: React.FC = () => {
         );
       }
       setRuleProfileId(
-        profilesData.find((item: RuleProfileOption) => item.is_default)?.id ||
+        profilesData.find((item) => item.is_default)?.id ||
           profilesData[0]?.id ||
           null,
       );
-    } catch {
-      console.error("Failed to fetch generation data");
+    } catch (error) {
+      setStatus({
+        type: "error",
+        msg:
+          error instanceof Error
+            ? error.message
+            : "Не удалось загрузить данные для расчёта",
+      });
     } finally {
       setIsLoading(false);
     }
@@ -302,31 +312,40 @@ export const GenerationPage: React.FC = () => {
         setDemandCounts({});
         return;
       }
-      const responses = await Promise.all(
-        weeks.map(async (week) => {
-          const response = await apiFetch(
-            `${API_BASE_URL}/api/v1/planning/weeks/${week.id}/demands`,
-          );
-          if (!response.ok) return [week.id, 0] as const;
-          const payload = (await response.json()) as {
-            demands: Array<{ lessons_count: number }>;
-          };
-          return [
-            week.id,
-            payload.demands.reduce(
-              (total, demand) => total + Math.max(0, demand.lessons_count),
-              0,
-            ),
-          ] as const;
-        }),
-      );
-      setDemandCounts(Object.fromEntries(responses));
-      if (selectLoadedWeeks)
-        setSelectedWeekIds(
-          responses
-            .filter(([, lessonsCount]) => lessonsCount > 0)
-            .map(([weekId]) => weekId),
+      try {
+        const responses = await Promise.all(
+          weeks.map(async (week) => {
+            const payload = await apiFetchJson<{
+              demands: Array<{ lessons_count: number }>;
+            }>(
+              `${API_BASE_URL}/api/v1/planning/weeks/${week.id}/demands`,
+              "Не удалось загрузить нагрузку по неделям",
+            );
+            return [
+              week.id,
+              payload.demands.reduce(
+                (total, demand) => total + Math.max(0, demand.lessons_count),
+                0,
+              ),
+            ] as const;
+          }),
         );
+        setDemandCounts(Object.fromEntries(responses));
+        if (selectLoadedWeeks)
+          setSelectedWeekIds(
+            responses
+              .filter(([, lessonsCount]) => lessonsCount > 0)
+              .map(([weekId]) => weekId),
+          );
+      } catch (error) {
+        setStatus({
+          type: "error",
+          msg:
+            error instanceof Error
+              ? error.message
+              : "Не удалось загрузить нагрузку по неделям",
+        });
+      }
     },
     [],
   );
@@ -340,31 +359,43 @@ export const GenerationPage: React.FC = () => {
       (item) => item.taskId && ["queued", "running"].includes(item.status),
     );
     if (!active) return;
+    let cancelled = false;
     const interval = window.setInterval(async () => {
-      const response = await apiFetch(`${API_BASE_URL}/api/v1/scheduler/tasks`);
-      if (!response.ok) return;
-      const tasks = (await response.json()) as Array<{
-        id: number;
-        status: BatchWeekState["status"];
-        progress_percent: number;
-        error_message: string | null;
-      }>;
-      const byId = new Map(tasks.map((task) => [task.id, task]));
-      setBatchWeeks((current) =>
-        current.map((item) => {
-          const task = item.taskId ? byId.get(item.taskId) : undefined;
-          return task
-            ? {
-                ...item,
-                status: task.status,
-                progress: task.progress_percent,
-                error: task.error_message,
-              }
-            : item;
-        }),
-      );
+      try {
+        const tasks = await apiFetchJson<
+          Array<{
+            id: number;
+            status: BatchWeekState["status"];
+            progress_percent: number;
+            error_message: string | null;
+          }>
+        >(
+          `${API_BASE_URL}/api/v1/scheduler/tasks`,
+          "Не удалось обновить прогресс расчётов",
+        );
+        if (cancelled) return;
+        const byId = new Map(tasks.map((task) => [task.id, task]));
+        setBatchWeeks((current) =>
+          current.map((item) => {
+            const task = item.taskId ? byId.get(item.taskId) : undefined;
+            return task
+              ? {
+                  ...item,
+                  status: task.status,
+                  progress: task.progress_percent,
+                  error: task.error_message,
+                }
+              : item;
+          }),
+        );
+      } catch (error) {
+        if (!cancelled) console.error(error);
+      }
     }, 3000);
-    return () => window.clearInterval(interval);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
   }, [batchWeeks]);
 
   const handleToggleGroup = (group: string) => {
@@ -382,18 +413,25 @@ export const GenerationPage: React.FC = () => {
 
   const handlePreviewGroup = async (group: string) => {
     setPreviewGroup(group);
+    setPreviewStreams([]);
     setIsPreviewLoading(true);
     try {
-      const res = await apiFetch(
+      const data = await apiFetchJson<
+        Array<StreamPreview & { is_ignored: boolean }>
+      >(
         `${API_BASE_URL}/api/v1/scheduler/streams?group_name=${encodeURIComponent(group)}`,
+        "Не удалось загрузить потоки группы",
       );
-      const data = await res.json();
       // Only show active (not ignored) streams
-      setPreviewStreams(
-        data.filter((s: { is_ignored: boolean }) => !s.is_ignored),
-      );
-    } catch {
-      console.error("Preview failed");
+      setPreviewStreams(data.filter((s) => !s.is_ignored));
+    } catch (error) {
+      setStatus({
+        type: "error",
+        msg:
+          error instanceof Error
+            ? error.message
+            : "Не удалось загрузить потоки группы",
+      });
     } finally {
       setIsPreviewLoading(false);
     }
@@ -412,28 +450,32 @@ export const GenerationPage: React.FC = () => {
 
   const createAcademicPeriod = async () => {
     if (!newPeriod.name || !newPeriod.starts_on || !newPeriod.ends_on) return;
-    const response = await apiFetch(`${API_BASE_URL}/api/v1/planning/periods`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...newPeriod,
-        period_type: "semester",
-        create_weeks: true,
-      }),
-    });
-    if (!response.ok) {
-      const payload = (await response.json()) as { detail?: string };
+    setStatus(null);
+    try {
+      const period = await apiFetchJson<AcademicPeriod>(
+        `${API_BASE_URL}/api/v1/planning/periods`,
+        "Не удалось создать период",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...newPeriod,
+            period_type: "semester",
+            create_weeks: true,
+          }),
+        },
+      );
+      setPeriods((current) => [period, ...current]);
+      setSelectedPeriodId(period.id);
+      setSelectedWeekIds(period.weeks.map((week) => week.id));
+      setNewPeriod({ name: "", starts_on: "", ends_on: "" });
+    } catch (error) {
       setStatus({
         type: "error",
-        msg: payload.detail || "Не удалось создать период",
+        msg:
+          error instanceof Error ? error.message : "Не удалось создать период",
       });
-      return;
     }
-    const period = (await response.json()) as AcademicPeriod;
-    setPeriods((current) => [period, ...current]);
-    setSelectedPeriodId(period.id);
-    setSelectedWeekIds(period.weeks.map((week) => week.id));
-    setNewPeriod({ name: "", starts_on: "", ends_on: "" });
   };
 
   const distributeSemesterDemands = async () => {
@@ -441,8 +483,9 @@ export const GenerationPage: React.FC = () => {
     setIsPreparingDemands(true);
     setStatus(null);
     try {
-      const response = await apiFetch(
+      const payload = await apiFetchJson<SemesterDistributionResult>(
         `${API_BASE_URL}/api/v1/planning/periods/${selectedPeriod.id}/demands/distribute`,
+        "Не удалось распределить семестровую нагрузку",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -453,15 +496,8 @@ export const GenerationPage: React.FC = () => {
           }),
         },
       );
-      const payload = (await response.json()) as
-        | SemesterDistributionResult
-        | { detail?: string };
-      if (!response.ok || !("weeks" in payload)) {
-        throw new Error(
-          "detail" in payload && payload.detail
-            ? payload.detail
-            : "Не удалось распределить семестровую нагрузку",
-        );
+      if (!Array.isArray(payload?.weeks) || !Array.isArray(payload.warnings)) {
+        throw new Error("Не удалось распределить семестровую нагрузку");
       }
       setDistributionResult(payload);
       setDemandCounts(
@@ -550,8 +586,9 @@ export const GenerationPage: React.FC = () => {
     const results = await Promise.all(
       weeks.map(async (week): Promise<BatchWeekState> => {
         try {
-          const response = await apiFetch(
+          const payload = await apiFetchJson<{ task_id?: number }>(
             `${API_BASE_URL}/api/v1/scheduler/generate`,
+            "Не удалось поставить неделю в очередь",
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -560,18 +597,8 @@ export const GenerationPage: React.FC = () => {
               ),
             },
           );
-          const payload = (await response.json()) as {
-            task_id?: number;
-            detail?: string;
-          };
-          if (!response.ok || !payload.task_id) {
-            return {
-              week,
-              taskId: null,
-              status: "failed",
-              progress: 100,
-              error: payload.detail || "Не удалось поставить неделю в очередь",
-            };
+          if (!payload?.task_id) {
+            throw new Error("Не удалось поставить неделю в очередь");
           }
           return {
             week,
@@ -580,13 +607,16 @@ export const GenerationPage: React.FC = () => {
             progress: 0,
             error: null,
           };
-        } catch {
+        } catch (error) {
           return {
             week,
             taskId: null,
             status: "failed",
             progress: 100,
-            error: "Нет связи с сервером",
+            error:
+              error instanceof Error
+                ? error.message
+                : "Не удалось поставить неделю в очередь",
           };
         }
       }),
@@ -602,79 +632,91 @@ export const GenerationPage: React.FC = () => {
 
   const retryBatchWeek = async (item: BatchWeekState) => {
     if (!item.taskId) return;
-    const response = await apiFetch(
-      `${API_BASE_URL}/api/v1/scheduler/tasks/${item.taskId}/retry`,
-      { method: "POST" },
-    );
-    const payload = (await response.json()) as {
-      task_id?: number;
-      detail?: string;
-    };
-    if (!response.ok || !payload.task_id) {
-      setStatus({ type: "error", msg: payload.detail || "Retry не выполнен" });
-      return;
+    setStatus(null);
+    try {
+      const payload = await apiFetchJson<{ task_id?: number }>(
+        `${API_BASE_URL}/api/v1/scheduler/tasks/${item.taskId}/retry`,
+        "Не удалось повторить расчёт недели",
+        { method: "POST" },
+      );
+      const taskId = payload?.task_id;
+      if (!taskId) throw new Error("Не удалось повторить расчёт недели");
+      setBatchWeeks((current) =>
+        current.map((week) =>
+          week.week.id === item.week.id
+            ? { ...week, taskId, status: "queued", progress: 0, error: null }
+            : week,
+        ),
+      );
+    } catch (error) {
+      setStatus({
+        type: "error",
+        msg:
+          error instanceof Error
+            ? error.message
+            : "Не удалось повторить расчёт недели",
+      });
     }
-    setBatchWeeks((current) =>
-      current.map((week) =>
-        week.week.id === item.week.id
-          ? {
-              ...week,
-              taskId: payload.task_id!,
-              status: "queued",
-              progress: 0,
-              error: null,
-            }
-          : week,
-      ),
-    );
   };
 
   const openWeeklyDemandEditor = async (week: PlanningWeek) => {
-    const response = await apiFetch(
-      `${API_BASE_URL}/api/v1/planning/weeks/${week.id}/demands`,
-    );
-    if (!response.ok) {
+    setStatus(null);
+    try {
+      const payload = await apiFetchJson<{ demands: WeeklyDemand[] }>(
+        `${API_BASE_URL}/api/v1/planning/weeks/${week.id}/demands`,
+        "Не удалось загрузить недельную нагрузку",
+      );
+      if (!Array.isArray(payload?.demands)) {
+        throw new Error("Не удалось загрузить недельную нагрузку");
+      }
+      setWeeklyDemands(payload.demands);
+      setDemandSearch("");
+      setEditingWeek(week);
+    } catch (error) {
       setStatus({
         type: "error",
-        msg: "Не удалось загрузить недельную нагрузку",
+        msg:
+          error instanceof Error
+            ? error.message
+            : "Не удалось загрузить недельную нагрузку",
       });
-      return;
     }
-    const payload = (await response.json()) as { demands: WeeklyDemand[] };
-    setWeeklyDemands(payload.demands);
-    setDemandSearch("");
-    setEditingWeek(week);
   };
 
   const saveWeeklyDemands = async () => {
     if (!editingWeek) return;
     setIsSavingDemands(true);
-    const response = await apiFetch(
-      `${API_BASE_URL}/api/v1/planning/weeks/${editingWeek.id}/demands`,
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          demands: weeklyDemands.map((item) => ({
-            stream_id: item.stream_id,
-            lessons_count: item.lessons_count,
-            priority: item.priority,
-          })),
-        }),
-      },
-    );
-    setIsSavingDemands(false);
-    if (!response.ok) {
-      const payload = (await response.json()) as { detail?: string };
+    setStatus(null);
+    try {
+      await apiFetchJson(
+        `${API_BASE_URL}/api/v1/planning/weeks/${editingWeek.id}/demands`,
+        "Не удалось сохранить недельную нагрузку",
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            demands: weeklyDemands.map((item) => ({
+              stream_id: item.stream_id,
+              lessons_count: item.lessons_count,
+              priority: item.priority,
+            })),
+          }),
+        },
+      );
+      setEditingWeek(null);
+      setStatus({ type: "success", msg: "Недельная нагрузка сохранена" });
+      if (selectedPeriod) await loadDemandCounts(selectedPeriod.weeks);
+    } catch (error) {
       setStatus({
         type: "error",
-        msg: payload.detail || "Нагрузка не сохранена",
+        msg:
+          error instanceof Error
+            ? error.message
+            : "Не удалось сохранить недельную нагрузку",
       });
-      return;
+    } finally {
+      setIsSavingDemands(false);
     }
-    if (selectedPeriod) await loadDemandCounts(selectedPeriod.weeks);
-    setEditingWeek(null);
-    setStatus({ type: "success", msg: "Недельная нагрузка сохранена" });
   };
 
   const handleStartGeneration = async () => {
@@ -697,26 +739,28 @@ export const GenerationPage: React.FC = () => {
     setIsGenerating(true);
     setStatus(null);
     try {
-      const res = await apiFetch(`${API_BASE_URL}/api/v1/scheduler/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildCalculationPayload()),
-      });
+      await apiFetchJson(
+        `${API_BASE_URL}/api/v1/scheduler/generate`,
+        "Не удалось отправить задачу",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(buildCalculationPayload()),
+        },
+      );
 
-      if (res.ok) {
-        setStatus({
-          type: "success",
-          msg: "Задача на генерацию успешно отправлена!",
-        });
-      } else {
-        const payload = (await res.json()) as { detail?: string };
-        setStatus({
-          type: "error",
-          msg: payload.detail || "Ошибка при отправке задачи.",
-        });
-      }
-    } catch {
-      setStatus({ type: "error", msg: "Не удалось связаться с сервером." });
+      setStatus({
+        type: "success",
+        msg: "Задача на генерацию успешно отправлена!",
+      });
+    } catch (error) {
+      setStatus({
+        type: "error",
+        msg:
+          error instanceof Error
+            ? error.message
+            : "Не удалось отправить задачу",
+      });
     } finally {
       setIsGenerating(false);
     }
@@ -753,23 +797,17 @@ export const GenerationPage: React.FC = () => {
 
     setIsExpandingGroups(true);
     try {
-      const response = await apiFetch(
+      const payload = await apiFetchJson<ExperimentalGroupSelection>(
         `${API_BASE_URL}/api/v1/scheduler/groups/selection-preview`,
+        "Не удалось определить связанные потоки",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ groups: baseGroups }),
         },
       );
-      const payload = (await response.json()) as
-        | ExperimentalGroupSelection
-        | { detail?: string };
-      if (!response.ok || !("selected_groups" in payload)) {
-        throw new Error(
-          "detail" in payload && payload.detail
-            ? payload.detail
-            : "Не удалось определить связанные потоки",
-        );
+      if (!Array.isArray(payload?.selected_groups)) {
+        throw new Error("Не удалось определить связанные потоки");
       }
       setExperimentalSelection(payload);
       setSelectedGroups(payload.selected_groups);
@@ -2386,6 +2424,14 @@ export const GenerationPage: React.FC = () => {
                 </tbody>
               </table>
             </div>
+            {status?.type === "error" && (
+              <p
+                role="alert"
+                className="px-6 py-3 text-sm font-semibold text-red-700"
+              >
+                {status.msg}
+              </p>
+            )}
             <div className="flex items-center justify-between border-t border-border-light px-6 py-4">
               <span className="text-xs font-semibold text-text-secondary">
                 Активно потоков:{" "}

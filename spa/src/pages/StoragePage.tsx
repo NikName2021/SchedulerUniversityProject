@@ -11,7 +11,7 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
-import { API_BASE_URL, apiFetch, openDownload } from "../api/apiConfig";
+import { API_BASE_URL, apiFetchJson, openDownload } from "../api/apiConfig";
 
 type FolderName =
   | "Учебные планы и потоки"
@@ -28,6 +28,13 @@ interface FileItem {
 }
 
 type ImportFileType = "streams" | "rooms";
+
+interface ImportHistoryItem {
+  id: number;
+  filename: string;
+  file_type: ImportFileType;
+  created_date: string;
+}
 
 const folders: Array<{
   title: FolderName;
@@ -167,30 +174,26 @@ export const StoragePage: React.FC = () => {
 
   const fetchHistory = useCallback(async (fileType: ImportFileType) => {
     try {
-      const response = await apiFetch(
+      const data = await apiFetchJson<ImportHistoryItem[]>(
         `${API_BASE_URL}/api/v1/scheduler/import/history?file_type=${fileType}`,
+        "Не удалось загрузить историю импорта",
       );
-      if (!response.ok) return;
-      const data = await response.json();
       setFiles(
-        data.map(
-          (item: {
-            id: number;
-            filename: string;
-            file_type: ImportFileType;
-            created_date: string;
-          }) => ({
-            id: item.id,
-            name: item.filename,
-            size: item.file_type === "rooms" ? "Аудитории" : "Потоки",
-            fileType: item.file_type,
-            status: "ready",
-            date: item.created_date,
-          }),
-        ),
+        data.map((item) => ({
+          id: item.id,
+          name: item.filename,
+          size: item.file_type === "rooms" ? "Аудитории" : "Потоки",
+          fileType: item.file_type,
+          status: "ready",
+          date: item.created_date,
+        })),
       );
     } catch (requestError) {
-      console.error(requestError);
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Не удалось загрузить историю импорта",
+      );
     }
   }, []);
 
@@ -211,15 +214,14 @@ export const StoragePage: React.FC = () => {
           : `${API_BASE_URL}/api/v1/scheduler/import/streams`;
 
       try {
-        const response = await apiFetch(endpoint, {
-          method: "POST",
-          body: formData,
-        });
-        if (!response.ok) {
-          const payload = await response.json();
-          throw new Error(payload.detail || "Не удалось загрузить файл");
-        }
-        const payload = await response.json();
+        const payload = await apiFetchJson<Record<string, number>>(
+          endpoint,
+          "Не удалось загрузить файл",
+          {
+            method: "POST",
+            body: formData,
+          },
+        );
         setSuccessMsg(
           isTeacherImport
             ? `Доступность обновлена: преподавателей — ${payload.updated_teachers}.`
@@ -254,12 +256,14 @@ export const StoragePage: React.FC = () => {
   }, [fetchHistory, selectedFolder]);
 
   const removeFile = async (file: FileItem) => {
+    setError(null);
+    setSuccessMsg(null);
     try {
-      const response = await apiFetch(
+      await apiFetchJson(
         `${API_BASE_URL}/api/v1/scheduler/import/history/${file.id}`,
+        "Не удалось удалить файл",
         { method: "DELETE" },
       );
-      if (!response.ok) return;
       setSuccessMsg(
         file.fileType === "streams"
           ? "Файл и связанные данные удалены."
@@ -267,7 +271,11 @@ export const StoragePage: React.FC = () => {
       );
       await fetchHistory(file.fileType);
     } catch (requestError) {
-      console.error(requestError);
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Не удалось удалить файл",
+      );
     }
   };
 

@@ -34,7 +34,7 @@ import {
 } from "@dnd-kit/core";
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { API_BASE_URL, apiFetch, openDownload } from "../api/apiConfig";
+import { API_BASE_URL, apiFetchJson, openDownload } from "../api/apiConfig";
 import {
   collectKnownSubgroups,
   groupLabelIncludesBase,
@@ -654,11 +654,11 @@ export const SchedulePage: React.FC = () => {
   const openEntryDetails = useCallback(async (entryId: number) => {
     setDetailsLoading(true);
     try {
-      const response = await apiFetch(
+      const details = await apiFetchJson<ScheduleEntryDetails>(
         `${API_BASE_URL}/api/v1/scheduler/schedule/${entryId}/details`,
+        "Не удалось загрузить полную информацию о занятии",
       );
-      if (!response.ok) throw new Error("Не удалось загрузить занятие");
-      setEntryDetails((await response.json()) as ScheduleEntryDetails);
+      setEntryDetails(details);
     } catch (error) {
       console.error(error);
       alert("Не удалось загрузить полную информацию о занятии");
@@ -695,9 +695,10 @@ export const SchedulePage: React.FC = () => {
 
   const fetchTasks = useCallback(async () => {
     try {
-      const res = await apiFetch(`${API_BASE_URL}/api/v1/scheduler/tasks`);
-      const data = await res.json();
-      const fetchedTasks = data as GenerationTaskSummary[];
+      const fetchedTasks = await apiFetchJson<GenerationTaskSummary[]>(
+        `${API_BASE_URL}/api/v1/scheduler/tasks`,
+        "Не удалось загрузить расчёты",
+      );
       setTasks(fetchedTasks);
       setSelectedTaskId((current) => {
         if (current) {
@@ -738,11 +739,10 @@ export const SchedulePage: React.FC = () => {
       const query = semesterBatchId
         ? `semester_batch_id=${encodeURIComponent(semesterBatchId)}`
         : `task_id=${encodeURIComponent(selectedTaskId)}`;
-      const res = await apiFetch(
+      const data = await apiFetchJson<{ groups?: string[] }>(
         `${API_BASE_URL}/api/v1/scheduler/groups?${query}`,
+        "Не удалось загрузить группы расчёта",
       );
-      if (!res.ok) throw new Error("Failed to fetch calculation groups");
-      const data = await res.json();
       const fetchedGroups: string[] = data.groups || [];
       setGroups(fetchedGroups);
       setSelectedGroup((current) =>
@@ -764,8 +764,10 @@ export const SchedulePage: React.FC = () => {
       const url = semesterBatchId
         ? `${API_BASE_URL}/api/v1/scheduler/schedule?semester_batch_id=${encodeURIComponent(semesterBatchId)}`
         : `${API_BASE_URL}/api/v1/scheduler/schedule?task_id=${id}`;
-      const res = await apiFetch(url);
-      const data = await res.json();
+      const data = await apiFetchJson<ScheduleEntry[]>(
+        url,
+        "Не удалось загрузить расписание",
+      );
       setEntries(data);
     } catch (e) {
       console.error(e);
@@ -816,12 +818,11 @@ export const SchedulePage: React.FC = () => {
     const fetchQuality = async () => {
       setQualityLoading(true);
       try {
-        const res = await apiFetch(
+        const data = await apiFetchJson<QualityData>(
           `${API_BASE_URL}/api/v1/scheduler/schedule/quality?task_id=${selectedTaskId}&group_name=${encodeURIComponent(selectedGroup)}`,
+          "Не удалось загрузить оценку расписания",
         );
-        if (res.ok) {
-          setQuality(await res.json());
-        }
+        setQuality(data);
       } catch {
         setQuality(null);
       } finally {
@@ -891,11 +892,10 @@ export const SchedulePage: React.FC = () => {
     const loadAvailability = async () => {
       try {
         const endDate = getWeekDayDate(selectedWeek, DAYS.length - 1);
-        const response = await apiFetch(
+        const data = await apiFetchJson<ScheduleAvailability>(
           `${API_BASE_URL}/api/v1/scheduler/schedule/availability?start_date=${selectedWeek}&end_date=${endDate}`,
+          "Не удалось загрузить доступность",
         );
-        if (!response.ok) throw new Error("Availability request failed");
-        const data = (await response.json()) as ScheduleAvailability;
         if (!cancelled) setScheduleAvailability(data);
       } catch (error) {
         console.error(error);
@@ -996,8 +996,9 @@ export const SchedulePage: React.FC = () => {
       );
 
       try {
-        const res = await apiFetch(
+        const result = await apiFetchJson<{ entries?: ScheduleEntry[] }>(
           `${API_BASE_URL}/api/v1/scheduler/schedule/${entryId}`,
+          "Не удалось перенести занятие",
           {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
@@ -1008,23 +1009,16 @@ export const SchedulePage: React.FC = () => {
             }),
           },
         );
-        const result = await res.json();
-        if (!res.ok) {
-          setEntries(previousEntries);
-          const detail = result.detail;
-          alert(
-            typeof detail === "string"
-              ? detail
-              : detail?.conflicts?.join("\n") || "Перенос создает конфликт",
-          );
-          return;
-        }
         if (result.entries) {
           setEntries(result.entries);
         }
       } catch (error) {
         setEntries(previousEntries);
-        console.error("Update failed:", error);
+        alert(
+          error instanceof Error
+            ? error.message
+            : "Не удалось перенести занятие",
+        );
       }
     }
   };
@@ -1037,24 +1031,21 @@ export const SchedulePage: React.FC = () => {
       setEntries((prev) => prev.filter((e) => e.id !== id));
 
       try {
-        const res = await apiFetch(
+        const result = await apiFetchJson<{ entries?: ScheduleEntry[] }>(
           `${API_BASE_URL}/api/v1/scheduler/schedule/${id}`,
+          "Не удалось удалить занятие",
           {
             method: "DELETE",
           },
         );
-        const result = await res.json();
-        if (!res.ok) {
-          setEntries(previousEntries);
-          alert(result.detail || "Не удалось удалить занятие");
-          return;
-        }
         if (result.entries) {
           setEntries(result.entries);
         }
-      } catch (e) {
+      } catch (error) {
         setEntries(previousEntries);
-        console.error("Delete failed:", e);
+        alert(
+          error instanceof Error ? error.message : "Не удалось удалить занятие",
+        );
       }
     },
     [entries],
@@ -1072,8 +1063,9 @@ export const SchedulePage: React.FC = () => {
       }
 
       try {
-        const res = await apiFetch(
+        const result = await apiFetchJson<{ entries?: ScheduleEntry[] }>(
           `${API_BASE_URL}/api/v1/scheduler/schedule/${id}`,
+          "Не удалось снять занятие со слота",
           {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
@@ -1083,38 +1075,40 @@ export const SchedulePage: React.FC = () => {
             }),
           },
         );
-        const result = await res.json();
-        if (!res.ok) {
-          setEntries(previousEntries);
-          alert(result.detail || "Не удалось снять занятие со слота");
-          return;
-        }
         if (result.entries) {
           setEntries(result.entries);
         }
-      } catch (e) {
+      } catch (error) {
         setEntries(previousEntries);
-        console.error("Unassign failed:", e);
+        alert(
+          error instanceof Error
+            ? error.message
+            : "Не удалось снять занятие со слота",
+        );
       }
     },
     [entries],
   );
 
   const toggleEntryLock = useCallback(async (id: number, locked: boolean) => {
-    const response = await apiFetch(
-      `${API_BASE_URL}/api/v1/scheduler/schedule/${id}`,
-      {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ is_locked: locked }),
-      },
-    );
-    const result = await response.json();
-    if (!response.ok) {
-      alert(result.detail || "Не удалось изменить блокировку");
-      return;
+    try {
+      const result = await apiFetchJson<{ entries?: ScheduleEntry[] }>(
+        `${API_BASE_URL}/api/v1/scheduler/schedule/${id}`,
+        "Не удалось изменить блокировку",
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ is_locked: locked }),
+        },
+      );
+      if (result.entries) setEntries(result.entries);
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Не удалось изменить блокировку",
+      );
     }
-    if (result.entries) setEntries(result.entries);
   }, []);
 
   // Expose to cards

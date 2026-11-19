@@ -1,8 +1,21 @@
 """Personal data boundaries shared by HTTP requests and generation workers."""
 
-from sqlalchemy import Column, ForeignKey, Integer, event, inspect, select
+from sqlalchemy import (
+    Column,
+    ForeignKey,
+    Integer,
+    column,
+    event,
+    inspect,
+    select,
+    table,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, declared_attr, with_loader_criteria
+
+_task_ownership = table(
+    "generation_task", column("id", Integer), column("owner_id", Integer)
+)
 
 
 class WorkspaceAccessError(LookupError):
@@ -42,12 +55,9 @@ async def bind_task_workspace(db: AsyncSession, task_id: int) -> None:
     contents. HTTP endpoints must bind from the authenticated account instead.
     A deleted task gets an empty scope, so delayed callbacks cannot read data.
     """
-    from database.all_models import GenerationTask
-
     connection = await db.connection()
-    table = GenerationTask.__table__
     owner_id = await connection.scalar(
-        select(table.c.owner_id).where(table.c.id == task_id)
+        select(_task_ownership.c.owner_id).where(_task_ownership.c.id == task_id)
     )
     bind_workspace(db, owner_id if owner_id is not None else -1)
 
@@ -97,13 +107,13 @@ def protect_workspace_writes(session, _flush_context, _instances) -> None:
             for related in state.attrs[relation.key].history.added:
                 if isinstance(related, WorkspaceOwned) and related.owner_id != owner_id:
                     raise WorkspaceAccessError("Related object is not available")
-        for column in state.mapper.columns:
-            if state.persistent and not state.attrs[column.key].history.has_changes():
+        for mapped_column in state.mapper.columns:
+            if state.persistent and not state.attrs[mapped_column.key].history.has_changes():
                 continue
-            value = getattr(item, column.key)
+            value = getattr(item, mapped_column.key)
             if value is None:
                 continue
-            for foreign_key in column.foreign_keys:
+            for foreign_key in mapped_column.foreign_keys:
                 target = foreign_key.column
                 if "owner_id" in target.table.c:
                     references.setdefault(target, set()).add(value)

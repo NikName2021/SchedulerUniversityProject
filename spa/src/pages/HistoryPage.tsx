@@ -22,7 +22,12 @@ import {
   XCircle,
 } from "lucide-react";
 import { ActionButton } from "../components/ActionButton";
-import { API_BASE_URL, apiFetch, openDownload } from "../api/apiConfig";
+import {
+  API_BASE_URL,
+  apiFetchJson,
+  apiFetchNoContent,
+  openDownload,
+} from "../api/apiConfig";
 
 interface PlanningWeekSummary {
   id: number;
@@ -113,9 +118,11 @@ const HistoryPage: React.FC = () => {
 
   const fetchTasks = useCallback(async () => {
     try {
-      const response = await apiFetch(`${API_BASE_URL}/api/v1/scheduler/tasks`);
-      if (!response.ok) throw new Error("Не удалось загрузить задачи");
-      setTasks(await response.json());
+      const data = await apiFetchJson<GenerationTask[]>(
+        `${API_BASE_URL}/api/v1/scheduler/tasks`,
+        "Не удалось загрузить задачи",
+      );
+      setTasks(data);
     } catch (error) {
       console.error(error);
     } finally {
@@ -179,29 +186,35 @@ const HistoryPage: React.FC = () => {
     taskId: number,
     action: "cancel" | "retry" | "publish" | "archive",
   ) => {
-    const response = await apiFetch(
-      `${API_BASE_URL}/api/v1/scheduler/tasks/${taskId}/${action}`,
-      { method: "POST" },
-    );
-    if (!response.ok) {
-      const payload = (await response.json()) as { detail?: string };
-      alert(payload.detail || "Операция не выполнена");
-      return;
+    try {
+      await apiFetchJson(
+        `${API_BASE_URL}/api/v1/scheduler/tasks/${taskId}/${action}`,
+        "Операция не выполнена",
+        { method: "POST" },
+      );
+      await fetchTasks();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Операция не выполнена");
     }
-    await fetchTasks();
   };
 
   const showDiagnostics = async (taskId: number) => {
-    const response = await apiFetch(
-      `${API_BASE_URL}/api/v1/scheduler/tasks/${taskId}/diagnostics`,
-    );
-    const payload = (await response.json()) as {
-      counts?: Record<string, number>;
-    };
-    const summary = Object.entries(payload.counts || {})
-      .map(([kind, count]) => `${kind}: ${count}`)
-      .join("\n");
-    alert(summary || "Проблем при генерации не обнаружено");
+    try {
+      const payload = await apiFetchJson<{ counts?: Record<string, number> }>(
+        `${API_BASE_URL}/api/v1/scheduler/tasks/${taskId}/diagnostics`,
+        "Не удалось загрузить диагностику",
+      );
+      const summary = Object.entries(payload.counts || {})
+        .map(([kind, count]) => `${kind}: ${count}`)
+        .join("\n");
+      alert(summary || "Проблем при генерации не обнаружено");
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Не удалось загрузить диагностику",
+      );
+    }
   };
 
   const handleInherit = (task: GenerationTask) => {
@@ -266,16 +279,18 @@ const HistoryPage: React.FC = () => {
     ) {
       return;
     }
-    const response = await apiFetch(
-      `${API_BASE_URL}/api/v1/scheduler/tasks/${task.id}`,
-      { method: "DELETE" },
-    );
-    if (!response.ok) {
-      const payload = (await response.json()) as { detail?: string };
-      alert(payload.detail || "Не удалось удалить расчёт");
-      return;
+    try {
+      await apiFetchNoContent(
+        `${API_BASE_URL}/api/v1/scheduler/tasks/${task.id}`,
+        "Не удалось удалить расчёт",
+        { method: "DELETE" },
+      );
+      await fetchTasks();
+    } catch (error) {
+      alert(
+        error instanceof Error ? error.message : "Не удалось удалить расчёт",
+      );
     }
-    await fetchTasks();
   };
 
   const deleteSemesterBatch = async (batch: SemesterBatch) => {
@@ -287,21 +302,25 @@ const HistoryPage: React.FC = () => {
     ) {
       return;
     }
-    const response = await apiFetch(
-      `${API_BASE_URL}/api/v1/scheduler/semester-batches/${encodeURIComponent(batch.id)}`,
-      { method: "DELETE" },
-    );
-    if (!response.ok) {
-      const payload = (await response.json()) as { detail?: string };
-      alert(payload.detail || "Не удалось удалить семестровый расчёт");
-      return;
+    try {
+      await apiFetchNoContent(
+        `${API_BASE_URL}/api/v1/scheduler/semester-batches/${encodeURIComponent(batch.id)}`,
+        "Не удалось удалить семестровый расчёт",
+        { method: "DELETE" },
+      );
+      setExpandedBatches((current) => {
+        const next = new Set(current);
+        next.delete(batch.id);
+        return next;
+      });
+      await fetchTasks();
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Не удалось удалить семестровый расчёт",
+      );
     }
-    setExpandedBatches((current) => {
-      const next = new Set(current);
-      next.delete(batch.id);
-      return next;
-    });
-    await fetchTasks();
   };
 
   const renderTaskActions = (

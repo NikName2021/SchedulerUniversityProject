@@ -281,6 +281,21 @@ def test_room_matching_honors_required_room_and_features() -> None:
     assert warnings == []
 
 
+def test_room_matching_keeps_laboratory_events() -> None:
+    context = _context()
+    context["rooms"] = {"Л-101": {"capacity": 25, "type": "lab"}}
+    context["group_sizes"] = {"ИТ-101": 20}
+    event = _event("event-1", ["ИТ-101"], 1, event_type="lab")
+
+    assignments, warnings, _ = assign_rooms_matching(
+        [{**event, "slot": ["2026-09-07", 1]}], context
+    )
+
+    assert len(assignments) == 1
+    assert assignments[0]["room"] == "Л-101"
+    assert warnings == []
+
+
 def test_global_unavailability_blocks_slot() -> None:
     context = _context()
     context["unavailable"]["global"] = {"*": [["2026-09-07", 1]]}
