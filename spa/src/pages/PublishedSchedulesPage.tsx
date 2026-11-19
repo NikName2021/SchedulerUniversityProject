@@ -15,6 +15,7 @@ import {
 
 import { API_BASE_URL, apiFetch } from "../api/apiConfig";
 import { groupLabelIncludesBase } from "../utils/groupSelection";
+import "./PublishedSchedulesPage.css";
 
 interface PublicScheduleSummary {
   id: number;
@@ -278,7 +279,7 @@ export const PublishedSchedulesPage = () => {
             >
               <ArrowLeft size={16} /> К каталогу
             </button>
-            <h2 className="enterprise-page__heading">{details.title}</h2>
+            <h1 className="enterprise-page__heading">{details.title}</h1>
             <p className="enterprise-page__description">
               Опубликовал: {details.owner_display_name} · обновлено{" "}
               {formatTimestamp(details.updated_at)} · редакция{" "}
@@ -496,9 +497,9 @@ export const PublishedSchedulesPage = () => {
     <div className="enterprise-page animate-fade-in">
       <section className="enterprise-page__header">
         <div>
-          <h2 className="enterprise-page__heading">
+          <h1 className="enterprise-page__heading">
             Опубликованные расписания
-          </h2>
+          </h1>
           <p className="enterprise-page__description">
             Готовые расписания, доступные всем сотрудникам системы.
           </p>

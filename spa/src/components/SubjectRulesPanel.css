@@ -26,7 +26,7 @@
   place-items: center;
   height: 34px;
   color: var(--brand);
-  border-radius: 6px;
+  border-radius: var(--radius-xl);
   background: var(--brand-light);
 }
 
@@ -39,14 +39,14 @@
 .subject-rule-direction-group {
   overflow: hidden;
   border: 1px solid var(--border-light);
-  border-radius: 6px;
+  border-radius: var(--radius-xl);
 }
 
 .rule-direction {
   width: 100%;
   gap: 10px;
   padding: 9px 11px;
-  background: #f8fafc;
+  background: var(--bg-light);
   text-align: left;
 }
 
@@ -84,7 +84,7 @@
   padding: 4px 8px;
   color: var(--brand);
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-md);
   background: var(--brand-light);
   font-size: 11px;
   font-weight: 600;
@@ -100,7 +100,7 @@
   min-height: 28px;
   padding: 4px 8px;
   border: 1px solid var(--border-light);
-  border-radius: 4px;
+  border-radius: var(--radius-md);
   background: white;
   color: var(--text-secondary);
   font-size: 11px;
@@ -109,7 +109,7 @@
 .rule-edit.active,
 .rule-presets .selected,
 .rule-weekdays .selected {
-  border-color: #8fb0e8;
+  border-color: var(--brand);
   background: var(--brand-light);
   color: var(--brand);
 }
@@ -128,8 +128,8 @@
 .rule-soft {
   margin-left: auto;
   padding: 3px 6px;
-  border-radius: 3px;
-  background: #f1f5f9;
+  border-radius: var(--radius-sm);
+  background: var(--bg-light);
 }
 .rule-expanded {
   margin-top: 12px;
@@ -177,7 +177,7 @@
   min-width: 0;
   min-height: 32px;
   border: 1px solid var(--border-light);
-  border-radius: 4px;
+  border-radius: var(--radius-md);
   background: white;
   color: var(--text-primary);
 }
@@ -241,9 +241,9 @@
 }
 .rule-week-preview {
   padding: 9px;
-  background: #f8fafc;
+  background: var(--bg-light);
   border: 1px solid var(--border-light);
-  border-radius: 5px;
+  border-radius: var(--radius-lg);
 }
 .rule-week-preview > div:first-child,
 .rule-week-preview > p {
@@ -264,7 +264,7 @@
   display: grid;
   gap: 3px;
   padding: 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-md);
   background: white;
 }
 .rule-preview-days b {
@@ -298,7 +298,7 @@
   padding: 10px;
   margin-bottom: 10px;
   border: 1px solid var(--blocked-border);
-  border-radius: 5px;
+  border-radius: var(--radius-lg);
   background: var(--danger-bg);
   color: var(--danger);
 }
@@ -314,7 +314,7 @@
 .rule-warning,
 .subject-rule-notice {
   padding: 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-md);
 }
 .subject-rule-error {
   background: var(--danger-bg);

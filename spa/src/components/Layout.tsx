@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import React, { Suspense, useState } from "react";
+import { NavLink, Outlet } from "react-router-dom";
 import {
   BookOpen,
   CalendarDays,
@@ -16,42 +16,8 @@ import {
 
 import siriusLogo from "../assets/sirius-logo.svg";
 import { useAuth } from "../auth/useAuth";
+import { FeedbackProvider } from "./FeedbackProvider";
 import ErrorBoundary from "./ErrorBoundary";
-
-const pageMeta: Record<string, { title: string; description: string }> = {
-  "/": {
-    title: "Исходные данные",
-    description: "Импорт и контроль учебных данных",
-  },
-  "/editor": {
-    title: "Учебные потоки",
-    description: "Состав занятий и учебная нагрузка",
-  },
-  "/calendar": {
-    title: "Календарь",
-    description: "Учебные периоды и ограничения",
-  },
-  "/generation": {
-    title: "Расчёты",
-    description: "Формирование расписания",
-  },
-  "/history": {
-    title: "Журнал операций",
-    description: "Личные расчёты и результаты",
-  },
-  "/published": {
-    title: "Общий каталог",
-    description: "Опубликованные расписания сотрудников",
-  },
-  "/schedule": {
-    title: "Расписание",
-    description: "Проверка и ручное редактирование",
-  },
-  "/reference": {
-    title: "Справочники",
-    description: "Аудитории, преподаватели и параметры",
-  },
-};
 
 const navItems = [
   { to: "/", icon: FolderInput, label: "Исходные данные", end: true },
@@ -68,14 +34,6 @@ export const Layout: React.FC = () => {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [logoutError, setLogoutError] = useState(false);
   const { user, logout } = useAuth();
-  const location = useLocation();
-  const currentPage =
-    pageMeta[location.pathname] ??
-    (location.pathname.startsWith("/schedule/")
-      ? pageMeta["/schedule"]
-      : location.pathname.startsWith("/published/")
-        ? pageMeta["/published"]
-        : pageMeta["/"]);
   const userLabel = user?.display_name || user?.username || "Пользователь";
   const userRole = user?.role === "admin" ? "Администратор" : "Оператор";
 
@@ -133,24 +91,26 @@ export const Layout: React.FC = () => {
                 to={item.to}
                 end={item.end}
                 title={isCollapsed ? item.label : undefined}
+                aria-label={item.label}
                 className={({ isActive }) =>
                   `app-nav-link ${isActive ? "app-nav-link--active" : ""}`
                 }
               >
                 <item.icon size={18} strokeWidth={1.8} />
-                {!isCollapsed && <span>{item.label}</span>}
+                <span>{item.label}</span>
               </NavLink>
             ))}
             {!isCollapsed && <p className="app-navigation__label">ОБЩЕЕ</p>}
             <NavLink
               to="/published"
               title={isCollapsed ? "Общий каталог" : undefined}
+              aria-label="Общий каталог"
               className={({ isActive }) =>
                 `app-nav-link ${isActive ? "app-nav-link--active" : ""}`
               }
             >
               <Globe2 size={18} strokeWidth={1.8} />
-              {!isCollapsed && <span>Общий каталог</span>}
+              <span>Общий каталог</span>
             </NavLink>
           </nav>
         </div>
@@ -160,12 +120,10 @@ export const Layout: React.FC = () => {
             <div className="app-user__avatar">
               {userLabel.charAt(0).toLocaleUpperCase("ru-RU")}
             </div>
-            {!isCollapsed && (
-              <div className="app-user__meta">
-                <strong>{userLabel}</strong>
-                <span>{userRole}</span>
-              </div>
-            )}
+            <div className="app-user__meta">
+              <strong>{userLabel}</strong>
+              <span>{userRole}</span>
+            </div>
           </div>
           <button
             type="button"
@@ -181,41 +139,24 @@ export const Layout: React.FC = () => {
       </aside>
 
       <main className="app-main">
-        <header className="app-topbar">
-          <div>
-            <div className="app-topbar__crumb">
-              Личное пространство · {userLabel}
-            </div>
-            <h1>{currentPage.title}</h1>
-          </div>
-          <div className="app-topbar__actions">
-            {logoutError && (
-              <span className="app-topbar__logout-error" role="alert">
-                Не удалось выйти
-              </span>
-            )}
-            <div className="app-topbar__status">
-              <span className="app-topbar__status-dot" />
-              Система доступна
-            </div>
-            <button
-              type="button"
-              className="app-topbar__logout"
-              onClick={() => void handleLogout()}
-              disabled={isLoggingOut}
-              title="Выйти из системы"
-            >
-              <LogOut size={15} />
-              <span>Выйти</span>
-            </button>
-          </div>
-        </header>
         <div className="app-content">
-          <div className="app-page-intro">
-            <p>{currentPage.description}</p>
-          </div>
+          {logoutError && (
+            <p className="notice notice--danger" role="alert">
+              Не удалось выйти
+            </p>
+          )}
           <ErrorBoundary>
-            <Outlet />
+            <FeedbackProvider>
+              <Suspense
+                fallback={
+                  <p role="status" className="loading-state">
+                    Загрузка страницы…
+                  </p>
+                }
+              >
+                <Outlet />
+              </Suspense>
+            </FeedbackProvider>
           </ErrorBoundary>
         </div>
       </main>

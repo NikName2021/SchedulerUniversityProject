@@ -16,6 +16,8 @@ import {
 } from "lucide-react";
 import { API_BASE_URL, apiFetchJson } from "../api/apiConfig";
 
+import { Modal } from "../components/Modal";
+
 interface RoomFeature {
   id: number;
   code: string;
@@ -157,15 +159,6 @@ export const ReferenceDataPage: React.FC = () => {
     void load();
   }, [load]);
 
-  useEffect(() => {
-    if (!openedRuleSet) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpenedRuleSet(null);
-    };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [openedRuleSet]);
-
   const openCurrentRules = () => {
     if (!currentRules) return;
     setOpenedRuleSet({
@@ -236,11 +229,9 @@ export const ReferenceDataPage: React.FC = () => {
 
   return (
     <div className="space-y-8 pb-16">
-      <header className="flex items-end justify-between">
+      <header className="workspace-header">
         <div>
-          <h1 className="text-3xl font-black tracking-tight text-text-primary">
-            Базовые данные
-          </h1>
+          <h1>Базовые данные</h1>
           <p className="mt-1 text-sm font-medium text-text-secondary">
             Аудитории и профили правил генератора.
           </p>
@@ -423,19 +414,12 @@ export const ReferenceDataPage: React.FC = () => {
       </section>
 
       {openedRuleSet && (
-        <div
-          className="fixed inset-0 z-50 flex justify-end bg-slate-950/35"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.currentTarget === event.target) setOpenedRuleSet(null);
-          }}
+        <Modal
+          className="app-dialog--drawer app-dialog--drawer-wide"
+          label={openedRuleSet.title}
+          onClose={() => setOpenedRuleSet(null)}
         >
-          <aside
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="rule-profile-title"
-            className="flex h-full w-full max-w-3xl flex-col bg-white shadow-2xl"
-          >
+          <div className="flex h-full flex-col bg-white">
             <header className="border-b border-border-light px-6 py-5 sm:px-8">
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -631,8 +615,8 @@ export const ReferenceDataPage: React.FC = () => {
                 </div>
               )}
             </div>
-          </aside>
-        </div>
+          </div>
+        </Modal>
       )}
     </div>
   );

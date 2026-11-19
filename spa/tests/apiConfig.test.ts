@@ -2,11 +2,32 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  apiDownload,
   apiFetch,
   apiFetchJson,
   apiFetchNoContent,
   setCsrfToken,
 } from "../src/api/apiConfig.js";
+
+test("apiDownload rejects HTTP errors and HTML proxy pages before creating a file", async (t) => {
+  const endpoint = "/api/v1/scheduler/export";
+  const filename = "schedule.xlsx";
+  const fetchMock = t.mock.method(globalThis, "fetch", async () =>
+    Response.json({ detail: "Доступ запрещён" }, { status: 403 }),
+  );
+  await assert.rejects(apiDownload(endpoint, filename), {
+    message: "Доступ запрещён",
+  });
+  fetchMock.mock.mockImplementation(
+    async () =>
+      new Response("<html>Proxy</html>", {
+        headers: { "Content-Type": "text/html" },
+      }),
+  );
+  await assert.rejects(apiDownload(endpoint, filename), {
+    message: "Не удалось скачать файл. Некорректный ответ сервера",
+  });
+});
 
 test("apiFetch sends credentials and CSRF token for mutating requests", async () => {
   const originalFetch = globalThis.fetch;

@@ -1,97 +1,36 @@
-import React, { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
-  Users,
-  MapPin,
-  Search,
-  Lock,
-  ChevronRight,
-  ChevronLeft,
   CalendarDays,
-  Check,
-  Repeat,
-  ShieldCheck,
-  ShieldAlert,
+  ChevronLeft,
+  ChevronRight,
   Clock,
-  Trash2,
-  Plus,
+  Repeat,
+  Search,
+  ShieldAlert,
+  ShieldCheck,
+  Users,
 } from "lucide-react";
-import {
-  useAppStore,
-  getSlotsForInterval,
-  PAIR_TIMES,
-} from "../store/useAppStore";
-import type { TimeInterval } from "../store/useAppStore";
-import { getDayRestrictionKeys } from "../utils/dayRestrictions";
+import { useAppStore, type TeacherRestrictions } from "../store/useAppStore";
+import { AvailabilityGrid, type EditMode } from "./calendar/AvailabilityGrid";
+import { IntervalEditor } from "./calendar/IntervalEditor";
+import { addDays, getStudyWeek } from "./calendar/dates";
 import "./CalendarPage.css";
 
-const TIMES = PAIR_TIMES.map((pair) => pair.label);
+const monthFormatter = new Intl.DateTimeFormat("ru-RU", {
+  month: "long",
+  year: "numeric",
+});
+const editModes = [
+  { value: "specific", label: "Конкретный день", icon: CalendarDays },
+  { value: "recurring", label: "Повтор (еженедельно)", icon: Repeat },
+  { value: "time", label: "По времени", icon: Clock },
+] as const;
+const restrictionModes = [
+  { value: "blacklist", label: "Черный список", icon: ShieldAlert },
+  { value: "whitelist", label: "Белый список", icon: ShieldCheck },
+] as const;
 
-const WEEK_DAYS = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ"];
-const MONTHS = [
-  "Январь",
-  "Февраль",
-  "Март",
-  "Апрель",
-  "Май",
-  "Июнь",
-  "Июль",
-  "Август",
-  "Сентябрь",
-  "Октябрь",
-  "Ноябрь",
-  "Декабрь",
-];
-const MONTHS_SHORT = [
-  "Янв",
-  "Фев",
-  "Мар",
-  "Апр",
-  "Май",
-  "Июн",
-  "Июл",
-  "Авг",
-  "Сен",
-  "Окт",
-  "Ноя",
-  "Дек",
-];
-
-// Helpers
-const getStartOfWeek = (date: Date) => {
-  const d = new Date(date);
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1); // Adjust for Sunday (0)
-  return new Date(d.setDate(diff));
-};
-
-const getDaysOfWeek = (startDate: Date) => {
-  const days = [];
-  for (let i = 0; i < WEEK_DAYS.length; i++) {
-    const d = new Date(startDate);
-    d.setDate(startDate.getDate() + i);
-    days.push(d);
-  }
-  return days;
-};
-
-const formatDateFull = (date: Date) => {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-};
-
-const WEEK_DAYS_FULL = [
-  "Воскресенье",
-  "Понедельник",
-  "Вторник",
-  "Среда",
-  "Четверг",
-  "Пятница",
-  "Суббота",
-];
-
-export const CalendarPage: React.FC = () => {
+export function CalendarPage() {
   const {
     teachers,
     selectedTeacherId,
@@ -106,1305 +45,204 @@ export const CalendarPage: React.FC = () => {
     isLoading,
     error,
   } = useAppStore();
-
-  const selectedTeacher = teachers.find((t) => t.id === selectedTeacherId);
-
-  // Date State
-  const [currentDate, setCurrentDate] = useState(() => {
-    const today = new Date();
-    // Reset to midnight
-    today.setHours(0, 0, 0, 0);
-    return today;
-  });
-
-  const [dragState, setDragState] = useState<{
-    isDragging: boolean;
-    mode: "block" | "unblock" | null;
-  }>({
-    isDragging: false,
-    mode: null,
-  });
-
-  const [searchQuery, setSearchQuery] = useState("");
-  const [editMode, setEditMode] = useState<"specific" | "recurring" | "time">(
-    "specific",
-  );
-
-  // Time interval form state
-  const [intervalStart, setIntervalStart] = useState("09:00");
-  const [intervalEnd, setIntervalEnd] = useState("15:00");
-  const [intervalType, setIntervalType] = useState<"recurring" | "specific">(
-    "recurring",
-  );
-  const [intervalDay, setIntervalDay] = useState(1); // JS weekday
-  const [intervalDate, setIntervalDate] = useState(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  });
-
-  const filteredTeachers = teachers.filter(
-    (t) =>
-      t.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      t.dept.toLowerCase().includes(searchQuery.toLowerCase()),
-  );
+  const [currentDate, setCurrentDate] = useState(() => new Date());
+  const [query, setQuery] = useState("");
+  const [mode, setMode] = useState<EditMode>("specific");
+  const teacher = teachers.find((item) => item.id === selectedTeacherId);
+  const week = getStudyWeek(currentDate);
 
   useEffect(() => {
-    fetchInitialData();
+    void fetchInitialData();
   }, [fetchInitialData]);
 
-  useEffect(() => {
-    const handleGlobalMouseUp = () => {
-      if (dragState.isDragging && selectedTeacherId) {
-        saveTeacherRestrictions(selectedTeacherId);
-      }
-      setDragState({ isDragging: false, mode: null });
-    };
-    window.addEventListener("mouseup", handleGlobalMouseUp);
-    return () => window.removeEventListener("mouseup", handleGlobalMouseUp);
-  }, [dragState.isDragging, selectedTeacherId, saveTeacherRestrictions]);
-
-  if (isLoading) {
-    return (
-      <div className="p-20 text-center text-text-secondary">
-        Загрузка данных преподавателей...
-      </div>
-    );
-  }
-
-  const handleSlotPress = (
-    dateStr: string,
-    slotIdx: number,
-    startDrag: boolean,
-  ) => {
-    if (editMode === "time" || !selectedTeacherId || !selectedTeacher) return;
-
-    const weekday = new Date(`${dateStr}T00:00:00`).getDay();
-    const recurringKey = `${weekday}-${slotIdx + 1}`;
-    const specificKey = `${dateStr}-${slotIdx + 1}`;
-
-    const isCurrentlyActive =
-      editMode === "recurring"
-        ? selectedTeacher.restrictions.recurring.includes(recurringKey)
-        : selectedTeacher.restrictions.specific.includes(specificKey);
-
-    toggleRestriction(
-      selectedTeacherId,
-      editMode,
-      editMode === "recurring" ? recurringKey : specificKey,
-    );
-    if (startDrag) {
-      setDragState({
-        isDragging: true,
-        mode: isCurrentlyActive ? "unblock" : "block",
-      });
-    } else {
+  const save = useCallback(() => {
+    if (selectedTeacherId !== null)
       void saveTeacherRestrictions(selectedTeacherId);
-    }
-  };
+  }, [saveTeacherRestrictions, selectedTeacherId]);
 
-  const handleMouseEnter = (dateStr: string, slotIdx: number) => {
-    if (
-      editMode === "time" ||
-      !dragState.isDragging ||
-      !dragState.mode ||
-      !selectedTeacherId ||
-      !selectedTeacher
-    )
-      return;
-
-    const weekday = new Date(`${dateStr}T00:00:00`).getDay();
-    const recurringKey = `${weekday}-${slotIdx + 1}`;
-    const specificKey = `${dateStr}-${slotIdx + 1}`;
-
-    const isCurrentlyActive =
-      editMode === "recurring"
-        ? selectedTeacher.restrictions.recurring.includes(recurringKey)
-        : selectedTeacher.restrictions.specific.includes(specificKey);
-
-    if (
-      (dragState.mode === "block" && !isCurrentlyActive) ||
-      (dragState.mode === "unblock" && isCurrentlyActive)
-    ) {
-      toggleRestriction(
-        selectedTeacherId,
-        editMode,
-        editMode === "recurring" ? recurringKey : specificKey,
-      );
-    }
-  };
-
-  const handleRestrictionModeChange = (mode: "blacklist" | "whitelist") => {
-    if (!selectedTeacher || selectedTeacher.restrictions.mode === mode) return;
-    setRestrictionMode(selectedTeacher.id, mode);
-    void saveTeacherRestrictions(selectedTeacher.id);
-  };
-
-  // Date Navigation
-  const startOfWeek = getStartOfWeek(currentDate);
-  const weekDays = getDaysOfWeek(startOfWeek);
-  const currentMonthName = MONTHS[startOfWeek.getMonth()];
-  const currentYear = startOfWeek.getFullYear();
-
-  const handlePrevWeek = () => {
-    const prev = new Date(currentDate);
-    prev.setDate(prev.getDate() - 7);
-    setCurrentDate(prev);
-  };
-
-  const handleNextWeek = () => {
-    const next = new Date(currentDate);
-    next.setDate(next.getDate() + 7);
-    setCurrentDate(next);
-  };
-
-  const handleToday = () => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    setCurrentDate(today);
+  const changeMode = (value: TeacherRestrictions["mode"]) => {
+    if (!teacher || teacher.restrictions.mode === value) return;
+    setRestrictionMode(teacher.id, value);
+    save();
   };
 
   return (
-    <div className="calendar-page space-y-6">
-      <header className="flex justify-between items-end">
+    <div className="calendar-page space-y-5">
+      <header className="workspace-header">
         <div>
-          <h1 className="text-2xl font-bold text-text-primary">
-            Доступность преподавателей
-          </h1>
-          <p className="text-text-secondary mt-1 text-sm">
-            Отмечайте отдельные пары или используйте кнопку под датой, чтобы
-            выбрать весь день. Изменения сохраняются автоматически.
+          <h1>Доступность преподавателей</h1>
+          <p>
+            Отмечайте пары или весь день. Изменения сохраняются автоматически.
           </p>
         </div>
       </header>
       {error && (
-        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+        <p className="notice notice--danger" role="alert">
           {error}
-        </div>
+        </p>
       )}
-
-      <div className="calendar-layout">
-        {/* Left Sidebar: List */}
-        <div
-          style={{
-            backgroundColor: "white",
-            borderRadius: "12px",
-            border: "1px solid var(--border-light)",
-            overflow: "hidden",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          <div
-            style={{
-              padding: "1rem",
-              borderBottom: "1px solid var(--border-light)",
-            }}
+      {isLoading ? (
+        <p className="loading-state" role="status">
+          Загрузка данных преподавателей…
+        </p>
+      ) : (
+        <div className="calendar-layout">
+          <aside
+            className="app-panel calendar-teachers"
+            aria-label="Преподаватели"
           >
-            <div style={{ position: "relative" }}>
-              <Search
-                size={16}
-                style={{
-                  position: "absolute",
-                  left: "0.75rem",
-                  top: "50%",
-                  transform: "translateY(-50%)",
-                  color: "var(--text-tertiary)",
-                }}
-              />
+            <label className="app-search">
+              <Search size={16} aria-hidden="true" />
               <input
-                type="text"
-                placeholder="Поиск..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                style={{
-                  width: "100%",
-                  padding: "0.5rem 0.75rem 0.5rem 2.25rem",
-                  borderRadius: "8px",
-                  border: "1px solid var(--border-light)",
-                  backgroundColor: "var(--bg-base)",
-                  fontSize: "0.875rem",
-                }}
+                className="app-field"
+                aria-label="Поиск преподавателя"
+                placeholder="Поиск преподавателя"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
               />
+            </label>
+            <div className="calendar-teacher-list">
+              {teachers
+                .filter((item) =>
+                  `${item.name} ${item.dept}`
+                    .toLowerCase()
+                    .includes(query.toLowerCase()),
+                )
+                .map((item) => (
+                  <button
+                    type="button"
+                    key={item.id}
+                    aria-pressed={teacher?.id === item.id}
+                    onClick={() => setSelectedTeacherId(item.id)}
+                  >
+                    <strong>{item.name}</strong>
+                    {item.dept && <small>{item.dept}</small>}
+                  </button>
+                ))}
             </div>
-          </div>
-          <div className="calendar-teacher-list">
-            {filteredTeachers.map((teacher) => (
-              <button
-                key={teacher.id}
-                onClick={() => setSelectedTeacherId(teacher.id)}
-                style={{
-                  width: "100%",
-                  padding: "0.75rem 1rem",
-                  textAlign: "left",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  borderBottom: "1px solid var(--border-light)",
-                  backgroundColor:
-                    selectedTeacherId === teacher.id
-                      ? "#eef2ff"
-                      : "transparent",
-                  color:
-                    selectedTeacherId === teacher.id
-                      ? "var(--brand)"
-                      : "var(--text-primary)",
-                  transition: "background-color 0.15s",
-                  cursor: "pointer",
-                }}
-                className="hover:bg-gray-50"
-              >
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: "0.875rem" }}>
-                    {teacher.name}
-                  </div>
-                  <div
-                    style={{
-                      fontSize: "0.75rem",
-                      color: "var(--text-tertiary)",
-                      marginTop: "0.125rem",
-                    }}
-                  >
-                    {teacher.dept}
-                  </div>
-                </div>
-                {selectedTeacherId === teacher.id && (
-                  <ChevronRight size={16} color="var(--brand)" />
-                )}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Right Content: Grid */}
-        <div
-          className="calendar-card"
-          style={{
-            backgroundColor: "white",
-            borderRadius: "12px",
-            border: "1px solid var(--border-light)",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          {selectedTeacher ? (
-            <>
-              {/* Toolbar & Date Navigation */}
-              <div
-                style={{
-                  borderBottom: "1px solid var(--border-light)",
-                  backgroundColor: "#fafafa",
-                }}
-                className="calendar-toolbar"
-              >
-                <div
-                  className="calendar-teacher-toolbar"
-                  style={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    gap: "0.75rem",
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: "1rem",
-                      alignItems: "center",
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: "40px",
-                        height: "40px",
-                        flexShrink: 0,
-                        borderRadius: "8px",
-                        backgroundColor: "var(--brand)",
-                        color: "white",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        fontSize: "1.25rem",
-                        fontWeight: 700,
-                      }}
-                    >
-                      {selectedTeacher.name[0]}
-                    </div>
+          </aside>
+          <section
+            className="app-panel calendar-card"
+            aria-label="Календарь преподавателя"
+          >
+            {teacher ? (
+              <>
+                <div className="calendar-toolbar">
+                  <div className="calendar-teacher-toolbar">
                     <div>
-                      <h2 style={{ fontSize: "1.125rem", fontWeight: 700 }}>
-                        {selectedTeacher.name}
-                      </h2>
-                      <div
-                        className="flex gap-4 mt-0.5 text-text-secondary"
-                        style={{ fontSize: "0.75rem" }}
-                      >
-                        <span className="flex items-center gap-1">
-                          <MapPin size={12} /> {selectedTeacher.dept}
-                        </span>
-                      </div>
+                      <h2>{teacher.name}</h2>
+                      <p>{teacher.dept}</p>
                     </div>
-                  </div>
-
-                  <div
-                    style={{
-                      display: "flex",
-                      flexWrap: "wrap",
-                      alignItems: "center",
-                      columnGap: "1rem",
-                      rowGap: "0.5rem",
-                    }}
-                  >
                     <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "0.25rem",
-                      }}
+                      className="calendar-toolbar__controls"
+                      aria-label="Навигация по неделям"
                     >
                       <button
-                        onClick={handlePrevWeek}
+                        type="button"
+                        className="button-icon"
                         aria-label="Предыдущая неделя"
-                        title="Предыдущая неделя"
-                        style={{
-                          padding: "0.5rem",
-                          borderRadius: "8px",
-                          backgroundColor: "white",
-                          border: "1px solid var(--border-light)",
-                        }}
-                        className="hover:bg-gray-50"
+                        onClick={() => setCurrentDate(addDays(currentDate, -7))}
                       >
-                        <ChevronLeft size={16} />
+                        <ChevronLeft size={18} />
                       </button>
                       <button
-                        onClick={handleToday}
-                        style={{
-                          padding: "0.5rem 1rem",
-                          borderRadius: "8px",
-                          backgroundColor: "white",
-                          border: "1px solid var(--border-light)",
-                          fontSize: "0.875rem",
-                          fontWeight: 600,
-                        }}
-                        className="hover:bg-gray-50"
+                        type="button"
+                        className="btn-secondary"
+                        onClick={() => setCurrentDate(new Date())}
                       >
                         Сегодня
                       </button>
                       <button
-                        onClick={handleNextWeek}
+                        type="button"
+                        className="button-icon"
                         aria-label="Следующая неделя"
-                        title="Следующая неделя"
-                        style={{
-                          padding: "0.5rem",
-                          borderRadius: "8px",
-                          backgroundColor: "white",
-                          border: "1px solid var(--border-light)",
-                        }}
-                        className="hover:bg-gray-50"
+                        onClick={() => setCurrentDate(addDays(currentDate, 7))}
                       >
-                        <ChevronRight size={16} />
+                        <ChevronRight size={18} />
                       </button>
-                    </div>
-                    <div
-                      style={{
-                        fontWeight: 700,
-                        fontSize: "1rem",
-                      }}
-                    >
-                      {currentMonthName} {currentYear}
+                      <strong className="calendar-month" aria-live="polite">
+                        {monthFormatter.format(week[0])}
+                      </strong>
                     </div>
                   </div>
+                  <div
+                    className="calendar-toolbar__controls"
+                    role="group"
+                    aria-label="Способ выбора"
+                  >
+                    {editModes.map(({ value, label, icon: Icon }) => (
+                      <button
+                        className="app-toggle"
+                        type="button"
+                        key={value}
+                        aria-pressed={mode === value}
+                        onClick={() => setMode(value)}
+                      >
+                        <Icon size={14} aria-hidden="true" />
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <div
+                    className="calendar-toolbar__controls"
+                    role="group"
+                    aria-label="Режим доступности"
+                  >
+                    {restrictionModes.map(({ value, label, icon: Icon }) => (
+                      <button
+                        className="app-toggle"
+                        type="button"
+                        key={value}
+                        aria-pressed={teacher.restrictions.mode === value}
+                        onClick={() => changeMode(value)}
+                      >
+                        <Icon size={14} aria-hidden="true" />
+                        {label}
+                      </button>
+                    ))}
+                    <small>
+                      {teacher.restrictions.mode === "blacklist"
+                        ? "Отмеченные пары недоступны"
+                        : "Доступны только отмеченные пары"}
+                    </small>
+                  </div>
                 </div>
-
-                <div
-                  style={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    gap: "0.75rem 1.25rem",
-                    alignItems: "center",
-                    padding: "0.5rem",
-                    backgroundColor: "white",
-                    borderRadius: "8px",
-                    border: "1px solid var(--border-light)",
+                <AvailabilityGrid
+                  teacher={teacher}
+                  week={week}
+                  mode={mode}
+                  onToggle={(type, key) =>
+                    toggleRestriction(teacher.id, type, key)
+                  }
+                  onToggleDay={(type, date) => {
+                    toggleDayRestriction(teacher.id, type, date);
+                    save();
                   }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      flexWrap: "wrap",
-                      alignItems: "center",
-                      gap: "0.5rem",
+                  onSave={save}
+                />
+                {mode === "time" && (
+                  <IntervalEditor
+                    intervals={teacher.restrictions.intervals}
+                    onAdd={(interval) => {
+                      addInterval(teacher.id, interval);
+                      save();
                     }}
-                  >
-                    <span
-                      style={{
-                        fontSize: "0.75rem",
-                        fontWeight: 600,
-                        color: "var(--text-secondary)",
-                      }}
-                    >
-                      Режим:
-                    </span>
-                    <div
-                      style={{
-                        display: "flex",
-                        flexWrap: "wrap",
-                        backgroundColor: "var(--bg-base)",
-                        padding: "2px",
-                        borderRadius: "6px",
-                      }}
-                    >
-                      <button
-                        onClick={() => setEditMode("specific")}
-                        style={{
-                          padding: "0.25rem 0.75rem",
-                          borderRadius: "4px",
-                          fontSize: "0.75rem",
-                          fontWeight: 600,
-                          backgroundColor:
-                            editMode === "specific" ? "white" : "transparent",
-                          boxShadow:
-                            editMode === "specific"
-                              ? "0 1px 3px rgba(0,0,0,0.1)"
-                              : "none",
-                          color:
-                            editMode === "specific"
-                              ? "var(--brand)"
-                              : "var(--text-secondary)",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "0.375rem",
-                          cursor: "pointer",
-                        }}
-                      >
-                        <CalendarDays size={14} /> Конкретный день
-                      </button>
-                      <button
-                        onClick={() => setEditMode("recurring")}
-                        style={{
-                          padding: "0.25rem 0.75rem",
-                          borderRadius: "4px",
-                          fontSize: "0.75rem",
-                          fontWeight: 600,
-                          backgroundColor:
-                            editMode === "recurring" ? "white" : "transparent",
-                          boxShadow:
-                            editMode === "recurring"
-                              ? "0 1px 3px rgba(0,0,0,0.1)"
-                              : "none",
-                          color:
-                            editMode === "recurring"
-                              ? "var(--brand)"
-                              : "var(--text-secondary)",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "0.375rem",
-                          cursor: "pointer",
-                        }}
-                      >
-                        <Repeat size={14} /> Повтор (еженедельно)
-                      </button>
-                      <button
-                        onClick={() => setEditMode("time")}
-                        style={{
-                          padding: "0.25rem 0.75rem",
-                          borderRadius: "4px",
-                          fontSize: "0.75rem",
-                          fontWeight: 600,
-                          backgroundColor:
-                            editMode === "time" ? "white" : "transparent",
-                          boxShadow:
-                            editMode === "time"
-                              ? "0 1px 3px rgba(0,0,0,0.1)"
-                              : "none",
-                          color:
-                            editMode === "time"
-                              ? "var(--brand)"
-                              : "var(--text-secondary)",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "0.375rem",
-                          cursor: "pointer",
-                        }}
-                      >
-                        <Clock size={14} /> По времени
-                      </button>
-                    </div>
-                  </div>
-
-                  <div
-                    style={{
-                      display: "flex",
-                      flexWrap: "wrap",
-                      alignItems: "center",
-                      gap: "0.5rem",
+                    onRemove={(id) => {
+                      removeInterval(teacher.id, id);
+                      save();
                     }}
-                  >
-                    <span
-                      style={{
-                        fontSize: "0.75rem",
-                        fontWeight: 600,
-                        color: "var(--text-secondary)",
-                      }}
-                    >
-                      Логика:
-                    </span>
-                    <div
-                      style={{
-                        display: "flex",
-                        flexWrap: "wrap",
-                        backgroundColor: "var(--bg-base)",
-                        padding: "2px",
-                        borderRadius: "6px",
-                      }}
-                    >
-                      <button
-                        onClick={() => handleRestrictionModeChange("blacklist")}
-                        style={{
-                          padding: "0.25rem 0.75rem",
-                          borderRadius: "4px",
-                          fontSize: "0.75rem",
-                          fontWeight: 600,
-                          backgroundColor:
-                            selectedTeacher.restrictions.mode === "blacklist"
-                              ? "white"
-                              : "transparent",
-                          boxShadow:
-                            selectedTeacher.restrictions.mode === "blacklist"
-                              ? "0 1px 3px rgba(0,0,0,0.1)"
-                              : "none",
-                          color:
-                            selectedTeacher.restrictions.mode === "blacklist"
-                              ? "#ef4444"
-                              : "var(--text-secondary)",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "0.375rem",
-                          cursor: "pointer",
-                        }}
-                      >
-                        <ShieldAlert size={14} /> Черный список
-                      </button>
-                      <button
-                        onClick={() => handleRestrictionModeChange("whitelist")}
-                        style={{
-                          padding: "0.25rem 0.75rem",
-                          borderRadius: "4px",
-                          fontSize: "0.75rem",
-                          fontWeight: 600,
-                          backgroundColor:
-                            selectedTeacher.restrictions.mode === "whitelist"
-                              ? "white"
-                              : "transparent",
-                          boxShadow:
-                            selectedTeacher.restrictions.mode === "whitelist"
-                              ? "0 1px 3px rgba(0,0,0,0.1)"
-                              : "none",
-                          color:
-                            selectedTeacher.restrictions.mode === "whitelist"
-                              ? "#10b981"
-                              : "var(--text-secondary)",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "0.375rem",
-                          cursor: "pointer",
-                        }}
-                      >
-                        <ShieldCheck size={14} /> Белый список
-                      </button>
-                    </div>
-                  </div>
-
-                  <div
-                    style={{
-                      fontSize: "0.75rem",
-                      color: "var(--text-tertiary)",
-                      fontStyle: "italic",
-                    }}
-                  >
-                    {selectedTeacher.restrictions.mode === "blacklist"
-                      ? "Все разрешено, отмеченное — ЗАПРЕЩЕНО"
-                      : "Все запрещено, отмеченное — РАЗРЕШЕНО"}
-                  </div>
-                </div>
-              </div>
-
-              {/* Grid Content */}
-              <div className="calendar-grid-content">
-                <div
-                  className="calendar-week"
-                  style={{
-                    gridTemplateColumns: `var(--calendar-time-width) repeat(${WEEK_DAYS.length}, minmax(0, 1fr))`,
-                  }}
-                >
-                  {/* Empty top-left cell */}
-                  <div
-                    style={{
-                      backgroundColor: "var(--bg-base)",
-                      borderRight: "1px solid var(--border-light)",
-                      borderBottom: "1px solid var(--border-light)",
-                    }}
-                  ></div>
-
-                  {/* Days Header */}
-                  {weekDays.map((dateObj, idx) => {
-                    const dateStr = formatDateFull(dateObj);
-                    const type =
-                      editMode === "recurring" ? "recurring" : "specific";
-                    const wholeDaySelected = getDayRestrictionKeys(
-                      dateStr,
-                      type,
-                    ).every((key) =>
-                      selectedTeacher.restrictions[type].includes(key),
-                    );
-                    const isWhitelist =
-                      selectedTeacher.restrictions.mode === "whitelist";
-                    const dayAction = wholeDaySelected
-                      ? isWhitelist
-                        ? "Снять допуск"
-                        : "Снять блок"
-                      : isWhitelist
-                        ? "Разрешить весь день"
-                        : "Заблокировать весь день";
-                    const dayLabel =
-                      type === "recurring"
-                        ? `${WEEK_DAYS_FULL[dateObj.getDay()]} (еженедельно)`
-                        : dateStr;
-                    const isToday =
-                      formatDateFull(dateObj) === formatDateFull(new Date());
-                    return (
-                      <div
-                        key={idx}
-                        className="calendar-week__day"
-                        style={{
-                          backgroundColor: isToday
-                            ? "#eef2ff"
-                            : "var(--bg-base)",
-                          textAlign: "center",
-                          borderBottom: "1px solid var(--border-light)",
-                          borderRight:
-                            idx !== weekDays.length - 1
-                              ? "1px solid var(--border-light)"
-                              : "none",
-                        }}
-                      >
-                        <div
-                          style={{
-                            fontWeight: 600,
-                            fontSize: "0.75rem",
-                            color: isToday
-                              ? "var(--brand)"
-                              : "var(--text-secondary)",
-                          }}
-                        >
-                          {WEEK_DAYS[idx]}
-                        </div>
-                        <div
-                          className="calendar-week__date"
-                          style={{
-                            fontWeight: 800,
-                            color: isToday
-                              ? "var(--brand)"
-                              : "var(--text-primary)",
-                            marginTop: "0.125rem",
-                          }}
-                        >
-                          {dateObj.getDate()} {MONTHS_SHORT[dateObj.getMonth()]}
-                        </div>
-                        <button
-                          type="button"
-                          aria-label={`${dayAction}: ${dayLabel}`}
-                          aria-pressed={wholeDaySelected}
-                          title={`${dayAction}: ${dayLabel}. Применяется к текущему режиму; остальные ограничения сохраняются.`}
-                          onClick={() => {
-                            toggleDayRestriction(
-                              selectedTeacher.id,
-                              type,
-                              dateStr,
-                            );
-                            void saveTeacherRestrictions(selectedTeacher.id);
-                          }}
-                          className="calendar-week__day-toggle mt-2 w-full rounded-md px-1 py-1.5 text-xs font-semibold cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
-                          style={{
-                            backgroundColor: wholeDaySelected
-                              ? isWhitelist
-                                ? "#dcfce7"
-                                : "#fee2e2"
-                              : "white",
-                            color: wholeDaySelected
-                              ? isWhitelist
-                                ? "#15803d"
-                                : "#b91c1c"
-                              : "var(--text-secondary)",
-                            border: "1px solid var(--border-light)",
-                          }}
-                        >
-                          <span className="calendar-week__day-toggle-label">
-                            {wholeDaySelected ? dayAction : "Весь день"}
-                          </span>
-                          {wholeDaySelected ? (
-                            <Check
-                              className="calendar-week__day-toggle-icon"
-                              size={14}
-                              aria-hidden="true"
-                            />
-                          ) : (
-                            <CalendarDays
-                              className="calendar-week__day-toggle-icon"
-                              size={14}
-                              aria-hidden="true"
-                            />
-                          )}
-                        </button>
-                      </div>
-                    );
-                  })}
-
-                  {/* Body rows */}
-                  {TIMES.map((time, slotIdx) => (
-                    <React.Fragment key={time}>
-                      {/* Time Label (Y-axis) */}
-                      <div
-                        className="calendar-week__time"
-                        style={{
-                          backgroundColor: "#fafafa",
-                          textAlign: "center",
-                          borderRight: "1px solid var(--border-light)",
-                          borderBottom:
-                            slotIdx !== TIMES.length - 1
-                              ? "1px solid var(--border-light)"
-                              : "none",
-                          display: "flex",
-                          flexDirection: "column",
-                          justifyContent: "center",
-                        }}
-                      >
-                        <div
-                          style={{
-                            fontWeight: 700,
-                            fontSize: "0.75rem",
-                            color: "var(--text-primary)",
-                          }}
-                        >
-                          {slotIdx + 1} пара
-                        </div>
-                        <div
-                          style={{
-                            fontSize: "0.625rem",
-                            color: "var(--text-tertiary)",
-                            marginTop: "0.125rem",
-                          }}
-                        >
-                          {time}
-                        </div>
-                      </div>
-
-                      {/* Days Grid Cells */}
-                      {weekDays.map((dateObj, idx) => {
-                        const dateStr = formatDateFull(dateObj);
-                        const weekday = dateObj.getDay();
-                        const slotNum = slotIdx + 1;
-
-                        const recurringKey = `${weekday}-${slotNum}`;
-                        const specificKey = `${dateStr}-${slotNum}`;
-
-                        const hasRecurring =
-                          selectedTeacher.restrictions.recurring.includes(
-                            recurringKey,
-                          );
-                        const hasSpecific =
-                          selectedTeacher.restrictions.specific.includes(
-                            specificKey,
-                          );
-
-                        const isWhiteList =
-                          selectedTeacher.restrictions.mode === "whitelist";
-
-                        // Logical blockage
-                        let isBlocked = false;
-                        if (isWhiteList) {
-                          isBlocked = !hasRecurring && !hasSpecific;
-                        } else {
-                          isBlocked = hasRecurring || hasSpecific;
-                        }
-
-                        // Colors
-                        let bgColor = "white";
-                        let textColor = "transparent";
-                        if (isWhiteList) {
-                          bgColor = isBlocked ? "#f9fafb" : "#f0fdf4"; // Light gray if blocked, green if allowed
-                          textColor = isBlocked ? "#9ca3af" : "#16a34a";
-                        } else {
-                          bgColor = isBlocked ? "#fef2f2" : "white"; // Red if blocked, white if allowed
-                          textColor = isBlocked ? "#dc2626" : "transparent";
-                        }
-
-                        return (
-                          <button
-                            key={idx}
-                            disabled={editMode === "time"}
-                            aria-label={`${dateStr}, ${slotNum} пара: ${
-                              isBlocked ? "недоступно" : "доступно"
-                            }`}
-                            aria-pressed={hasRecurring || hasSpecific}
-                            onMouseDown={(event) => {
-                              if (event.button === 0)
-                                handleSlotPress(dateStr, slotIdx, true);
-                            }}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter" || event.key === " ") {
-                                event.preventDefault();
-                                if (!event.repeat)
-                                  handleSlotPress(dateStr, slotIdx, false);
-                              }
-                            }}
-                            onMouseEnter={() =>
-                              handleMouseEnter(dateStr, slotIdx)
-                            }
-                            onDragStart={(e) => e.preventDefault()}
-                            style={{
-                              backgroundColor: bgColor,
-                              backgroundImage: hasRecurring
-                                ? `repeating-linear-gradient(45deg, transparent, transparent 10px, ${isWhiteList ? "rgba(22, 163, 74, 0.1)" : "rgba(220, 38, 38, 0.1)"} 10px, ${isWhiteList ? "rgba(22, 163, 74, 0.1)" : "rgba(220, 38, 38, 0.1)"} 20px)`
-                                : "none",
-                              color: textColor,
-                              borderBottom:
-                                slotIdx !== TIMES.length - 1
-                                  ? "1px solid var(--border-light)"
-                                  : "none",
-                              borderRight:
-                                idx !== weekDays.length - 1
-                                  ? "1px solid var(--border-light)"
-                                  : "none",
-                              cursor:
-                                editMode === "time" ? "default" : "pointer",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              transition: "all 0.1s",
-                              padding: 0,
-                              position: "relative",
-                              border:
-                                hasRecurring || hasSpecific
-                                  ? `2px solid ${isWhiteList ? "#10b981" : "#ef4444"}`
-                                  : undefined,
-                              zIndex: hasRecurring || hasSpecific ? 10 : 1,
-                            }}
-                            className={`calendar-week__slot ${isBlocked ? "grid-cell-blocked" : "grid-cell"}`}
-                          >
-                            {isBlocked && (
-                              <div
-                                style={{
-                                  display: "flex",
-                                  flexDirection: "column",
-                                  alignItems: "center",
-                                  gap: "0.25rem",
-                                  zIndex: 2,
-                                }}
-                              >
-                                <Lock size={14} />
-                                <span
-                                  style={{
-                                    fontSize: "0.625rem",
-                                    fontWeight: 800,
-                                  }}
-                                >
-                                  БЛОК
-                                </span>
-                              </div>
-                            )}
-                            {!isBlocked && isWhiteList && (
-                              <div
-                                style={{
-                                  display: "flex",
-                                  flexDirection: "column",
-                                  alignItems: "center",
-                                  gap: "0.25rem",
-                                  zIndex: 2,
-                                }}
-                              >
-                                <ShieldCheck size={14} />
-                                <span
-                                  style={{
-                                    fontSize: "0.625rem",
-                                    fontWeight: 800,
-                                  }}
-                                >
-                                  OK
-                                </span>
-                              </div>
-                            )}
-                          </button>
-                        );
-                      })}
-                    </React.Fragment>
-                  ))}
-                </div>
-
-                {/* Time Interval Panel */}
-                {editMode === "time" && selectedTeacher && (
-                  <div
-                    style={{
-                      marginTop: "1.5rem",
-                      padding: "1.25rem",
-                      backgroundColor: "#fafafa",
-                      borderRadius: "10px",
-                      border: "1px solid var(--border-light)",
-                    }}
-                  >
-                    <h3
-                      style={{
-                        fontSize: "0.9rem",
-                        fontWeight: 700,
-                        marginBottom: "1rem",
-                      }}
-                    >
-                      <Clock
-                        size={16}
-                        style={{
-                          display: "inline",
-                          verticalAlign: "middle",
-                          marginRight: "0.5rem",
-                        }}
-                      />
-                      Добавить временной интервал
-                    </h3>
-
-                    <div
-                      style={{
-                        display: "flex",
-                        gap: "0.75rem",
-                        alignItems: "flex-end",
-                        flexWrap: "wrap",
-                      }}
-                    >
-                      {/* Type toggle */}
-                      <div>
-                        <label
-                          style={{
-                            fontSize: "0.7rem",
-                            fontWeight: 600,
-                            color: "var(--text-secondary)",
-                            display: "block",
-                            marginBottom: "4px",
-                          }}
-                        >
-                          Тип
-                        </label>
-                        <select
-                          value={intervalType}
-                          onChange={(e) =>
-                            setIntervalType(
-                              e.target.value as "recurring" | "specific",
-                            )
-                          }
-                          style={{
-                            padding: "0.45rem 0.6rem",
-                            borderRadius: "6px",
-                            border: "1px solid var(--border-light)",
-                            fontSize: "0.8rem",
-                            backgroundColor: "white",
-                          }}
-                        >
-                          <option value="recurring">Еженедельно</option>
-                          <option value="specific">Конкретная дата</option>
-                        </select>
-                      </div>
-
-                      {/* Day or Date selector */}
-                      {intervalType === "recurring" ? (
-                        <div>
-                          <label
-                            style={{
-                              fontSize: "0.7rem",
-                              fontWeight: 600,
-                              color: "var(--text-secondary)",
-                              display: "block",
-                              marginBottom: "4px",
-                            }}
-                          >
-                            День недели
-                          </label>
-                          <select
-                            value={intervalDay}
-                            onChange={(e) =>
-                              setIntervalDay(Number(e.target.value))
-                            }
-                            style={{
-                              padding: "0.45rem 0.6rem",
-                              borderRadius: "6px",
-                              border: "1px solid var(--border-light)",
-                              fontSize: "0.8rem",
-                              backgroundColor: "white",
-                            }}
-                          >
-                            {[1, 2, 3, 4, 5, 6].map((wd) => (
-                              <option key={wd} value={wd}>
-                                {WEEK_DAYS_FULL[wd]}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      ) : (
-                        <div>
-                          <label
-                            style={{
-                              fontSize: "0.7rem",
-                              fontWeight: 600,
-                              color: "var(--text-secondary)",
-                              display: "block",
-                              marginBottom: "4px",
-                            }}
-                          >
-                            Дата
-                          </label>
-                          <input
-                            type="date"
-                            value={intervalDate}
-                            onChange={(e) => setIntervalDate(e.target.value)}
-                            style={{
-                              padding: "0.45rem 0.6rem",
-                              borderRadius: "6px",
-                              border: "1px solid var(--border-light)",
-                              fontSize: "0.8rem",
-                              backgroundColor: "white",
-                            }}
-                          />
-                        </div>
-                      )}
-
-                      {/* Start time */}
-                      <div>
-                        <label
-                          style={{
-                            fontSize: "0.7rem",
-                            fontWeight: 600,
-                            color: "var(--text-secondary)",
-                            display: "block",
-                            marginBottom: "4px",
-                          }}
-                        >
-                          С
-                        </label>
-                        <input
-                          type="time"
-                          value={intervalStart}
-                          onChange={(e) => setIntervalStart(e.target.value)}
-                          style={{
-                            padding: "0.45rem 0.6rem",
-                            borderRadius: "6px",
-                            border: "1px solid var(--border-light)",
-                            fontSize: "0.8rem",
-                            backgroundColor: "white",
-                          }}
-                        />
-                      </div>
-
-                      {/* End time */}
-                      <div>
-                        <label
-                          style={{
-                            fontSize: "0.7rem",
-                            fontWeight: 600,
-                            color: "var(--text-secondary)",
-                            display: "block",
-                            marginBottom: "4px",
-                          }}
-                        >
-                          До
-                        </label>
-                        <input
-                          type="time"
-                          value={intervalEnd}
-                          onChange={(e) => setIntervalEnd(e.target.value)}
-                          style={{
-                            padding: "0.45rem 0.6rem",
-                            borderRadius: "6px",
-                            border: "1px solid var(--border-light)",
-                            fontSize: "0.8rem",
-                            backgroundColor: "white",
-                          }}
-                        />
-                      </div>
-
-                      {/* Preview */}
-                      <div
-                        style={{
-                          fontSize: "0.75rem",
-                          color: "var(--text-tertiary)",
-                          paddingBottom: "0.45rem",
-                        }}
-                      >
-                        Пары:{" "}
-                        {getSlotsForInterval(intervalStart, intervalEnd).join(
-                          ", ",
-                        ) || "—"}
-                      </div>
-
-                      {/* Add button */}
-                      <button
-                        onClick={() => {
-                          if (!selectedTeacherId) return;
-                          const data: Omit<TimeInterval, "id"> = {
-                            start: intervalStart,
-                            end: intervalEnd,
-                            type: intervalType,
-                            ...(intervalType === "recurring"
-                              ? { day: intervalDay }
-                              : { date: intervalDate }),
-                          };
-                          addInterval(selectedTeacherId, data);
-                          saveTeacherRestrictions(selectedTeacherId);
-                        }}
-                        disabled={
-                          getSlotsForInterval(intervalStart, intervalEnd)
-                            .length === 0
-                        }
-                        style={{
-                          padding: "0.45rem 1rem",
-                          borderRadius: "6px",
-                          backgroundColor:
-                            getSlotsForInterval(intervalStart, intervalEnd)
-                              .length > 0
-                              ? "var(--brand)"
-                              : "#e5e7eb",
-                          color:
-                            getSlotsForInterval(intervalStart, intervalEnd)
-                              .length > 0
-                              ? "white"
-                              : "#9ca3af",
-                          fontSize: "0.8rem",
-                          fontWeight: 600,
-                          cursor:
-                            getSlotsForInterval(intervalStart, intervalEnd)
-                              .length > 0
-                              ? "pointer"
-                              : "not-allowed",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "0.375rem",
-                          border: "none",
-                        }}
-                      >
-                        <Plus size={14} /> Добавить
-                      </button>
-                    </div>
-
-                    {/* Saved intervals list */}
-                    {selectedTeacher.restrictions.intervals.length > 0 && (
-                      <div style={{ marginTop: "1rem" }}>
-                        <div
-                          style={{
-                            fontSize: "0.75rem",
-                            fontWeight: 600,
-                            color: "var(--text-secondary)",
-                            marginBottom: "0.5rem",
-                          }}
-                        >
-                          Сохранённые интервалы
-                        </div>
-                        <div
-                          style={{
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: "0.375rem",
-                          }}
-                        >
-                          {selectedTeacher.restrictions.intervals.map((iv) => (
-                            <div
-                              key={iv.id}
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "space-between",
-                                padding: "0.5rem 0.75rem",
-                                backgroundColor: "white",
-                                borderRadius: "6px",
-                                border: "1px solid var(--border-light)",
-                                fontSize: "0.8rem",
-                              }}
-                            >
-                              <div
-                                style={{
-                                  display: "flex",
-                                  flexWrap: "wrap",
-                                  alignItems: "center",
-                                  gap: "0.75rem",
-                                }}
-                              >
-                                <Clock size={14} color="var(--brand)" />
-                                <span style={{ fontWeight: 600 }}>
-                                  {iv.start} – {iv.end}
-                                </span>
-                                <span
-                                  style={{
-                                    color: "var(--text-tertiary)",
-                                    fontSize: "0.75rem",
-                                  }}
-                                >
-                                  {iv.type === "recurring"
-                                    ? WEEK_DAYS_FULL[iv.day ?? 0]
-                                    : iv.date}
-                                </span>
-                                <span
-                                  style={{
-                                    color: "var(--text-tertiary)",
-                                    fontSize: "0.7rem",
-                                  }}
-                                >
-                                  → пары{" "}
-                                  {getSlotsForInterval(iv.start, iv.end).join(
-                                    ", ",
-                                  )}
-                                </span>
-                              </div>
-                              <button
-                                onClick={() => {
-                                  if (!selectedTeacherId) return;
-                                  removeInterval(selectedTeacherId, iv.id);
-                                  saveTeacherRestrictions(selectedTeacherId);
-                                }}
-                                style={{
-                                  padding: "0.25rem",
-                                  borderRadius: "4px",
-                                  backgroundColor: "transparent",
-                                  color: "#ef4444",
-                                  cursor: "pointer",
-                                  border: "none",
-                                  display: "flex",
-                                  alignItems: "center",
-                                }}
-                                className="hover:bg-red-50"
-                              >
-                                <Trash2 size={14} />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                  />
                 )}
+              </>
+            ) : (
+              <div className="calendar-empty">
+                <Users size={36} aria-hidden="true" />
+                Выберите преподавателя
               </div>
-            </>
-          ) : (
-            <div
-              style={{
-                flex: 1,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: "var(--text-tertiary)",
-                flexDirection: "column",
-                gap: "1rem",
-                backgroundColor: "#fafafa",
-              }}
-            >
-              <Users size={48} opacity={0.2} />
-              <div style={{ fontWeight: 600 }}>Выберите преподавателя</div>
-            </div>
-          )}
+            )}
+          </section>
         </div>
-      </div>
+      )}
     </div>
   );
-};
+}

@@ -11,7 +11,10 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
-import { API_BASE_URL, apiFetchJson, openDownload } from "../api/apiConfig";
+import { API_BASE_URL, apiFetchJson } from "../api/apiConfig";
+
+import { useFeedback } from "../components/feedbackContext";
+import "./StoragePage.css";
 
 type FolderName =
   | "Учебные планы и потоки"
@@ -105,7 +108,9 @@ const DragDropZone: React.FC<{
         hidden
         accept=".xls,.xlsx,.csv"
         onChange={(event) => {
-          if (event.target.files?.length) onDrop(event.target.files);
+          const input = event.currentTarget;
+          if (input.files?.length) onDrop(input.files);
+          input.value = "";
         }}
       />
       <button
@@ -165,6 +170,7 @@ const FileListItem: React.FC<{
 );
 
 export const StoragePage: React.FC = () => {
+  const { download } = useFeedback();
   const [selectedFolder, setSelectedFolder] = useState<FolderName | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -280,7 +286,10 @@ export const StoragePage: React.FC = () => {
   };
 
   const handleExportTeachers = () => {
-    openDownload(`${API_BASE_URL}/api/v1/scheduler/teachers/export`);
+    void download(
+      `${API_BASE_URL}/api/v1/scheduler/teachers/export`,
+      "teacher_availability.xlsx",
+    );
   };
 
   if (!selectedFolder) {
@@ -289,7 +298,7 @@ export const StoragePage: React.FC = () => {
         <section className="data-overview">
           <div>
             <span className="data-overview__eyebrow">КАТАЛОГ ДАННЫХ</span>
-            <h2>Подготовьте исходные данные</h2>
+            <h1>Подготовьте исходные данные</h1>
             <p>
               Загрузите и проверьте наборы данных перед распределением нагрузки
               и расчётом расписания.
@@ -345,7 +354,7 @@ export const StoragePage: React.FC = () => {
           >
             <ArrowLeft size={16} /> Все разделы данных
           </button>
-          <h2 className="enterprise-page__heading">{selectedFolder}</h2>
+          <h1 className="enterprise-page__heading">{selectedFolder}</h1>
           <p className="enterprise-page__description">
             Загружайте актуальные файлы и контролируйте историю импорта.
           </p>
@@ -423,8 +432,9 @@ export const StoragePage: React.FC = () => {
                   key={file.id}
                   file={file}
                   onDownload={() =>
-                    openDownload(
+                    void download(
                       `${API_BASE_URL}/api/v1/scheduler/import/history/${file.id}/download`,
+                      file.name,
                     )
                   }
                   onRemove={() => void removeFile(file)}

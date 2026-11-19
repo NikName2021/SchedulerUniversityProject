@@ -1,4 +1,4 @@
-import { downloadResponse, openDownload } from "../utils/openDownload.js";
+import { downloadResponse } from "../utils/openDownload.js";
 
 const runtimeEnv = import.meta.env as ImportMetaEnv | undefined;
 
@@ -93,6 +93,7 @@ const apiFetchChecked = async (
   try {
     response = await apiFetch(input, init);
   } catch (error) {
+    if (init?.signal?.aborted) throw error;
     throw new Error(errorMessage, { cause: error });
   }
 
@@ -129,4 +130,19 @@ export const apiFetchNoContent = async (
   }
 };
 
-export { downloadResponse, openDownload };
+export const apiDownload = async (
+  url: string,
+  filename: string,
+): Promise<void> => {
+  const message = "Не удалось скачать файл";
+  const response = await apiFetchChecked(url, message);
+  const mediaType = response.headers.get("Content-Type")?.toLowerCase();
+  if (
+    response.status === 204 ||
+    hasJsonContentType(response) ||
+    mediaType?.startsWith("text/html")
+  ) {
+    throw new Error(`${message}. Некорректный ответ сервера`);
+  }
+  await downloadResponse(response, filename);
+};

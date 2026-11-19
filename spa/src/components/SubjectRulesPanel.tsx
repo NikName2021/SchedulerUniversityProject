@@ -85,7 +85,7 @@ export function SubjectRulesPanel(props: Props) {
   );
   return (
     <SubjectRuleList
-      key={`${user?.id}:${contextKey}`}
+      key={user?.id}
       {...props}
       context={context}
       sortedWeeks={sortedWeeks}
@@ -98,13 +98,26 @@ function SubjectRuleList({
   sortedWeeks,
   ...props
 }: Props & { context: SubjectRuleContext; sortedWeeks: RuleWeek[] }) {
-  const [items, setItems] = useState<SubjectRuleItem[]>([]);
   const [active, setActive] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<string[]>([]);
-  const [loadedRequest, setLoadedRequest] = useState(-1);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [response, setResponse] = useState<{
+    context: SubjectRuleContext;
+    reload: number;
+    items: SubjectRuleItem[];
+    error?: string;
+  } | null>(null);
+  const [notice, setNotice] = useState<{
+    context: SubjectRuleContext;
+    message: string;
+    error?: boolean;
+  } | null>(null);
   const [reload, setReload] = useState(0);
+  const currentResponse =
+    response?.context === context && response.reload === reload
+      ? response
+      : null;
+  const currentNotice = notice?.context === context ? notice : null;
+  const loadError = currentResponse?.error;
   const ready = Boolean(
     context.groups.length &&
     context.enabled_types.length &&
@@ -116,22 +129,19 @@ function SubjectRuleList({
     if (!ready) return;
     const controller = new AbortController();
     fetchSubjectRules(context, controller.signal)
-      .then((response) => {
-        if (!controller.signal.aborted) {
-          setItems(response.items);
-          setLoadError(null);
-        }
+      .then(({ items }) => {
+        if (!controller.signal.aborted) setResponse({ context, reload, items });
       })
       .catch((error: unknown) => {
-        if (!controller.signal.aborted) setLoadError(errorText(error));
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoadedRequest(reload);
+        if (!controller.signal.aborted)
+          setResponse({ context, reload, items: [], error: errorText(error) });
       });
     return () => controller.abort();
   }, [context, ready, reload]);
 
-  const itemMap = new Map(items.map((item) => [item.subject, item]));
+  const itemMap = new Map(
+    currentResponse?.items.map((item) => [item.subject, item]),
+  );
   const seen = new Set<string>();
   const sections = Object.entries(props.summary)
     .map(
@@ -149,7 +159,7 @@ function SubjectRuleList({
 
   return (
     <section
-      className="calc-panel calc-priorities-panel subject-rules-panel"
+      className="app-panel app-section subject-rules-panel"
       aria-label="Приоритеты и правила предметов"
     >
       <div className="rule-panel-header">
@@ -157,14 +167,19 @@ function SubjectRuleList({
           <Zap size={20} />
         </div>
         <div>
-          <h3>Приоритет предметов</h3>
+          <h2>Приоритет предметов</h2>
           <p>Время, дни проведения и состав занятий на неделю</p>
         </div>
       </div>
       <div className="subject-rules-list">
-        {notice && (
-          <p role="status" className="subject-rule-notice">
-            {notice}
+        {currentNotice && (
+          <p
+            role={currentNotice.error ? "alert" : "status"}
+            className={
+              currentNotice.error ? "subject-rule-error" : "subject-rule-notice"
+            }
+          >
+            {currentNotice.message}
           </p>
         )}
         {loadError && (
@@ -186,7 +201,7 @@ function SubjectRuleList({
                 ? "Выберите учебные недели и типы занятий"
                 : "Выберите даты и типы занятий"}
           </p>
-        ) : loadedRequest !== reload || props.isSummaryLoading ? (
+        ) : !currentResponse || props.isSummaryLoading ? (
           <p className="subject-rules-empty" role="status">
             <Loader2 size={15} className="animate-spin" /> Загрузка правил
             предметов…
@@ -295,13 +310,19 @@ function SubjectRuleList({
                           onCancel={() => setActive(null)}
                           onSaved={() => {
                             void props.onSaved().catch(() => {
-                              setLoadError(
-                                "Не удалось обновить сведения о недельной нагрузке",
-                              );
+                              setNotice({
+                                context,
+                                message:
+                                  "Не удалось обновить сведения о недельной нагрузке",
+                                error: true,
+                              });
                             });
                             setReload((current) => current + 1);
                             setActive(null);
-                            setNotice(`Правило для «${subject}» сохранено`);
+                            setNotice({
+                              context,
+                              message: `Правило для «${subject}» сохранено`,
+                            });
                           }}
                         />
                       ) : (

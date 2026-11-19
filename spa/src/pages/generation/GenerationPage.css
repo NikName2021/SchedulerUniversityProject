@@ -1,0 +1,140 @@
+.generation-layout {
+  display: grid;
+  grid-template-columns: minmax(13rem, 1fr) minmax(0, 2.5fr);
+  align-items: start;
+  gap: 1rem;
+}
+
+.generation-main,
+.generation-fields {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+.generation-groups {
+  position: sticky;
+  top: 1rem;
+}
+.generation-groups__header {
+  border-bottom: 1px solid var(--border-light);
+}
+.generation-groups__list {
+  max-height: clamp(14rem, 55dvh, 34rem);
+  overflow: auto;
+  padding: 0.375rem;
+}
+
+.generation-groups__list li {
+  min-width: 0;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-md);
+}
+
+.generation-groups__list label,
+.generation-weeks label {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  flex: 1;
+  min-height: 2.25rem;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.generation-groups__list input,
+.generation-weeks input {
+  accent-color: var(--brand);
+}
+.generation-group--selected,
+.generation-week--selected {
+  background: var(--brand-light);
+}
+
+.generation-preview {
+  max-height: 22rem;
+}
+.generation-period-grid,
+.generation-date-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+.generation-holiday {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding-inline-start: 0.5rem;
+  border-radius: var(--radius-md);
+  color: var(--warning);
+  background: var(--warning-bg);
+}
+
+.generation-weeks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+  gap: 0.5rem;
+  max-height: 26rem;
+  overflow: auto;
+}
+
+.generation-weeks li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+}
+
+.generation-weeks strong,
+.generation-weeks small,
+.generation-demand-table small {
+  display: block;
+}
+.generation-weeks small,
+.generation-demand-table small {
+  color: var(--text-secondary);
+}
+.generation-week__actions {
+  display: grid;
+  justify-items: end;
+  align-content: center;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+}
+.generation-week__actions .text-danger {
+  color: var(--danger);
+}
+.generation-launch {
+  border-inline-start: 3px solid var(--brand);
+}
+.generation-demand-table {
+  min-width: 34rem;
+}
+.generation-demand-table input {
+  width: 5.5rem;
+}
+
+@media (max-width: 940px) {
+  .generation-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .generation-groups {
+    position: static;
+  }
+  .generation-groups__list {
+    max-height: 13rem;
+  }
+}
+
+@media (max-width: 600px) {
+  .generation-period-grid,
+  .generation-date-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
