@@ -22,6 +22,7 @@ from core.constants import (
     PENALTY_WINDOW,
 )
 from ortools.sat.python import cp_model
+
 from services.group_relation_service import (
     collect_known_subgroups,
     group_resource_keys,
