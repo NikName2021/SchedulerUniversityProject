@@ -17,6 +17,10 @@ import {
 } from "../api/subjectRules";
 import { useAuth } from "../auth/useAuth";
 import {
+  getBaseGroupNames,
+  groupLabelIncludesBase,
+} from "../utils/groupSelection";
+import {
   SUBJECT_WEEKDAYS,
   applyRulePreset,
   ruleLessonCount,
@@ -482,8 +486,17 @@ function SubjectRuleEditor({
       return next;
     });
   const firstGroup = item.groups[0];
+  const firstBaseGroup = firstGroup
+    ? getBaseGroupNames(firstGroup)[0] || firstGroup
+    : "";
   const preview =
-    result?.preview.filter((entry) => entry.groups.includes(firstGroup)) || [];
+    result?.preview.filter((entry) =>
+      entry.groups.some(
+        (group) =>
+          group === firstGroup ||
+          (firstBaseGroup && groupLabelIncludesBase(group, firstBaseGroup)),
+      ),
+    ) || [];
   const previewDates = [...new Set(preview.map((entry) => entry.date))].sort();
   const checkError = currentCheck?.error || requestError;
   const errors = localError
@@ -735,7 +748,9 @@ function SubjectRuleEditor({
                   .filter((entry) => entry.date === day)
                   .sort((a, b) => a.lesson_number - b.lesson_number)
                   .map((entry) => (
-                    <small key={`${entry.type}:${entry.lesson_number}`}>
+                    <small
+                      key={`${entry.type}:${entry.lesson_number}:${entry.groups.join(",")}`}
+                    >
                       {entry.lesson_number} пара · {activityLabels[entry.type]}
                     </small>
                   ))}

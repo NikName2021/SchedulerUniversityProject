@@ -123,6 +123,55 @@ async def test_distribution_uses_tuesdays_with_a_common_sixth_lesson(
         assert [entry["slot"] for entry in schedule["assignments"]] == [[tuesday, 6]]
 
 
+def test_solver_prioritizes_single_slot_teacher_over_flexible_lecture() -> None:
+    context = {
+        "start_date": "2026-09-08",
+        "end_date": "2026-09-09",
+        "holidays": [],
+        "study_days": [1, 2],
+        "lessons": [5, 6],
+        "unavailable": {
+            "teacher": {
+                "Узкий": [
+                    ["2026-09-08", 5],
+                    ["2026-09-09", 5],
+                    ["2026-09-09", 6],
+                ],
+            },
+        },
+        "max_time_seconds": 2,
+        "num_workers": 1,
+    }
+    events = [
+        {
+            "id": "tight",
+            "stream_id": 1,
+            "subject": "Физкультура",
+            "groups": ["G1"],
+            "teacher": "Узкий",
+            "type": "sem",
+            "lessons_count": 1,
+            "priority": 5,
+        },
+        {
+            "id": "shared",
+            "stream_id": 2,
+            "subject": "Лекция",
+            "groups": ["G1", "G2"],
+            "teacher": "Свободный",
+            "type": "lec",
+            "lessons_count": 1,
+            "priority": 5,
+        },
+    ]
+    result = solve_event_component(events, context)
+    assert result["status"] == "success"
+    assert result["unassigned"] == []
+    by_stream = {item["stream_id"]: item["slot"] for item in result["assignments"]}
+    assert by_stream[1] == ["2026-09-08", 6]
+    assert by_stream[2] != ["2026-09-08", 6]
+
+
 @pytest.mark.asyncio
 async def test_create_period_splits_calendar_weeks(db_session) -> None:
     period = await PlanningService.create_period(

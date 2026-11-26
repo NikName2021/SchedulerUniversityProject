@@ -39,6 +39,21 @@ from services.group_relation_service import (
 from services.scalable_scheduler import solve_event_component
 
 TYPE_FIELDS = {"lec": "lectures", "sem": "seminars", "lab": "laboratories"}
+TYPE_LABELS = {"lec": "лекции", "sem": "семинары", "lab": "лабораторные"}
+
+
+def _cohort_rule_targets(groups: list[str]) -> list[str]:
+    """Return leaf group labels so subgroup labs combine with base lectures."""
+    known = collect_known_subgroups(groups)
+    if not known:
+        return list(groups)
+    targets = []
+    for group in groups:
+        parsed = parse_group_label(group)
+        if not parsed.subgroup and all(base in known for base in parsed.base_groups):
+            continue
+        targets.append(group)
+    return targets or list(groups)
 
 
 def subject_activity_code(stream: Stream) -> str | None:
@@ -210,6 +225,128 @@ async def list_subject_rules(
     return {"items": items}
 
 
+async def _locked_outside_weeks(
+    payload: SubjectRuleWrite,
+    period_weeks: list,
+    streams: list[Stream],
+    db: AsyncSession,
+) -> tuple[dict[tuple[int, int], int], dict[int, set[int]]]:
+    """Return published lesson counts and rule-locked week ids outside target weeks."""
+    outside_week_ids = [
+        week.id for week in period_weeks if week.id not in payload.week_ids
+    ]
+    if not outside_week_ids:
+        return {}, defaultdict(set)
+    ids = [stream.id for stream in streams]
+    published_outside: dict[tuple[int, int], set[tuple[Any, int]]] = defaultdict(set)
+    published_result = await db.execute(
+        select(
+            ScheduleEntry.source_stream_id,
+            ScheduleEntry.planning_week_id,
+            ScheduleEntry.date,
+            ScheduleEntry.lesson_number,
+        )
+        .join(GenerationTask)
+        .where(
+            GenerationTask.publication_status == "published",
+            ScheduleEntry.planning_week_id.in_(outside_week_ids),
+            ScheduleEntry.source_stream_id.in_(ids),
+            ScheduleEntry.date.is_not(None),
+            ScheduleEntry.lesson_number.is_not(None),
+        )
+    )
+    for stream_id, week_id, day, lesson in published_result:
+        published_outside[(stream_id, week_id)].add((day, lesson))
+
+    outside_weeks = [week for week in period_weeks if week.id in outside_week_ids]
+    min_start = min(week.starts_on for week in outside_weeks)
+    max_end = max(week.ends_on for week in outside_weeks)
+    existing_rules = list(
+        (
+            await db.execute(
+                select(SubjectScheduleRule).where(
+                    SubjectScheduleRule.subject == payload.subject,
+                    SubjectScheduleRule.group_name.in_(payload.groups),
+                    SubjectScheduleRule.starts_on <= max_end,
+                    SubjectScheduleRule.ends_on >= min_start,
+                )
+            )
+        ).scalars()
+    )
+    locked_by_group: dict[str, set[int]] = defaultdict(set)
+    for record in existing_rules:
+        for week in outside_weeks:
+            if applies_to_week(record, week.id, week.starts_on, week.ends_on):
+                locked_by_group[record.group_name].add(week.id)
+
+    locked_by_stream: dict[int, set[int]] = defaultdict(set)
+    for stream in streams:
+        for group in stream.groups:
+            locked_by_stream[stream.id].update(
+                locked_by_group.get(group.group_name, ())
+            )
+    return (
+        {key: len(slots) for key, slots in published_outside.items()},
+        locked_by_stream,
+    )
+
+
+def _allocation_error_message(
+    payload: SubjectRuleWrite,
+    windows: list,
+    streams: list[Stream],
+    outside_locked: dict[int, int],
+) -> str:
+    participating = {
+        group.group_name for stream in streams for group in stream.groups
+    } & set(payload.groups)
+    known = collect_known_subgroups(participating)
+    stream_cohorts = {
+        stream.id: {
+            resource
+            for group in stream.groups
+            if group.group_name in participating
+            for resource in group_resource_keys(group.group_name, known)
+        }
+        for stream in streams
+    }
+    all_cohorts = sorted(
+        {cohort for cohorts in stream_cohorts.values() for cohort in cohorts}
+    )
+    shortfalls = []
+    for code, field in TYPE_FIELDS.items():
+        needed = getattr(payload.rule, field) * len(windows)
+        if needed <= 0:
+            continue
+        min_available: int | None = None
+        for cohort in all_cohorts:
+            available = sum(
+                max(0, int(stream.lessons_count or 0) - outside_locked[stream.id])
+                for stream in streams
+                if subject_activity_code(stream) == code
+                and cohort in stream_cohorts[stream.id]
+            )
+            min_available = (
+                available if min_available is None else min(min_available, available)
+            )
+        if min_available is not None and min_available < needed:
+            shortfalls.append(
+                f"{TYPE_LABELS[code]}: нужно {needed} на {len(windows)} нед., доступно {min_available}"
+            )
+    if shortfalls:
+        details = "; ".join(shortfalls)
+        hint = (
+            " Выберите конкретную неделю в «Период действия» или уменьшите число пар."
+            if len(windows) > 1
+            else " Уменьшите число пар или проверьте опубликованные/закреплённые недели."
+        )
+        return f"Схема не укладывается в учебный план ({details}).{hint}"
+    return (
+        "Схема не укладывается в учебный план: проверьте число пар, нагрузку остальных недель и опубликованные занятия. "
+        "Для общего потока выберите все его группы."
+    )
+
+
 async def _allocate(
     payload: SubjectRuleWrite, windows: list, streams: list[Stream], db: AsyncSession
 ) -> tuple[dict, list[str]]:
@@ -247,10 +384,24 @@ async def _allocate(
         else []
     )
     baseline = {(item.stream_id, item.week_id): item.lessons_count for item in demands}
-    outside = defaultdict(int)
+    published_outside, locked_outside = (
+        await _locked_outside_weeks(payload, period_weeks, streams, db)
+        if payload.week_ids
+        else ({}, defaultdict(set))
+    )
+    outside_locked = defaultdict(int)
     for demand in demands:
-        if demand.week_id not in payload.week_ids:
-            outside[demand.stream_id] += demand.lessons_count
+        if demand.week_id in payload.week_ids:
+            continue
+        pub_count = published_outside.get((demand.stream_id, demand.week_id), 0)
+        if demand.week_id in locked_outside.get(demand.stream_id, ()):
+            outside_locked[demand.stream_id] += max(pub_count, demand.lessons_count)
+        elif pub_count:
+            outside_locked[demand.stream_id] += pub_count
+    for (stream_id, week_id), pub_count in published_outside.items():
+        if (stream_id, week_id) not in baseline:
+            outside_locked[stream_id] += pub_count
+
     published = defaultdict(set)
     if payload.week_ids:
         result = await db.execute(
@@ -301,18 +452,31 @@ async def _allocate(
                 changes.append(delta)
             model.Add(
                 sum(variables[(stream.id, week.id)] for week in windows)
-                <= max(0, int(stream.lessons_count or 0) - outside[stream.id])
+                <= max(0, int(stream.lessons_count or 0) - outside_locked[stream.id])
             )
         participating = {
             group.group_name for stream in streams for group in stream.groups
         } & set(payload.groups)
-        for group in participating:
+        known_subgroups = collect_known_subgroups(participating)
+        stream_cohorts = {
+            stream.id: {
+                resource
+                for group in stream.groups
+                if group.group_name in participating
+                for resource in group_resource_keys(group.group_name, known_subgroups)
+            }
+            for stream in streams
+        }
+        all_cohorts = sorted(
+            {cohort for cohorts in stream_cohorts.values() for cohort in cohorts}
+        )
+        for cohort in all_cohorts:
             for code, field in TYPE_FIELDS.items():
                 matching = [
                     stream
                     for stream in streams
                     if subject_activity_code(stream) == code
-                    and group in {g.group_name for g in stream.groups}
+                    and cohort in stream_cohorts[stream.id]
                 ]
                 for week in windows:
                     model.Add(
@@ -335,9 +499,7 @@ async def _allocate(
 
     result = await anyio.to_thread.run_sync(solve)
     if result is None:
-        return {}, [
-            "Схема не укладывается в учебный план: проверьте число пар, нагрузку остальных недель и опубликованные занятия. Для общего потока выберите все его группы."
-        ]
+        return {}, [_allocation_error_message(payload, windows, streams, outside_locked)]
     return result, []
 
 
@@ -467,7 +629,7 @@ async def check_subject_rule(
             "group_name": group,
             "rule": payload.rule.model_dump(),
         }
-        for group in participating
+        for group in _cohort_rule_targets(participating)
     ]
     cache = {}
     for week in windows:
@@ -592,12 +754,22 @@ async def check_subject_rule(
             record.config_json = payload.rule.model_dump_json()
             record.updated_at = datetime.utcnow()
         if payload.week_ids:
+            period_weeks = list(
+                (
+                    await db.execute(
+                        select(PlanningWeek)
+                        .where(PlanningWeek.period_id == windows[0].period_id)
+                        .order_by(PlanningWeek.starts_on)
+                    )
+                ).scalars()
+            )
+            all_week_ids = [week.id for week in period_weeks]
             demands = {
                 (item.stream_id, item.week_id): item
                 for item in (
                     await db.execute(
                         select(WeeklyLessonDemand).where(
-                            WeeklyLessonDemand.week_id.in_(payload.week_ids),
+                            WeeklyLessonDemand.week_id.in_(all_week_ids),
                             WeeklyLessonDemand.stream_id.in_(
                                 [stream.id for stream in streams]
                             ),
@@ -613,7 +785,42 @@ async def check_subject_rule(
                             stream_id=int(stream_id), week_id=int(week_id), priority=5
                         )
                         db.add(demand)
+                        demands[(int(stream_id), int(week_id))] = demand
                     demand.lessons_count = count
+            published_outside, locked_outside = await _locked_outside_weeks(
+                payload, period_weeks, streams, db
+            )
+            outside_week_ids = [
+                week.id
+                for week in reversed(period_weeks)
+                if week.id not in payload.week_ids
+            ]
+            for stream in streams:
+                planned = max(0, int(stream.lessons_count or 0))
+                total_assigned = sum(
+                    demands[(stream.id, week_id)].lessons_count
+                    for week_id in all_week_ids
+                    if (stream.id, week_id) in demands
+                )
+                excess = total_assigned - planned
+                if excess <= 0:
+                    continue
+                locked_weeks = locked_outside.get(stream.id, set())
+                for week_id in outside_week_ids:
+                    if excess <= 0:
+                        break
+                    if week_id in locked_weeks:
+                        continue
+                    demand = demands.get((stream.id, week_id))
+                    if demand is None or demand.lessons_count <= 0:
+                        continue
+                    floor = published_outside.get((stream.id, week_id), 0)
+                    reducible = max(0, demand.lessons_count - floor)
+                    if reducible <= 0:
+                        continue
+                    take = min(excess, reducible)
+                    demand.lessons_count -= take
+                    excess -= take
         await db.commit()
     return result
 
@@ -670,10 +877,25 @@ async def generation_subject_rules(
                     )
                 ).scalars()
             }
-            for group in groups:
+            known_subgroups = collect_known_subgroups(groups)
+            stream_cohorts = {
+                stream.id: {
+                    resource
+                    for item in stream.groups
+                    if item.group_name in groups
+                    for resource in group_resource_keys(
+                        item.group_name, known_subgroups
+                    )
+                }
+                for stream in streams
+            }
+            all_cohorts = sorted(
+                {cohort for cohorts in stream_cohorts.values() for cohort in cohorts}
+            )
+            for cohort in all_cohorts:
                 composition = defaultdict(int)
                 for stream in streams:
-                    if any(item.group_name == group for item in stream.groups):
+                    if cohort in stream_cohorts[stream.id]:
                         composition[subject_activity_code(stream)] += actual.get(
                             stream.id, 0
                         )
@@ -681,8 +903,9 @@ async def generation_subject_rules(
                     composition[code] != getattr(config, field)
                     for code, field in TYPE_FIELDS.items()
                 ):
+                    group_label = cohort.split("::", 1)[0]
                     raise ValueError(
-                        f"{subject}, {group}: недельная нагрузка или выбранные типы занятий изменились. Проверьте правило."
+                        f"{subject}, {group_label}: недельная нагрузка или выбранные типы занятий изменились. Проверьте правило."
                     )
             overrides.update(
                 {str(stream.id): actual.get(stream.id, 0) for stream in streams}
@@ -702,6 +925,6 @@ async def generation_subject_rules(
                 overrides[stream_id] = count
         rules.extend(
             {"subject": subject, "group_name": group, "rule": config.model_dump()}
-            for group in groups
+            for group in _cohort_rule_targets(groups)
         )
     return rules, overrides

@@ -269,3 +269,163 @@ async def test_other_workspace_cannot_reference_planning_week(
         },
     )
     assert response.status_code == 401
+
+
+async def test_subject_rule_supports_subgroup_labs_with_base_lectures_and_seminars(
+    api_client, db_session, monkeypatch
+):
+    batch = ImportBatch(filename="biology.xlsx", file_type=FileType.STREAMS)
+    teacher = Teacher(name="Минияров Ф.Т.")
+    db_session.add_all([batch, teacher])
+    await db_session.flush()
+
+    lecture = Stream(
+        import_batch_id=batch.id,
+        teacher_id=teacher.id,
+        event_name="Биология",
+        stream_type="Лекция",
+        lessons_count=5,
+    )
+    db_session.add(lecture)
+    await db_session.flush()
+    db_session.add_all(
+        [
+            StreamGroup(stream_id=lecture.id, group_name="ИОП-ИТ-25/1", group_size=22),
+            StreamGroup(stream_id=lecture.id, group_name="ИОП-ИТ-25/2", group_size=23),
+        ]
+    )
+
+    for group_name in ("ИОП-ИТ-25/1", "ИОП-ИТ-25/2"):
+        seminar = Stream(
+            import_batch_id=batch.id,
+            teacher_id=teacher.id,
+            event_name="Биология",
+            stream_type="Семинар",
+            lessons_count=3,
+        )
+        db_session.add(seminar)
+        await db_session.flush()
+        db_session.add(
+            StreamGroup(stream_id=seminar.id, group_name=group_name, group_size=22)
+        )
+        for subgroup in ("L1", "L2"):
+            lab = Stream(
+                import_batch_id=batch.id,
+                teacher_id=teacher.id,
+                event_name="Биология",
+                stream_type="Лабораторная",
+                lessons_count=3,
+            )
+            db_session.add(lab)
+            await db_session.flush()
+            db_session.add(
+                StreamGroup(
+                    stream_id=lab.id,
+                    group_name=f"{group_name} ({subgroup})",
+                    group_size=11,
+                )
+            )
+
+    period = await PlanningService.create_period(
+        AcademicPeriodCreate(
+            name="Семестр",
+            starts_on=datetime.date(2026, 9, 7),
+            ends_on=datetime.date(2026, 9, 27),
+        ),
+        db_session,
+    )
+    await db_session.commit()
+
+    all_groups = [
+        "ИОП-ИТ-25/1",
+        "ИОП-ИТ-25/1 (L1)",
+        "ИОП-ИТ-25/1 (L2)",
+        "ИОП-ИТ-25/2",
+        "ИОП-ИТ-25/2 (L1)",
+        "ИОП-ИТ-25/2 (L2)",
+    ]
+    await PlanningService.distribute_semester_demands(
+        period.id,
+        all_groups,
+        ["Лекция", "Семинар", "Лабораторная"],
+        set(),
+        db_session,
+    )
+
+    week = period.weeks[0]
+    payload = {
+        "subject": "Биология",
+        "groups": all_groups,
+        "start_date": week.starts_on.isoformat(),
+        "end_date": week.ends_on.isoformat(),
+        "week_ids": [week.id],
+        "enabled_types": ["Лекция", "Семинар", "Лабораторная"],
+        "rule": {
+            "lectures": 1,
+            "seminars": 1,
+            "laboratories": 1,
+            "days_per_week": 2,
+            "weekdays": [],
+            "days_hard": False,
+            "lecture_before_practice": True,
+            "time_preference": "day",
+        },
+    }
+    response = await api_client.put("/api/v1/scheduler/subject-rules", json=payload)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["can_save"] is True
+    assert any(item["type"] == "lec" for item in body["preview"])
+    assert any(item["type"] == "sem" for item in body["preview"])
+    assert any(item["type"] == "lab" for item in body["preview"])
+
+    monkeypatch.setattr(
+        scheduler.generate_schedule_task,
+        "delay",
+        lambda *args: SimpleNamespace(id="bio-task"),
+    )
+    generated = await api_client.post(
+        "/api/v1/scheduler/generate",
+        json={
+            "groups": all_groups,
+            "planning_week_id": week.id,
+            "settings": {"enabled_types": ["Лекция", "Семинар", "Лабораторная"]},
+        },
+    )
+    assert generated.status_code == 200, generated.text
+    task = await db_session.get(GenerationTask, generated.json()["task_id"])
+    settings = json.loads(task.settings_json)
+    assert sorted(rule["group_name"] for rule in settings["subject_rules"]) == [
+        "ИОП-ИТ-25/1 (L1)",
+        "ИОП-ИТ-25/1 (L2)",
+        "ИОП-ИТ-25/2 (L1)",
+        "ИОП-ИТ-25/2 (L2)",
+    ]
+
+
+async def test_single_week_rule_rebalances_unfixed_semester_demands(
+    api_client, db_session, subject_data
+):
+    _, streams, period = subject_data
+    await PlanningService.distribute_semester_demands(
+        period.id, ["A"], ["Лекция", "Семинар"], set(), db_session
+    )
+    week = period.weeks[0]
+    payload = request_for(period, hard=False, days=[0, 2], seminars=3)
+    payload["end_date"] = week.ends_on.isoformat()
+    payload["week_ids"] = [week.id]
+
+    response = await api_client.put("/api/v1/scheduler/subject-rules", json=payload)
+    assert response.status_code == 200, response.text
+    assert response.json()["can_save"] is True
+
+    seminar_demands = list(
+        (
+            await db_session.execute(
+                select(WeeklyLessonDemand).where(
+                    WeeklyLessonDemand.stream_id == streams[1].id
+                )
+            )
+        ).scalars()
+    )
+    assert sum(item.lessons_count for item in seminar_demands) == 4
