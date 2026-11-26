@@ -132,6 +132,10 @@
   background: var(--brand-light);
   color: var(--brand);
 }
+.calendar-week__day-toggle:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 .calendar-week__day-toggle-icon {
   display: none;
 }

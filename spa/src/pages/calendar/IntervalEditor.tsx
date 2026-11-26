@@ -58,7 +58,7 @@ export function IntervalEditor({ intervals, onAdd, onRemove }: Props) {
               value={day}
               onChange={(event) => setDay(Number(event.target.value))}
             >
-              {[1, 2, 3, 4, 5, 6, 0].map((option) => (
+              {[1, 2, 3, 4, 5, 6].map((option) => (
                 <option key={option} value={option}>
                   {FULL_WEEK_DAYS[option]}
                 </option>

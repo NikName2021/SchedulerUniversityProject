@@ -15,6 +15,7 @@ class SubjectRuleConfig(BaseModel):
     days_hard: bool = False
     lecture_before_practice: bool = True
     time_preference: Literal["morning", "day", "evening"] = "day"
+    fit_to_plan: bool = False
 
     @field_validator("weekdays")
     @classmethod

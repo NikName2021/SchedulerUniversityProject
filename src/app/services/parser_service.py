@@ -160,6 +160,71 @@ def _read_streams_table(file_bytes: bytes, filename: str) -> pd.DataFrame:
     return dataframe
 
 
+LECTURE_TYPES = {"Л", "ЛЕК", "ЛЕКЦИЯ", "ЛЕКЦИИ"}
+SEMINAR_TYPES = {
+    "П",
+    "ПР",
+    "ПЗ",
+    "С",
+    "СЕМ",
+    "СЕМИНАР",
+    "ПРАКТИКА",
+    "ПРАКТИЧЕСКОЕ ЗАНЯТИЕ",
+    "ПРАКТИЧЕСКИЕ ЗАНЯТИЯ",
+    "К",
+    "КОНС",
+    "КОНСУЛЬТАЦИЯ",
+}
+LABORATORY_TYPES = {
+    "ЛБ",
+    "ЛАБ",
+    "ЛР",
+    "ЛАБОРАТОРНАЯ",
+    "ЛАБОРАТОРНАЯ РАБОТА",
+    "ЛАБОРАТОРНЫЕ",
+}
+ASSESSMENT_TYPES = {
+    "З",
+    "ЗД",
+    "ЗО",
+    "ДЗ",
+    "Э",
+    "ЭКЗ",
+    "ПА",
+    "ППА",
+    "ЗАЧЕТ",
+    "ЗАЧЁТ",
+    "ДИФФЕРЕНЦИРОВАННЫЙ ЗАЧЕТ",
+    "ДИФФЕРЕНЦИРОВАННЫЙ ЗАЧЁТ",
+    "ЭКЗАМЕН",
+    "ПРОМЕЖУТОЧНАЯ АТТЕСТАЦИЯ",
+    "АТТЕСТАЦИЯ",
+    "КР",
+    "КП",
+}
+
+
+def _resolve_stream_type(raw_type: object) -> str:
+    if pd.isna(raw_type):
+        return "Внеучебное мероприятие"
+    normalized = " ".join(str(raw_type).strip().upper().split())
+    if not normalized or normalized == "NAN":
+        return "Внеучебное мероприятие"
+    if normalized in LECTURE_TYPES or normalized.startswith("ЛЕКЦ"):
+        return "Лекция"
+    if normalized in SEMINAR_TYPES or normalized.startswith(
+        ("СЕМИНАР", "ПРАКТ", "КОНСУЛЬТ")
+    ):
+        return "Семинар"
+    if normalized in LABORATORY_TYPES or normalized.startswith("ЛАБОРАТОР"):
+        return "Лабораторная"
+    if normalized in ASSESSMENT_TYPES or normalized.startswith(
+        ("ЗАЧЕТ", "ЗАЧЁТ", "ЭКЗАМ", "АТТЕСТАЦ", "ПРОМЕЖУТОЧ")
+    ):
+        return "Зачет"
+    return "Внеучебное мероприятие"
+
+
 def _normalize_stream_label(value: object) -> str | None:
     if pd.isna(value):
         return None
@@ -192,18 +257,7 @@ def parse_streams_content(
         if not event_name or event_name == "nan":
             continue
 
-        raw_type = str(row.get("Вид потока", "")).strip().upper()
-
-        if raw_type in {"П", "С"}:
-            stream_type = "Семинар"
-        elif raw_type == "З":
-            stream_type = "Зачет"
-        elif raw_type == "ЛБ":
-            stream_type = "Лабораторная"
-        elif raw_type == "Л":
-            stream_type = "Лекция"
-        else:
-            stream_type = "Внеучебное мероприятие"
+        stream_type = _resolve_stream_type(row.get("Вид потока"))
 
         teacher_raw = str(row.get("Преподаватель", "")).strip()
         teacher_clean = None

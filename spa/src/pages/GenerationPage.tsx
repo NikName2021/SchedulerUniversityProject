@@ -250,7 +250,7 @@ export function GenerationPage() {
                           </label>
                         </div>
                         <button
-                          className="btn-secondary self-start"
+                          className="btn-secondary justify-self-start"
                           type="submit"
                         >
                           Создать период и недели
@@ -359,7 +359,7 @@ export function GenerationPage() {
                 </p>
                 <button
                   type="button"
-                  className="btn-primary self-start"
+                  className="btn-primary justify-self-start"
                   disabled={!canGenerate || generation.isGenerating}
                   onClick={() => void generation.handleStartGeneration()}
                 >

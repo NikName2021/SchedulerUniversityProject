@@ -373,12 +373,22 @@ class PlanningService:
                 if stream.id in shared_streams:
                     capacity = len(available.intersection(*audience_slots))
                 else:
-                    capacity = min(
+                    cohort_count = max(1, len(audience_slots))
+                    per_group = min(
                         (len(available & audience) for audience in audience_slots),
                         default=len(available),
                     )
+                    capacity = min(per_group, len(available) // cohort_count)
                 stream_capacity[(stream.id, week.id)] = capacity
 
+        stream_teacher_cost = {
+            stream.id: (
+                1
+                if stream.id in shared_streams
+                else max(1, len(stream_groups[stream.id]))
+            )
+            for stream in streams
+        }
         allocations: dict[tuple[int, int], int] = {
             (stream.id, week.id): max(
                 published_counts[(stream.id, week.id)],
@@ -396,7 +406,9 @@ class PlanningService:
             stream = streams_by_id[stream_id]
             if stream.teacher:
                 key = (stream.teacher.name, week_id)
-                teacher_capacity[key] = max(0, teacher_capacity[key] - remaining)
+                teacher_capacity[key] = max(
+                    0, teacher_capacity[key] - remaining * stream_teacher_cost[stream_id]
+                )
             for group_name in stream_groups[stream_id]:
                 key = (group_name, week_id)
                 group_capacity[key] = max(0, group_capacity[key] - remaining)
@@ -419,7 +431,11 @@ class PlanningService:
                 return False
             if not week_dates[week.id] or not week_overlaps_stream(stream, week):
                 return False
-            if stream.teacher and teacher_capacity[(stream.teacher.name, week.id)] <= 0:
+            if (
+                stream.teacher
+                and teacher_capacity[(stream.teacher.name, week.id)]
+                < stream_teacher_cost[stream.id]
+            ):
                 return False
             return all(
                 group_capacity[(group_name, week.id)] > 0
@@ -502,7 +518,9 @@ class PlanningService:
                 allocations[(stream.id, week.id)] += 1
                 week_loads[week.id] += 1
                 if stream.teacher:
-                    teacher_capacity[(stream.teacher.name, week.id)] -= 1
+                    teacher_capacity[(stream.teacher.name, week.id)] -= (
+                        stream_teacher_cost[stream.id]
+                    )
                 for group_name in stream_groups[stream.id]:
                     group_capacity[(group_name, week.id)] -= 1
 

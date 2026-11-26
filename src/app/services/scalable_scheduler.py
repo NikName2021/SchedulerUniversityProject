@@ -23,6 +23,11 @@ from core.constants import (
 )
 from ortools.sat.python import cp_model
 
+from services.group_relation_service import (
+    collect_known_subgroups,
+    group_resource_keys,
+)
+
 Slot = tuple[datetime.date, int]
 
 
@@ -179,23 +184,47 @@ def _preference_penalty(
 
 
 def _subject_rules_for_event(
-    event: dict[str, Any], context: dict[str, Any]
+    event: dict[str, Any],
+    context: dict[str, Any],
+    known_subgroups: dict[str, set[str]] | None = None,
 ) -> list[dict[str, Any]]:
-    return [
-        rule
-        for rule in context.get("subject_rules", [])
-        if rule["subject"] == event.get("rule_subject", event["subject"])
-        and rule["group_name"] in event["groups"]
-    ]
+    subject = event.get("rule_subject", event["subject"])
+    event_groups = set(event["groups"])
+    event_resources = (
+        set(event["group_resources"])
+        if event.get("group_resources")
+        else None
+    )
+    matched = []
+    for rule in context.get("subject_rules", []):
+        if rule["subject"] != subject:
+            continue
+        if rule["group_name"] in event_groups:
+            matched.append(rule)
+            continue
+        if event_resources is not None and known_subgroups is not None:
+            rule_resources = group_resource_keys(rule["group_name"], known_subgroups)
+            if rule_resources & event_resources:
+                matched.append(rule)
+    return matched
 
 
-def _apply_subject_rules(model, events, context, variables, by_day, penalties) -> None:
+def _apply_subject_rules(
+    model,
+    events,
+    context,
+    variables,
+    by_day,
+    penalties,
+    deficits,
+    known_subgroups,
+) -> None:
     """Apply subject constraints before solving; preferences remain soft."""
     for index, rule in enumerate(context.get("subject_rules", [])):
         matching = [
             event
             for event in events
-            if rule in _subject_rules_for_event(event, context)
+            if rule in _subject_rules_for_event(event, context, known_subgroups)
         ]
         if not matching:
             continue
@@ -220,11 +249,30 @@ def _apply_subject_rules(model, events, context, variables, by_day, penalties) -
                 and not config["days_hard"]
             ):
                 penalties.extend(value * 100 for value in values)
+        total_lessons = sum(int(event["lessons_count"]) for event in matching)
+        target_days = min(int(config["days_per_week"]), total_lessons)
         if config["days_hard"]:
-            model.Add(sum(used_days) == config["days_per_week"])
+            if context.get("require_full_placement"):
+                model.Add(sum(used_days) == target_days)
+            else:
+                model.Add(sum(used_days) <= target_days)
+                matching_deficits = [
+                    deficits[event["id"]][0]
+                    for event in matching
+                    if event["id"] in deficits
+                ]
+                no_deficit = model.NewBoolVar(f"subject_no_deficit_{index}")
+                if matching_deficits:
+                    model.Add(sum(matching_deficits) == 0).OnlyEnforceIf(no_deficit)
+                    model.Add(sum(matching_deficits) > 0).OnlyEnforceIf(
+                        no_deficit.Not()
+                    )
+                else:
+                    model.Add(no_deficit == 1)
+                model.Add(sum(used_days) == target_days).OnlyEnforceIf(no_deficit)
         else:
             distance = model.NewIntVar(0, 7, f"subject_day_distance_{index}")
-            model.AddAbsEquality(distance, sum(used_days) - config["days_per_week"])
+            model.AddAbsEquality(distance, sum(used_days) - target_days)
             penalties.append(distance * 100)
         if config["lecture_before_practice"]:
             lectures = [event for event in matching if event["type"] == "lec"]
@@ -280,15 +328,22 @@ def solve_event_component(
         collections.defaultdict(list)
     )
     placement_terms: list[Any] = []
+    placement_weights: dict[str, int] = {}
     quality_penalties: list[Any] = []
     deficits: dict[str, tuple[cp_model.IntVar, int]] = {}
     late_rule = _rule(context, "late_lessons", weight=5)
     preference_rule = _rule(context, "teacher_preferences", weight=5)
     group_lesson_loads = context.get("group_lesson_loads", {})
+    known_subgroups = collect_known_subgroups(
+        {
+            *(group for event in events for group in event["groups"]),
+            *(rule["group_name"] for rule in context.get("subject_rules", [])),
+        }
+    )
 
     for event in events:
         event_id = event["id"]
-        subject_rules = _subject_rules_for_event(event, context)
+        subject_rules = _subject_rules_for_event(event, context, known_subgroups)
         event_variables: list[cp_model.IntVar] = []
         for slot in slots:
             if _event_slot_is_blocked(event, slot, unavailable):
@@ -362,9 +417,19 @@ def solve_event_component(
         model.Add(sum(event_variables) + deficit == target)
         if context.get("require_full_placement"):
             model.Add(deficit == 0)
-        placement_weight = max(1, len(event["groups"])) * max(
-            1, int(event.get("priority", 5))
+        available_slots = len(event_variables)
+        scarcity_bonus = 1
+        if target > 0 and 0 < available_slots < len(slots):
+            if available_slots <= target:
+                scarcity_bonus = 4
+            elif available_slots <= target * 2:
+                scarcity_bonus = 2
+        placement_weight = (
+            max(1, len(event["groups"]))
+            * max(1, int(event.get("priority", 5)))
+            * scarcity_bonus
         )
+        placement_weights[event_id] = placement_weight
         placement_terms.append(deficit * placement_weight)
         deficits[event_id] = (deficit, target)
 
@@ -395,7 +460,16 @@ def solve_event_component(
                 }
             model.Add(variable == 1)
 
-    _apply_subject_rules(model, events, context, variables, by_day, quality_penalties)
+    _apply_subject_rules(
+        model,
+        events,
+        context,
+        variables,
+        by_day,
+        quality_penalties,
+        deficits,
+        known_subgroups,
+    )
 
     for resource_variables in by_group_slot.values():
         if len(resource_variables) > 1:
@@ -498,9 +572,7 @@ def solve_event_component(
         for event_id, (deficit, _target) in deficits.items()
     }
     placement_value = sum(
-        deficit_values[event["id"]]
-        * max(1, len(event["groups"]))
-        * max(1, int(event.get("priority", 5)))
+        deficit_values[event["id"]] * placement_weights[event["id"]]
         for event in events
     )
     placement_stage["objective"] = placement_value

@@ -1,4 +1,4 @@
-export const DAYS = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"];
+export const DAYS = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ"];
 export const WEEK_DATE_FORMATTER = new Intl.DateTimeFormat("ru-RU", {
   day: "2-digit",
   month: "2-digit",

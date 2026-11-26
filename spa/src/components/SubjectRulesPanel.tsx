@@ -17,6 +17,10 @@ import {
 } from "../api/subjectRules";
 import { useAuth } from "../auth/useAuth";
 import {
+  getBaseGroupNames,
+  groupLabelIncludesBase,
+} from "../utils/groupSelection";
+import {
   SUBJECT_WEEKDAYS,
   applyRulePreset,
   ruleLessonCount,
@@ -383,7 +387,11 @@ function SubjectRuleEditor({
 }: EditorProps) {
   const id = useId();
   const [rule, setRule] = useState<SubjectRuleConfig>(initialRule);
-  const [scope, setScope] = useState("selected");
+  const [scope, setScope] = useState(() =>
+    weeks.length > 1 && (!item.saved || Boolean(initialRule.fit_to_plan))
+      ? "fit"
+      : "selected",
+  );
   const [checked, setChecked] = useState<{
     key: string;
     result?: SubjectRuleCheck;
@@ -413,8 +421,15 @@ function SubjectRuleEditor({
     () => JSON.parse(effectiveKey) as SubjectRuleContext,
     [effectiveKey],
   );
+  const effectiveRule = useMemo<SubjectRuleConfig>(
+    () => ({
+      ...rule,
+      fit_to_plan: scope === "fit" && weeks.length > 1,
+    }),
+    [rule, scope, weeks.length],
+  );
 
-  const checkKey = JSON.stringify([effectiveKey, rule, retry]);
+  const checkKey = JSON.stringify([effectiveKey, effectiveRule, retry]);
   const currentCheck = checked?.key === checkKey ? checked : null;
   const result = currentCheck?.result;
   const checking = !localError && !currentCheck;
@@ -423,7 +438,12 @@ function SubjectRuleEditor({
     if (localError) return;
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      checkSubjectRule(effectiveContext, item.subject, rule, controller.signal)
+      checkSubjectRule(
+        effectiveContext,
+        item.subject,
+        effectiveRule,
+        controller.signal,
+      )
         .then((value) => {
           if (!controller.signal.aborted) {
             setChecked({ key: checkKey, result: value });
@@ -439,7 +459,7 @@ function SubjectRuleEditor({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [checkKey, rule, effectiveContext, item.subject, localError]);
+  }, [checkKey, effectiveRule, effectiveContext, item.subject, localError]);
 
   useEffect(() => () => saveController.current?.abort(), []);
 
@@ -453,7 +473,7 @@ function SubjectRuleEditor({
       const checked = await saveSubjectRule(
         effectiveContext,
         item.subject,
-        rule,
+        effectiveRule,
         controller.signal,
       );
       if (!controller.signal.aborted && checked.can_save) onSaved();
@@ -482,8 +502,17 @@ function SubjectRuleEditor({
       return next;
     });
   const firstGroup = item.groups[0];
+  const firstBaseGroup = firstGroup
+    ? getBaseGroupNames(firstGroup)[0] || firstGroup
+    : "";
   const preview =
-    result?.preview.filter((entry) => entry.groups.includes(firstGroup)) || [];
+    result?.preview.filter((entry) =>
+      entry.groups.some(
+        (group) =>
+          group === firstGroup ||
+          (firstBaseGroup && groupLabelIncludesBase(group, firstBaseGroup)),
+      ),
+    ) || [];
   const previewDates = [...new Set(preview.map((entry) => entry.date))].sort();
   const checkError = currentCheck?.error || requestError;
   const errors = localError
@@ -692,10 +721,17 @@ function SubjectRuleEditor({
               value={scope}
               onChange={(event) => setScope(event.target.value)}
             >
+              {weeks.length > 1 && (
+                <option value="fit">
+                  В пределах учебного плана (до {weeks.length} нед.)
+                </option>
+              )}
               <option value="selected">
-                {weeks.length
-                  ? "Все выбранные недели"
-                  : "Текущая учебная неделя"}
+                {weeks.length > 1
+                  ? `Все выбранные недели строго (${weeks.length} нед.)`
+                  : weeks.length === 1
+                    ? "Выбранная учебная неделя"
+                    : "Текущая учебная неделя"}
               </option>
               {weeks.length > 1 &&
                 weeks.map((week) => (
@@ -735,7 +771,9 @@ function SubjectRuleEditor({
                   .filter((entry) => entry.date === day)
                   .sort((a, b) => a.lesson_number - b.lesson_number)
                   .map((entry) => (
-                    <small key={`${entry.type}:${entry.lesson_number}`}>
+                    <small
+                      key={`${entry.type}:${entry.lesson_number}:${entry.groups.join(",")}`}
+                    >
                       {entry.lesson_number} пара · {activityLabels[entry.type]}
                     </small>
                   ))}

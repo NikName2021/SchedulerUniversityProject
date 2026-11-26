@@ -375,11 +375,11 @@ export const SchedulePage: React.FC = () => {
       const monday = parseLocalDate(weekKey);
 
       if (!weekMap.has(weekKey)) {
-        const sunday = new Date(monday);
-        sunday.setDate(monday.getDate() + 6);
+        const saturday = new Date(monday);
+        saturday.setDate(monday.getDate() + DAYS.length - 1);
         weekMap.set(
           weekKey,
-          `${WEEK_DATE_FORMATTER.format(monday)} — ${WEEK_DATE_FORMATTER.format(sunday)}`,
+          `${WEEK_DATE_FORMATTER.format(monday)} — ${WEEK_DATE_FORMATTER.format(saturday)}`,
         );
       }
     });

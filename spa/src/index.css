@@ -523,9 +523,9 @@ textarea:focus-visible {
   }
 }
 .app-content {
-  width: min(1540px, 100%);
-  margin: 0 auto;
-  padding: 24px clamp(28px, 4vw, 54px) 48px;
+  width: 100%;
+  margin: 0;
+  padding: 24px clamp(24px, 3vw, 40px) 48px;
 }
 .card,
 .app-panel {
@@ -873,6 +873,7 @@ textarea:focus-visible {
 
 .app-section {
   display: grid;
+  align-content: start;
   gap: 0.75rem;
   min-width: 0;
   padding: clamp(0.75rem, 2vw, 1.125rem);

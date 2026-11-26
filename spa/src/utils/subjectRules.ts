@@ -9,6 +9,7 @@ export interface SubjectRuleConfig {
   days_hard: boolean;
   lecture_before_practice: boolean;
   time_preference: "morning" | "day" | "evening";
+  fit_to_plan?: boolean;
 }
 
 export interface SubjectRuleContext {
