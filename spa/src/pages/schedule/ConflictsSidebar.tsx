@@ -6,7 +6,7 @@ const getEntryDayName = (dateStr: string) => {
   const d = parseLocalDate(dateStr);
   if (isNaN(d.getTime())) return "";
   const dayNum = (d.getDay() + 6) % 7;
-  return DAYS[dayNum];
+  return DAYS[dayNum] ?? "ВС";
 };
 
 const formatDateReadable = (dateStr: string) => {
