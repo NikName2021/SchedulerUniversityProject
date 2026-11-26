@@ -470,20 +470,53 @@ async def _allocate(
         all_cohorts = sorted(
             {cohort for cohorts in stream_cohorts.values() for cohort in cohorts}
         )
+        fit_to_plan = bool(payload.rule.fit_to_plan and len(windows) > 1)
         for cohort in all_cohorts:
             for code, field in TYPE_FIELDS.items():
+                target = getattr(payload.rule, field)
                 matching = [
                     stream
                     for stream in streams
                     if subject_activity_code(stream) == code
                     and cohort in stream_cohorts[stream.id]
                 ]
-                for week in windows:
-                    model.Add(
-                        sum(variables[(stream.id, week.id)] for stream in matching)
-                        == getattr(payload.rule, field)
-                    )
-        model.Minimize(sum(changes))
+                if fit_to_plan:
+                    for week in windows:
+                        model.Add(
+                            sum(variables[(stream.id, week.id)] for stream in matching)
+                            <= target
+                        )
+                    if target > 0:
+                        model.Add(
+                            sum(
+                                variables[(stream.id, week.id)]
+                                for stream in matching
+                                for week in windows
+                            )
+                            >= 1
+                        )
+                else:
+                    for week in windows:
+                        model.Add(
+                            sum(variables[(stream.id, week.id)] for stream in matching)
+                            == target
+                        )
+        if fit_to_plan:
+            total_placed = sum(
+                variables[(stream.id, week.id)]
+                for stream in streams
+                for week in windows
+            )
+            late_penalty = sum(
+                week_index * variables[(stream.id, week.id)]
+                for week_index, week in enumerate(windows)
+                for stream in streams
+            )
+            model.Minimize(
+                -total_placed * 100_000 + late_penalty * 100 + sum(changes)
+            )
+        else:
+            model.Minimize(sum(changes))
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = 2
         solver.parameters.num_search_workers = 1
@@ -632,8 +665,12 @@ async def check_subject_rule(
         for group in _cohort_rule_targets(participating)
     ]
     cache = {}
+    active_weeks = 0
     for week in windows:
         events = _events(streams, counts[str(week.id)], payload.groups)
+        if not events:
+            continue
+        active_weeks += 1
         context = {
             "start_date": week.starts_on.isoformat(),
             "end_date": week.ends_on.isoformat(),
@@ -724,6 +761,10 @@ async def check_subject_rule(
                     "Пожелания по дням могут быть выполнены не полностью. Недоступность преподавателей остаётся обязательным ограничением."
                 )
                 break
+    if payload.rule.fit_to_plan and 0 < active_weeks < len(windows):
+        result["warnings"].append(
+            f"По учебному плану занятия распределены на {active_weeks} из {len(windows)} недель."
+        )
     result["can_save"] = not result["errors"]
     if save and result["can_save"]:
         key = scope_key(payload)
@@ -892,6 +933,7 @@ async def generation_subject_rules(
             all_cohorts = sorted(
                 {cohort for cohorts in stream_cohorts.values() for cohort in cohorts}
             )
+            has_any_lessons = False
             for cohort in all_cohorts:
                 composition = defaultdict(int)
                 for stream in streams:
@@ -899,10 +941,20 @@ async def generation_subject_rules(
                         composition[subject_activity_code(stream)] += actual.get(
                             stream.id, 0
                         )
-                if any(
-                    composition[code] != getattr(config, field)
-                    for code, field in TYPE_FIELDS.items()
-                ):
+                total_for_cohort = sum(composition.values())
+                if total_for_cohort > 0:
+                    has_any_lessons = True
+                if config.fit_to_plan:
+                    invalid = any(
+                        composition[code] > getattr(config, field)
+                        for code, field in TYPE_FIELDS.items()
+                    )
+                else:
+                    invalid = any(
+                        composition[code] != getattr(config, field)
+                        for code, field in TYPE_FIELDS.items()
+                    )
+                if invalid:
                     group_label = cohort.split("::", 1)[0]
                     raise ValueError(
                         f"{subject}, {group_label}: недельная нагрузка или выбранные типы занятий изменились. Проверьте правило."
@@ -910,6 +962,8 @@ async def generation_subject_rules(
             overrides.update(
                 {str(stream.id): actual.get(stream.id, 0) for stream in streams}
             )
+            if config.fit_to_plan and not has_any_lessons:
+                continue
         else:
             # A standalone week does not modify the semester plan.
             counts, errors = await _allocate(
@@ -923,8 +977,11 @@ async def generation_subject_rules(
                         f"{subject}: для общего потока заданы разные схемы занятий"
                     )
                 overrides[stream_id] = count
+        rule_dump = config.model_dump()
+        if not config.fit_to_plan:
+            rule_dump.pop("fit_to_plan", None)
         rules.extend(
-            {"subject": subject, "group_name": group, "rule": config.model_dump()}
+            {"subject": subject, "group_name": group, "rule": rule_dump}
             for group in _cohort_rule_targets(groups)
         )
     return rules, overrides

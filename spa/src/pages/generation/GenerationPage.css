@@ -1,6 +1,6 @@
 .generation-layout {
   display: grid;
-  grid-template-columns: minmax(13rem, 1fr) minmax(0, 2.5fr);
+  grid-template-columns: clamp(14rem, 26%, 22rem) minmax(0, 1fr);
   align-items: start;
   gap: 1rem;
 }
