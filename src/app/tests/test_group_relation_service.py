@@ -45,3 +45,17 @@ def test_full_group_overlaps_subgroups_but_subgroups_do_not_overlap_each_other()
     assert labels_overlap("К0109-23", "К0109-23 (L1)", known)
     assert labels_overlap("К0109-23", "К0109-23 (L2)", known)
     assert not labels_overlap("К0109-23 (L1)", "К0109-23 (L2)", known)
+
+
+def test_slash_subgroups_are_parsed_without_affecting_numeric_group_suffixes() -> None:
+    standalone = parse_group_label("ИОП-ИТ-25/1")
+    first = parse_group_label("ИОП-ИТ-25/А")
+    second = parse_group_label("ИОП-ИТ-25/B")
+    third = parse_group_label("ИОП-ИТ-25/C")
+
+    assert standalone.is_standalone
+    assert standalone.base_groups == ("ИОП-ИТ-25/1",)
+    assert standalone.subgroup is None
+    assert (first.base_groups, first.subgroup) == (("ИОП-ИТ-25",), "L1")
+    assert (second.base_groups, second.subgroup) == (("ИОП-ИТ-25",), "L2")
+    assert (third.base_groups, third.subgroup) == (("ИОП-ИТ-25",), "L3")

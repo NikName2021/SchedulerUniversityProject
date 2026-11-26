@@ -13,6 +13,9 @@ import {
 test("standalone group names do not contain subgroup or combined markers", () => {
   assert.equal(isStandaloneGroupName("К0409-25/1"), true);
   assert.equal(isStandaloneGroupName("К0409-25/1 (L1)"), false);
+  assert.equal(isStandaloneGroupName("ИОП-ИТ-25/А"), false);
+  assert.equal(isStandaloneGroupName("ИОП-ИТ-25/B"), false);
+  assert.equal(isStandaloneGroupName("ИОП-ИТ-25/C"), false);
   assert.equal(isStandaloneGroupName("К0409-25/1, К0409-25/2"), false);
   assert.equal(isStandaloneGroupName("К0409-25/1 + К0409-25/2"), false);
 });
@@ -69,4 +72,17 @@ test("joint labels occupy every base group in the stream", () => {
     groupLabelsOverlap("К0109-23, К0609-23 (L1)", "К0609-23", knownSubgroups),
     true,
   );
+});
+
+test("slash-separated three language subgroups can run in parallel", () => {
+  const labels = ["ИОП-ИТ-25", "ИОП-ИТ-25/А", "ИОП-ИТ-25/B", "ИОП-ИТ-25/C"];
+  const knownSubgroups = collectKnownSubgroups(labels);
+
+  const [whole, first, second, third] = labels;
+  assert.equal(groupLabelsOverlap(whole, first, knownSubgroups), true);
+  assert.equal(groupLabelsOverlap(whole, second, knownSubgroups), true);
+  assert.equal(groupLabelsOverlap(whole, third, knownSubgroups), true);
+  assert.equal(groupLabelsOverlap(first, second, knownSubgroups), false);
+  assert.equal(groupLabelsOverlap(first, third, knownSubgroups), false);
+  assert.equal(groupLabelsOverlap(second, third, knownSubgroups), false);
 });

@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 
 SUBGROUP_SUFFIX = re.compile(
-    r"\s*\((?:[LlЛл]\s*([1-9][0-9]*)|([AaАаBbБбВвCcСс]))\)\s*$"
+    r"(?:\s*\((?:[LlЛл]\s*([1-9][0-9]*)|([AaАаBbБбВвCcСс]))\)|/\s*(?:[LlЛл]\s*([1-9][0-9]*)|([AaАаBbБбВвCcСс])))\s*$"
 )
 LETTER_SUBGROUPS = (
     dict.fromkeys("aа", "L1") | dict.fromkeys("bбв", "L2") | dict.fromkeys("cс", "L3")
@@ -32,7 +32,9 @@ def parse_group_label(label: str) -> ParsedGroupLabel:
     subgroup: str | None = None
     match = SUBGROUP_SUFFIX.search(normalized)
     if match:
-        number, letter = match.groups()
+        paren_number, paren_letter, slash_number, slash_letter = match.groups()
+        number = paren_number or slash_number
+        letter = paren_letter or slash_letter
         subgroup = f"L{number}" if number else LETTER_SUBGROUPS[letter.lower()]
         normalized_without_suffix = normalized[: match.start()].strip()
     else:
