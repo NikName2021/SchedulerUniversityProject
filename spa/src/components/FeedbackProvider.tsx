@@ -25,8 +25,9 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
   );
 
   useEffect(() => {
-    if (notice?.kind !== "success") return;
-    const timer = window.setTimeout(() => setNotice(null), 5000);
+    if (!notice) return;
+    const delay = notice.kind === "success" ? 5000 : 8000;
+    const timer = window.setTimeout(() => setNotice(null), delay);
     return () => window.clearTimeout(timer);
   }, [notice]);
 

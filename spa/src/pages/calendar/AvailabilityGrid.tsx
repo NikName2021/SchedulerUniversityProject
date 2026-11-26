@@ -83,6 +83,7 @@ export function AvailabilityGrid({
               <button
                 type="button"
                 className="calendar-week__day-toggle"
+                disabled={mode === "time"}
                 aria-label={label}
                 title={label}
                 aria-pressed={selected}

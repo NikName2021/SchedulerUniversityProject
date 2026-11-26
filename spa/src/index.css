@@ -873,6 +873,7 @@ textarea:focus-visible {
 
 .app-section {
   display: grid;
+  align-content: start;
   gap: 0.75rem;
   min-width: 0;
   padding: clamp(0.75rem, 2vw, 1.125rem);

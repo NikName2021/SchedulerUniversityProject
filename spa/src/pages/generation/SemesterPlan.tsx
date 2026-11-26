@@ -98,7 +98,7 @@ export function SemesterPlan({
       ) : (
         <>
           <button
-            className="btn-secondary self-start"
+            className="btn-secondary justify-self-start"
             type="button"
             onClick={() => onSelect(allSelected ? [] : readyIds)}
             disabled={!readyIds.length}
